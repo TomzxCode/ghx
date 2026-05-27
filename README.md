@@ -1,6 +1,6 @@
 # ghx
 
-Extended GitHub CLI that provides pull request review operations not available in the standard `gh` CLI.
+Extended GitHub CLI that provides pull request and issue comment operations not available in the standard `gh` CLI.
 Uses the GitHub GraphQL API directly.
 
 ## Requirements
@@ -100,7 +100,7 @@ ghx pr comment edit <comment-id> --body-file updated.txt
 When submitting an immediate inline comment or reply (without `--pending`) on a PR that has an existing pending review, ghx will temporarily discard the pending review, submit the comment, and then restore the pending review with its comments.
 This is necessary because GitHub does not allow mixing immediate and pending review comments on the same PR.
 
-Automatically detects whether the comment is a review comment or an issue comment.
+Automatically detects whether the PR comment is a review comment or an issue comment.
 
 ### Delete a comment
 
@@ -109,6 +109,42 @@ ghx pr comment delete <comment-id>
 ```
 
 Use `ghx pr threads <number> --ids` to find comment IDs.
+
+### Comment on an issue
+
+```bash
+# Add a comment
+ghx issue comment 42 --body "This is fixed in #50"
+
+# Read body from stdin or a file
+ghx issue comment 42 --body-file -
+ghx issue comment 42 --body-file comment.txt
+```
+
+### View an issue
+
+```bash
+# View issue description and comments
+ghx issue view 42
+
+# Include comment IDs (for edit/delete)
+ghx issue view 42 --ids
+```
+
+### Edit an issue comment
+
+```bash
+ghx issue comment edit <comment-id> --body "Updated text"
+ghx issue comment edit <comment-id> --body-file updated.txt
+```
+
+### Delete an issue comment
+
+```bash
+ghx issue comment delete <comment-id>
+```
+
+Use `ghx issue view <number> --ids` to find comment IDs.
 
 ## License
 
