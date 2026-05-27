@@ -21,8 +21,8 @@ var reviewStashCmd = &cobra.Command{
 
 func init() {
 	reviewStashPushCmd.Flags().StringVarP(&stashMessage, "message", "m", "", "Stash description")
-	reviewStashPopCmd.Flags().IntVar(&stashIndex, "index", 0, "Stash entry index to pop (default: 0)")
-	reviewStashDropCmd.Flags().IntVar(&stashIndex, "index", 0, "Stash entry index to drop (default: 0)")
+	reviewStashPopCmd.Flags().IntVar(&stashIndex, "stash", 0, "Stash entry index to pop (default: 0)")
+	reviewStashDropCmd.Flags().IntVar(&stashIndex, "stash", 0, "Stash entry index to drop (default: 0)")
 	reviewStashCmd.AddCommand(reviewStashPushCmd)
 	reviewStashCmd.AddCommand(reviewStashPopCmd)
 	reviewStashCmd.AddCommand(reviewStashListCmd)
@@ -99,7 +99,7 @@ var reviewStashPopCmd = &cobra.Command{
 	Short: "Restore stashed pending review comments",
 	Long: `Restore stashed pending review comments by creating
 a new pending review on GitHub and recreating all threads.
-Pops the stash entry at the given index (default: 0).`,
+Pops the stash entry at the given index (default: 0). Use --stash to pop a specific entry.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runReviewStashPop,
 }
@@ -211,7 +211,7 @@ var reviewStashDropCmd = &cobra.Command{
 	Use:   "drop <number>",
 	Short: "Drop a stash entry without restoring it",
 	Long: `Remove a stash entry without restoring it.
-By default drops stash@{0}. Use --index to drop a specific entry.`,
+By default drops stash@{0}. Use --stash to drop a specific entry.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runReviewStashDrop,
 }

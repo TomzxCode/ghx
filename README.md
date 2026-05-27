@@ -62,11 +62,12 @@ ghx pr review submit 42 --event APPROVE --body "LGTM"
 
 ### Add comments to a local stash
 
-Use `--stash` to save comments to a local stash file without creating anything on GitHub.
-This is useful for building up a set of review comments offline, then restoring them all at once:
+Use `--stash` to save comments directly to a local stash entry without any GitHub API calls.
+Each stash entry is stored as a separate YAML file on disk.
+Supports multiple stash entries like `git stash`:
 
 ```bash
-# Add comments to the local stash
+# Add a comment to stash@{0} (auto-created if no stashes exist)
 ghx pr comment 42 --file src/main.go --line 10 --body "Nit" --stash
 ghx pr comment 42 --file src/main.go --line 20-25 --body "Consider extracting" --stash
 
@@ -75,6 +76,9 @@ ghx pr review stash list 42
 
 # Restore all stashed comments into a pending review
 ghx pr review stash pop 42
+
+# Add to a specific stash entry
+ghx pr comment 42 --file src/main.go --line 30 --body "Another" --stash=1
 ```
 
 ### Manage pending reviews
@@ -92,7 +96,7 @@ ghx pr review discard <review-id>
 
 ### Stash pending review comments
 
-Supports multiple stash entries (like `git stash`). Stash pending review comments to local disk so you can post immediate comments, or build up comments offline with `--stash`:
+Save pending review comments to local disk so you can post immediate comments, or accumulate review comments offline:
 
 ```bash
 # Save pending comments to stash@{0} and delete the pending review
@@ -101,20 +105,17 @@ ghx pr review stash push 42
 # With a description
 ghx pr review stash push 42 -m "nit comments"
 
-# Add comments directly to stash@{0} (no GitHub API calls)
-ghx pr comment 42 --file src/main.go --line 10 --body "Nit" --stash
-
 # Push another pending review as stash@{0} (previous becomes stash@{1})
 ghx pr review stash push 42
 
 # List all stash entries
 ghx pr review stash list 42
 
-# Pop stash@{0} into a pending review
+# Pop stash@{0} into a pending review (stash preserved on failure)
 ghx pr review stash pop 42
 
 # Pop a specific stash entry
-ghx pr review stash pop 42 --index 1
+ghx pr review stash pop 42 --stash 1
 
 # Drop stash@{0} without restoring
 ghx pr review stash drop 42
