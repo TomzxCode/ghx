@@ -19,7 +19,7 @@ var (
 	commentSide        string
 	commentReplyThread string
 	commentPending     bool
-	commentStash       bool
+	commentStash       string
 )
 
 var prCommentCmd = &cobra.Command{
@@ -35,7 +35,8 @@ With --file (no --line), adds a file-level comment.
 With --file and --line, adds an inline comment.
 With --reply-thread, replies to an existing review thread.
 With --pending, comments are added to a pending review (submitted later with 'ghx pr review submit').
-With --stash, comments are saved to a local stash file (restored later with 'ghx pr review stash pop').`,
+With --stash, comments are saved to a local stash entry (restored later with 'ghx pr review stash pop').
+Use --stash=N to target a specific stash entry (default: 0).`,
 
 	Args: cobra.ExactArgs(1),
 	RunE: runPRComment,
@@ -49,7 +50,8 @@ func init() {
 	prCommentCmd.Flags().StringVar(&commentSide, "side", "RIGHT", "Diff side: LEFT or RIGHT")
 	prCommentCmd.Flags().StringVar(&commentReplyThread, "reply-thread", "", "Thread ID to reply to")
 	prCommentCmd.Flags().BoolVar(&commentPending, "pending", false, "Add comment to a pending review instead of submitting immediately")
-	prCommentCmd.Flags().BoolVar(&commentStash, "stash", false, "Save comment to local stash instead of submitting (use 'ghx pr review stash pop' to restore)")
+	prCommentCmd.Flags().StringVar(&commentStash, "stash", "", "Save comment to local stash entry (optional index, default 0)")
+	prCommentCmd.Flag("stash").NoOptDefVal = "true"
 	prCommentCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	prCommentCmd.MarkFlagsMutuallyExclusive("reply-thread", "file")
 	prCommentCmd.MarkFlagsMutuallyExclusive("reply-thread", "line")
@@ -123,7 +125,7 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	if commentPending && commentFile == "" && commentReplyThread == "" {
 		return fmt.Errorf("--pending requires --file or --reply-thread (pending mode only applies to review comments, not top-level comments)")
 	}
-	if commentStash && commentFile == "" {
+	if commentStash != "" && commentFile == "" {
 		return fmt.Errorf("--stash requires --file (stash mode only applies to review comments, not top-level comments)")
 	}
 
@@ -137,7 +139,15 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if commentStash {
+	if commentStash != "" {
+		stashIdx := 0
+		if commentStash != "true" {
+			stashIdx, err = strconv.Atoi(commentStash)
+			if err != nil || stashIdx < 0 {
+				return fmt.Errorf("invalid --stash value %q: must be a non-negative integer", commentStash)
+			}
+		}
+
 		line, startLine, err := parseLineRange(commentLine)
 		if err != nil {
 			return err
@@ -151,21 +161,21 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 			Bodies:    []string{body},
 		}
 
-		total, err := gh.AppendStash(owner, name, prNumber, thread)
+		total, err := gh.AppendToStash(owner, name, prNumber, stashIdx, thread)
 		if err != nil {
 			return fmt.Errorf("stash comment: %w", err)
 		}
 
 		if line != nil {
-			fmt.Printf("Stashed comment on %s:%s (stash now has %d threads)\n", commentFile, commentLine, total)
+			fmt.Printf("Stashed comment on %s:%s (stash@{%d} now has %d threads)\n", commentFile, commentLine, stashIdx, total)
 		} else {
-			fmt.Printf("Stashed file-level comment on %s (stash now has %d threads)\n", commentFile, total)
+			fmt.Printf("Stashed file-level comment on %s (stash@{%d} now has %d threads)\n", commentFile, stashIdx, total)
 		}
 		return nil
 	}
 
 	var reviewId string
-	var hasStash bool
+	var stashIdx int = -1
 	if commentPending {
 		reviewId, err = gh.FindOrCreatePendingReview(owner, name, prNumber)
 		if err != nil {
@@ -180,10 +190,10 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 				return fmt.Errorf("save pending threads: %w", fetchErr)
 			}
 			if len(threads) > 0 {
-				if stashErr := gh.SaveStash(owner, name, prNumber, threads); stashErr != nil {
+				if _, stashErr := gh.PushStash(owner, name, prNumber, threads, ""); stashErr != nil {
 					return fmt.Errorf("stash pending threads: %w", stashErr)
 				}
-				hasStash = true
+				stashIdx = 0
 			}
 			if err := gh.DeleteReview(suspendedReviewId); err != nil {
 				return fmt.Errorf("discard pending review: %w", err)
@@ -192,12 +202,12 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	}
 
 	defer func() {
-		if !hasStash {
+		if stashIdx < 0 {
 			return
 		}
-		threads, loadErr := gh.LoadStash(owner, name, prNumber)
-		if loadErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to load stash: %v\n", loadErr)
+		threads, popErr := gh.PopStash(owner, name, prNumber, stashIdx)
+		if popErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to pop stash: %v\n", popErr)
 			return
 		}
 		prID, idErr := gh.GetPRNodeID(owner, name, prNumber)
@@ -216,10 +226,6 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		if rErr != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to restore %d pending comments: %v\n", len(threads), rErr)
 		} else {
-			clearErr := gh.ClearStash(owner, name, prNumber)
-			if clearErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to clear stash: %v\n", clearErr)
-			}
 			fmt.Fprintf(os.Stderr, "Restored %d pending comments (review %s)\n", len(threads), newReviewID)
 		}
 	}()

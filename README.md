@@ -92,20 +92,32 @@ ghx pr review discard <review-id>
 
 ### Stash pending review comments
 
-Temporarily save pending review comments to local disk so you can post immediate comments without the overhead of discard/restore for each one:
+Supports multiple stash entries (like `git stash`). Stash pending review comments to local disk so you can post immediate comments, or build up comments offline with `--stash`:
 
 ```bash
-# Save pending comments to local stash and delete the pending review
+# Save pending comments to stash@{0} and delete the pending review
 ghx pr review stash push 42
 
-# Post as many immediate comments as needed
-ghx pr comment 42 --file src/main.go --line 10 --body "Nit"
+# With a description
+ghx pr review stash push 42 -m "nit comments"
 
-# List what's in the stash
+# Add comments directly to stash@{0} (no GitHub API calls)
+ghx pr comment 42 --file src/main.go --line 10 --body "Nit" --stash
+
+# Push another pending review as stash@{0} (previous becomes stash@{1})
+ghx pr review stash push 42
+
+# List all stash entries
 ghx pr review stash list 42
 
-# Restore stashed comments into a new pending review
+# Pop stash@{0} into a pending review
 ghx pr review stash pop 42
+
+# Pop a specific stash entry
+ghx pr review stash pop 42 --index 1
+
+# Drop stash@{0} without restoring
+ghx pr review stash drop 42
 ```
 
 ### List review threads
