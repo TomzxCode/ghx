@@ -12,10 +12,9 @@ import (
 )
 
 var (
-	threadsShowComments bool
-	threadsThreadID     string
-	threadsState        string
-	threadsShowIDs      bool
+	threadsThreadID string
+	threadsState    string
+	threadsShowIDs  bool
 )
 
 var prThreadsCmd = &cobra.Command{
@@ -23,15 +22,13 @@ var prThreadsCmd = &cobra.Command{
 	Short: "List review threads on a pull request",
 	Long: `List review threads on a pull request.
 
-Shows thread ID, file, line, state, and first comment preview by default.
-Use --comments to show all comments within each thread.
-Use --ids to show individual comment IDs (useful for editing).`,
+Shows all comments within each thread by default.
+Use --ids to show individual comment IDs (useful for editing/deleting).`,
 	Args: cobra.ExactArgs(1),
 	RunE: runPRThreads,
 }
 
 func init() {
-	prThreadsCmd.Flags().BoolVar(&threadsShowComments, "comments", false, "Show all comments in each thread")
 	prThreadsCmd.Flags().StringVar(&threadsThreadID, "thread", "", "Show a specific thread by ID")
 	prThreadsCmd.Flags().StringVar(&threadsState, "state", "open", "Filter by state: open, resolved, all")
 	prThreadsCmd.Flags().BoolVar(&threadsShowIDs, "ids", false, "Show comment IDs")
@@ -69,11 +66,7 @@ func runPRThreads(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if threadsShowComments {
-		printThreadsWithComments(threads)
-	} else {
-		printThreadsTable(threads)
-	}
+	printThreads(threads)
 
 	return nil
 }
@@ -126,50 +119,41 @@ func threadStateStr(t gh.ReviewThread) string {
 	return "open"
 }
 
-func truncate(s string, maxLen int) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.TrimSpace(s)
-	if len(s) > maxLen {
-		return s[:maxLen-3] + "..."
-	}
-	return s
-}
-
-func printThreadsTable(threads []gh.ReviewThread) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "THREAD_ID\tFILE\tLINE\tSTATE\tAUTHOR\tPREVIEW")
+func printThreads(threads []gh.ReviewThread) {
 	for _, t := range threads {
-		author := ""
-		preview := ""
-		if len(t.Comments) > 0 {
-			author = t.Comments[0].Author
-			preview = truncate(t.Comments[0].Body, 60)
-		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			t.ID, t.Path, threadLineStr(t), threadStateStr(t), author, preview)
-	}
-	w.Flush()
-}
-
-func printThreadsWithComments(threads []gh.ReviewThread) {
-	for i, t := range threads {
 		loc := t.Path
 		if t.Line != nil {
 			loc = fmt.Sprintf("%s:%s", t.Path, threadLineStr(t))
 		}
-		state := threadStateStr(t)
-		fmt.Printf("%s  %s  [%s]\n", t.ID, loc, state)
 
-		for _, c := range t.Comments {
-			if threadsShowIDs {
-				fmt.Printf("  %s\t%s\t%s\n", c.ID, c.Author, strings.ReplaceAll(c.Body, "\n", "\n  \t\t"))
-			} else {
-				fmt.Printf("  %s\t%s\n", c.Author, strings.ReplaceAll(c.Body, "\n", "\n  \t"))
+		if threadsShowIDs {
+			fmt.Printf("%s  %s  [%s]\n", t.ID, loc, threadStateStr(t))
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, c := range t.Comments {
+				for i, line := range strings.Split(c.Body, "\n") {
+					if i == 0 {
+						fmt.Fprintf(w, "%s\t%s\t%s\n", c.ID, c.Author, line)
+					} else {
+						fmt.Fprintf(w, "\t\t%s\n", line)
+					}
+				}
 			}
+			w.Flush()
+		} else {
+			fmt.Printf("%s  [%s]\n", loc, threadStateStr(t))
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, c := range t.Comments {
+				for i, line := range strings.Split(c.Body, "\n") {
+					if i == 0 {
+						fmt.Fprintf(w, "%s\t%s\n", c.Author, line)
+					} else {
+						fmt.Fprintf(w, "\t%s\n", line)
+					}
+				}
+			}
+			w.Flush()
 		}
 
-		if i < len(threads)-1 {
-			fmt.Println()
-		}
+		fmt.Println()
 	}
 }
