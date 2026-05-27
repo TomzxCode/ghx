@@ -5,12 +5,13 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/tomzxcode/ghx/internal/version"
 )
 
 var rootCmd = &cobra.Command{
 	Use:          "ghx",
 	Short:        "Extended GitHub CLI",
-	Version:      "0.1.0",
+	Version:      version.Version,
 	SilenceUsage: true,
 	SilenceErrors: true,
 	Long: `ghx is an extended GitHub CLI that provides additional functionality
