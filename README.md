@@ -60,6 +60,23 @@ ghx pr review submit 42 --event COMMENT
 ghx pr review submit 42 --event APPROVE --body "LGTM"
 ```
 
+### Add comments to a local stash
+
+Use `--stash` to save comments to a local stash file without creating anything on GitHub.
+This is useful for building up a set of review comments offline, then restoring them all at once:
+
+```bash
+# Add comments to the local stash
+ghx pr comment 42 --file src/main.go --line 10 --body "Nit" --stash
+ghx pr comment 42 --file src/main.go --line 20-25 --body "Consider extracting" --stash
+
+# See what's stashed
+ghx pr review stash list 42
+
+# Restore all stashed comments into a pending review
+ghx pr review stash pop 42
+```
+
 ### Manage pending reviews
 
 ```bash

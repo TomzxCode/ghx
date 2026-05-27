@@ -62,6 +62,21 @@ func LoadStash(owner, name string, number int) ([]SavedThread, error) {
 	return threads, nil
 }
 
+func AppendStash(owner, name string, number int, thread SavedThread) (int, error) {
+	existing, err := LoadStash(owner, name, number)
+	if err != nil {
+		existing = nil
+	}
+
+	existing = append(existing, thread)
+
+	if err := SaveStash(owner, name, number, existing); err != nil {
+		return 0, err
+	}
+
+	return len(existing), nil
+}
+
 func ClearStash(owner, name string, number int) error {
 	path, err := StashPath(owner, name, number)
 	if err != nil {

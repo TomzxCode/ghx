@@ -19,6 +19,7 @@ var (
 	commentSide        string
 	commentReplyThread string
 	commentPending     bool
+	commentStash       bool
 )
 
 var prCommentCmd = &cobra.Command{
@@ -33,7 +34,8 @@ Without --file, adds a top-level comment.
 With --file (no --line), adds a file-level comment.
 With --file and --line, adds an inline comment.
 With --reply-thread, replies to an existing review thread.
-With --pending, comments are added to a pending review (submitted later with 'ghx pr review submit').`,
+With --pending, comments are added to a pending review (submitted later with 'ghx pr review submit').
+With --stash, comments are saved to a local stash file (restored later with 'ghx pr review stash pop').`,
 
 	Args: cobra.ExactArgs(1),
 	RunE: runPRComment,
@@ -47,9 +49,11 @@ func init() {
 	prCommentCmd.Flags().StringVar(&commentSide, "side", "RIGHT", "Diff side: LEFT or RIGHT")
 	prCommentCmd.Flags().StringVar(&commentReplyThread, "reply-thread", "", "Thread ID to reply to")
 	prCommentCmd.Flags().BoolVar(&commentPending, "pending", false, "Add comment to a pending review instead of submitting immediately")
+	prCommentCmd.Flags().BoolVar(&commentStash, "stash", false, "Save comment to local stash instead of submitting (use 'ghx pr review stash pop' to restore)")
 	prCommentCmd.MarkFlagsMutuallyExclusive("body", "body-file")
 	prCommentCmd.MarkFlagsMutuallyExclusive("reply-thread", "file")
 	prCommentCmd.MarkFlagsMutuallyExclusive("reply-thread", "line")
+	prCommentCmd.MarkFlagsMutuallyExclusive("pending", "stash")
 
 	prCmd.AddCommand(prCommentCmd)
 }
@@ -119,6 +123,9 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	if commentPending && commentFile == "" && commentReplyThread == "" {
 		return fmt.Errorf("--pending requires --file or --reply-thread (pending mode only applies to review comments, not top-level comments)")
 	}
+	if commentStash && commentFile == "" {
+		return fmt.Errorf("--stash requires --file (stash mode only applies to review comments, not top-level comments)")
+	}
 
 	body, err := resolveBodyFlags(commentBody, commentBodyFile)
 	if err != nil {
@@ -128,6 +135,33 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	owner, name, err := gh.ResolveRepo(prRepo)
 	if err != nil {
 		return err
+	}
+
+	if commentStash {
+		line, startLine, err := parseLineRange(commentLine)
+		if err != nil {
+			return err
+		}
+
+		thread := gh.SavedThread{
+			Path:      commentFile,
+			Line:      line,
+			StartLine: startLine,
+			Side:      commentSide,
+			Bodies:    []string{body},
+		}
+
+		total, err := gh.AppendStash(owner, name, prNumber, thread)
+		if err != nil {
+			return fmt.Errorf("stash comment: %w", err)
+		}
+
+		if line != nil {
+			fmt.Printf("Stashed comment on %s:%s (stash now has %d threads)\n", commentFile, commentLine, total)
+		} else {
+			fmt.Printf("Stashed file-level comment on %s (stash now has %d threads)\n", commentFile, total)
+		}
+		return nil
 	}
 
 	var reviewId string
