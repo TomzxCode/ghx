@@ -131,6 +131,8 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	}
 
 	var reviewId string
+	var suspendedThreads []gh.SavedThread
+	var suspendedReviewId string
 	if commentPending {
 		reviewId, err = gh.FindOrCreatePendingReview(owner, name, prNumber)
 		if err != nil {
@@ -139,9 +141,41 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	} else if commentFile != "" || commentReplyThread != "" {
 		reviews, checkErr := gh.ListPendingReviews(owner, name, prNumber)
 		if checkErr == nil && len(reviews) > 0 {
-			return fmt.Errorf("you have a pending review (%s) on PR #%d; submit it with 'ghx pr review submit %d' or discard it with 'ghx pr review discard %s' before creating immediate comments", reviews[0].ID, prNumber, prNumber, reviews[0].ID)
+			suspendedReviewId = reviews[0].ID
+			suspendedThreads, err = gh.GetPendingReviewThreads(owner, name, prNumber, suspendedReviewId)
+			if err != nil {
+				return fmt.Errorf("save pending threads: %w", err)
+			}
+			if err := gh.DeleteReview(suspendedReviewId); err != nil {
+				return fmt.Errorf("discard pending review: %w", err)
+			}
 		}
 	}
+
+	var restoreErr error
+	defer func() {
+		if len(suspendedThreads) == 0 || restoreErr != nil {
+			return
+		}
+		prID, idErr := gh.GetPRNodeID(owner, name, prNumber)
+		if idErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to restore pending review: %v\n", idErr)
+			return
+		}
+		leftover, _ := gh.ListPendingReviews(owner, name, prNumber)
+		if len(leftover) > 0 {
+			if sErr := gh.SubmitReview(leftover[0].ID, "COMMENT", ""); sErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to submit leftover pending review: %v\n", sErr)
+				return
+			}
+		}
+		newReviewID, rErr := gh.RestorePendingReview(prID, suspendedThreads)
+		if rErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to restore %d pending comments: %v\n", len(suspendedThreads), rErr)
+		} else {
+			fmt.Fprintf(os.Stderr, "Restored %d pending comments (review %s)\n", len(suspendedThreads), newReviewID)
+		}
+	}()
 
 	if commentReplyThread != "" {
 		commentID, err := gh.ReplyToThread(commentReplyThread, reviewId, body)

@@ -21,12 +21,21 @@ type ReviewComment struct {
 	Body      string `json:"body"`
 	Author    string `json:"author"`
 	CreatedAt string `json:"createdAt"`
+	ReviewID  string `json:"reviewId"`
 }
 
 type PendingReview struct {
 	ID        string `json:"id"`
 	Author    string `json:"author"`
 	CreatedAt string `json:"createdAt"`
+}
+
+type SavedThread struct {
+	Path      string
+	Line      *int
+	StartLine *int
+	Side      string
+	Bodies    []string
 }
 
 func GetPRNodeID(owner, name string, number int) (string, error) {
@@ -316,6 +325,7 @@ func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 								body
 								author { login }
 								createdAt
+								pullRequestReview { id }
 							}
 						}
 					}
@@ -352,7 +362,10 @@ func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 								Author struct {
 									Login string `json:"login"`
 								} `json:"author"`
-								CreatedAt string `json:"createdAt"`
+								CreatedAt          string `json:"createdAt"`
+								PullRequestReview  struct {
+									ID string `json:"id"`
+								} `json:"pullRequestReview"`
 							} `json:"nodes"`
 						} `json:"comments"`
 					} `json:"nodes"`
@@ -373,6 +386,7 @@ func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 				Body:      c.Body,
 				Author:    c.Author.Login,
 				CreatedAt: c.CreatedAt,
+				ReviewID:  c.PullRequestReview.ID,
 			})
 		}
 		threads = append(threads, ReviewThread{
@@ -570,4 +584,59 @@ func DeleteReview(reviewId string) error {
 		"pullRequestReviewId": reviewId,
 	})
 	return err
+}
+
+func GetPendingReviewThreads(owner, name string, number int, reviewId string) ([]SavedThread, error) {
+	threads, err := ListThreads(owner, name, number)
+	if err != nil {
+		return nil, err
+	}
+
+	var saved []SavedThread
+	for _, t := range threads {
+		if len(t.Comments) == 0 {
+			continue
+		}
+		if t.Comments[0].ReviewID != reviewId {
+			continue
+		}
+
+		bodies := make([]string, 0, len(t.Comments))
+		for _, c := range t.Comments {
+			bodies = append(bodies, c.Body)
+		}
+
+		saved = append(saved, SavedThread{
+			Path:      t.Path,
+			Line:      t.Line,
+			StartLine: t.StartLine,
+			Side:      t.DiffSide,
+			Bodies:    bodies,
+		})
+	}
+
+	return saved, nil
+}
+
+func RestorePendingReview(prID string, threads []SavedThread) (string, error) {
+	reviewID, err := CreatePendingReview(prID)
+	if err != nil {
+		return "", fmt.Errorf("create pending review: %w", err)
+	}
+
+	for _, t := range threads {
+		threadID, err := AddReviewThread("", reviewID, t.Bodies[0], t.Path, t.Line, t.StartLine, t.Side, "")
+		if err != nil {
+			return reviewID, fmt.Errorf("restore thread on %s: %w", t.Path, err)
+		}
+
+		for _, body := range t.Bodies[1:] {
+			_, err := ReplyToThread(threadID, reviewID, body)
+			if err != nil {
+				return reviewID, fmt.Errorf("restore reply on %s: %w", t.Path, err)
+			}
+		}
+	}
+
+	return reviewID, nil
 }
