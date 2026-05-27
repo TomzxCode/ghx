@@ -136,6 +136,11 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("create pending review: %w", err)
 		}
+	} else if commentFile != "" || commentReplyThread != "" {
+		reviews, checkErr := gh.ListPendingReviews(owner, name, prNumber)
+		if checkErr == nil && len(reviews) > 0 {
+			return fmt.Errorf("you have a pending review (%s) on PR #%d; submit it with 'ghx pr review submit %d' or discard it with 'ghx pr review discard %s' before creating immediate comments", reviews[0].ID, prNumber, prNumber, reviews[0].ID)
+		}
 	}
 
 	if commentReplyThread != "" {
