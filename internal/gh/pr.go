@@ -415,14 +415,11 @@ func GetCurrentUser() (string, error) {
 	return result.Viewer.Login, nil
 }
 
-func CreatePendingReview(owner, name string, number int) (string, error) {
+func CreatePendingReview(prID string) (string, error) {
 	query := `
-	mutation($owner: String!, $name: String!, $number: Int!) {
+	mutation($pullRequestId: ID!) {
 		addPullRequestReview(input: {
-			owner: $owner,
-			name: $name,
-			number: $number,
-			event: PENDING
+			pullRequestId: $pullRequestId
 		}) {
 			pullRequestReview {
 				id
@@ -431,9 +428,7 @@ func CreatePendingReview(owner, name string, number int) (string, error) {
 	}`
 
 	data, err := GraphQL(query, map[string]interface{}{
-		"owner":  owner,
-		"name":   name,
-		"number": number,
+		"pullRequestId": prID,
 	})
 	if err != nil {
 		return "", err
@@ -463,7 +458,12 @@ func FindOrCreatePendingReview(owner, name string, number int) (string, error) {
 		return reviews[0].ID, nil
 	}
 
-	return CreatePendingReview(owner, name, number)
+	prID, err := GetPRNodeID(owner, name, number)
+	if err != nil {
+		return "", err
+	}
+
+	return CreatePendingReview(prID)
 }
 
 func ListPendingReviews(owner, name string, number int) ([]PendingReview, error) {

@@ -34,7 +34,12 @@ var reviewCreateCmd = &cobra.Command{
 			return err
 		}
 
-		reviewID, err := gh.CreatePendingReview(owner, name, prNumber)
+		prID, err := gh.GetPRNodeID(owner, name, prNumber)
+		if err != nil {
+			return err
+		}
+
+		reviewID, err := gh.CreatePendingReview(prID)
 		if err != nil {
 			return err
 		}
