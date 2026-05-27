@@ -131,8 +131,7 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	}
 
 	var reviewId string
-	var suspendedThreads []gh.SavedThread
-	var suspendedReviewId string
+	var hasStash bool
 	if commentPending {
 		reviewId, err = gh.FindOrCreatePendingReview(owner, name, prNumber)
 		if err != nil {
@@ -141,10 +140,16 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	} else if commentFile != "" || commentReplyThread != "" {
 		reviews, checkErr := gh.ListPendingReviews(owner, name, prNumber)
 		if checkErr == nil && len(reviews) > 0 {
-			suspendedReviewId = reviews[0].ID
-			suspendedThreads, err = gh.GetPendingReviewThreads(owner, name, prNumber, suspendedReviewId)
-			if err != nil {
-				return fmt.Errorf("save pending threads: %w", err)
+			suspendedReviewId := reviews[0].ID
+			threads, fetchErr := gh.GetPendingReviewThreads(owner, name, prNumber, suspendedReviewId)
+			if fetchErr != nil {
+				return fmt.Errorf("save pending threads: %w", fetchErr)
+			}
+			if len(threads) > 0 {
+				if stashErr := gh.SaveStash(owner, name, prNumber, threads); stashErr != nil {
+					return fmt.Errorf("stash pending threads: %w", stashErr)
+				}
+				hasStash = true
 			}
 			if err := gh.DeleteReview(suspendedReviewId); err != nil {
 				return fmt.Errorf("discard pending review: %w", err)
@@ -152,9 +157,13 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	var restoreErr error
 	defer func() {
-		if len(suspendedThreads) == 0 || restoreErr != nil {
+		if !hasStash {
+			return
+		}
+		threads, loadErr := gh.LoadStash(owner, name, prNumber)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to load stash: %v\n", loadErr)
 			return
 		}
 		prID, idErr := gh.GetPRNodeID(owner, name, prNumber)
@@ -169,11 +178,15 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 				return
 			}
 		}
-		newReviewID, rErr := gh.RestorePendingReview(prID, suspendedThreads)
+		newReviewID, rErr := gh.RestorePendingReview(prID, threads)
 		if rErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to restore %d pending comments: %v\n", len(suspendedThreads), rErr)
+			fmt.Fprintf(os.Stderr, "Warning: failed to restore %d pending comments: %v\n", len(threads), rErr)
 		} else {
-			fmt.Fprintf(os.Stderr, "Restored %d pending comments (review %s)\n", len(suspendedThreads), newReviewID)
+			clearErr := gh.ClearStash(owner, name, prNumber)
+			if clearErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to clear stash: %v\n", clearErr)
+			}
+			fmt.Fprintf(os.Stderr, "Restored %d pending comments (review %s)\n", len(threads), newReviewID)
 		}
 	}()
 

@@ -73,6 +73,24 @@ ghx pr review list 42
 ghx pr review discard <review-id>
 ```
 
+### Stash pending review comments
+
+Temporarily save pending review comments to local disk so you can post immediate comments without the overhead of discard/restore for each one:
+
+```bash
+# Save pending comments to local stash and delete the pending review
+ghx pr review stash push 42
+
+# Post as many immediate comments as needed
+ghx pr comment 42 --file src/main.go --line 10 --body "Nit"
+
+# List what's in the stash
+ghx pr review stash list 42
+
+# Restore stashed comments into a new pending review
+ghx pr review stash pop 42
+```
+
 ### List review threads
 
 ```bash
@@ -97,7 +115,7 @@ ghx pr comment edit <comment-id> --body "Updated text"
 ghx pr comment edit <comment-id> --body-file updated.txt
 ```
 
-When submitting an immediate inline comment or reply (without `--pending`) on a PR that has an existing pending review, ghx will temporarily discard the pending review, submit the comment, and then restore the pending review with its comments.
+When submitting an immediate inline comment or reply (without `--pending`) on a PR that has an existing pending review, ghx will temporarily stash the pending review comments to disk, submit the comment, and then restore them.
 This is necessary because GitHub does not allow mixing immediate and pending review comments on the same PR.
 
 Automatically detects whether the PR comment is a review comment or an issue comment.

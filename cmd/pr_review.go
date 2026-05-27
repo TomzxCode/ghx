@@ -77,6 +77,7 @@ func init() {
 	reviewCmd.AddCommand(reviewSubmitCmd)
 	reviewCmd.AddCommand(reviewListCmd)
 	reviewCmd.AddCommand(reviewDiscardCmd)
+	reviewCmd.AddCommand(reviewStashCmd)
 }
 
 func runReviewSubmit(cmd *cobra.Command, args []string) error {
