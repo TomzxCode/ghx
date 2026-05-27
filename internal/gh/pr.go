@@ -305,6 +305,42 @@ func EditIssueComment(commentId, body string) error {
 	return err
 }
 
+func DeleteReviewComment(commentId string) error {
+	query := `
+	mutation($id: ID!) {
+		deletePullRequestReviewComment(input: {
+			id: $id
+		}) {
+			pullRequestReviewComment {
+				id
+			}
+		}
+	}`
+
+	_, err := GraphQL(query, map[string]interface{}{
+		"id": commentId,
+	})
+	return err
+}
+
+func DeleteIssueComment(commentId string) error {
+	query := `
+	mutation($id: ID!) {
+		deleteIssueComment(input: {
+			id: $id
+		}) {
+			issueComment {
+				id
+			}
+		}
+	}`
+
+	_, err := GraphQL(query, map[string]interface{}{
+		"id": commentId,
+	})
+	return err
+}
+
 func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 	query := `
 	query($owner: String!, $name: String!, $number: Int!) {
