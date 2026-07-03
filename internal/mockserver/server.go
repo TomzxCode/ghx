@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -157,7 +158,7 @@ func (s *Server) listIssues(vars map[string]interface{}) (interface{}, []gqlErro
 	states := statesVar(vars, "states")
 
 	filtered := s.filterIssues(owner, repo, states, vars, "since")
-	return s.paginateNodes(filtered, first, func(i int) interface{} {
+	return s.paginateNodes(filtered, first, vars, func(i int) interface{} {
 		return issueToNodeSummary(&s.scenario.Issues[filtered[i]].Issue)
 	}), nil
 }
@@ -167,7 +168,8 @@ func (s *Server) fetchAllIssues(vars map[string]interface{}) (interface{}, []gql
 	repo := strVar(vars, "repo")
 
 	filtered := s.filterIssues(owner, repo, nil, vars, "since")
-	return s.paginateNodes(filtered, 100, func(i int) interface{} {
+	sortByUpdatedAtAsc(filtered, func(i int) time.Time { return s.scenario.Issues[filtered[i]].Issue.UpdatedAt })
+	return s.paginateNodes(filtered, 100, vars, func(i int) interface{} {
 		return issueToNodeFull(&s.scenario.Issues[filtered[i]].Issue)
 	}), nil
 }
@@ -179,7 +181,7 @@ func (s *Server) listPRs(vars map[string]interface{}) (interface{}, []gqlError) 
 	states := statesVar(vars, "states")
 
 	filtered := s.filterPRs(owner, repo, states)
-	return s.paginatePRs(filtered, first), nil
+	return s.paginatePRs(filtered, first, vars), nil
 }
 
 func (s *Server) fetchAllPRs(vars map[string]interface{}) (interface{}, []gqlError) {
@@ -187,7 +189,8 @@ func (s *Server) fetchAllPRs(vars map[string]interface{}) (interface{}, []gqlErr
 	repo := strVar(vars, "repo")
 
 	filtered := s.filterPRs(owner, repo, nil)
-	return s.paginatePRsFull(filtered, 100), nil
+	sortByUpdatedAtAsc(filtered, func(i int) time.Time { return s.scenario.PRs[filtered[i]].PullRequest.UpdatedAt })
+	return s.paginatePRsFull(filtered, 100, vars), nil
 }
 
 func (s *Server) search(vars map[string]interface{}) (interface{}, []gqlError) {
@@ -274,8 +277,8 @@ func (s *Server) filterPRs(owner, repo string, states []string) []int {
 	return indices
 }
 
-func (s *Server) paginateNodes(indices []int, pageSize int, toNode func(int) interface{}) interface{} {
-	start := 0
+func (s *Server) paginateNodes(indices []int, pageSize int, vars map[string]interface{}, toNode func(int) interface{}) interface{} {
+	start := intVar(vars, "after")
 	end := start + pageSize
 	if end > len(indices) {
 		end = len(indices)
@@ -303,8 +306,8 @@ func (s *Server) paginateNodes(indices []int, pageSize int, toNode func(int) int
 	}
 }
 
-func (s *Server) paginatePRs(indices []int, pageSize int) interface{} {
-	start := 0
+func (s *Server) paginatePRs(indices []int, pageSize int, vars map[string]interface{}) interface{} {
+	start := intVar(vars, "after")
 	end := start + pageSize
 	if end > len(indices) {
 		end = len(indices)
@@ -332,8 +335,8 @@ func (s *Server) paginatePRs(indices []int, pageSize int) interface{} {
 	}
 }
 
-func (s *Server) paginatePRsFull(indices []int, pageSize int) interface{} {
-	start := 0
+func (s *Server) paginatePRsFull(indices []int, pageSize int, vars map[string]interface{}) interface{} {
+	start := intVar(vars, "after")
 	end := start + pageSize
 	if end > len(indices) {
 		end = len(indices)
@@ -423,37 +426,37 @@ func issueToNodeSummary(issue *github.Issue) map[string]interface{} {
 		commentCount = len(issue.Comments)
 	}
 	return map[string]interface{}{
-		"number":     issue.Number,
-		"title":      issue.Title,
-		"state":      issue.State,
-		"author":     actorNode(issue.Author.Login),
-		"assignees":  assigneesNode(issue.Assignees),
-		"labels":     labelsNode(issue.Labels),
-		"milestone":  milestoneNode(issue.Milestone),
-		"createdAt":  issue.CreatedAt,
-		"updatedAt":  issue.UpdatedAt,
-		"closedAt":   issue.ClosedAt,
-		"url":        issue.URL,
-		"body":       issue.Body,
-		"comments":   commentsSummary(commentCount),
+		"number":    issue.Number,
+		"title":     issue.Title,
+		"state":     issue.State,
+		"author":    actorNode(issue.Author.Login),
+		"assignees": assigneesNode(issue.Assignees),
+		"labels":    labelsNode(issue.Labels),
+		"milestone": milestoneNode(issue.Milestone),
+		"createdAt": issue.CreatedAt,
+		"updatedAt": issue.UpdatedAt,
+		"closedAt":  issue.ClosedAt,
+		"url":       issue.URL,
+		"body":      issue.Body,
+		"comments":  commentsSummary(commentCount),
 	}
 }
 
 func issueToNodeFull(issue *github.Issue) map[string]interface{} {
 	return map[string]interface{}{
-		"number":     issue.Number,
-		"title":      issue.Title,
-		"state":      issue.State,
-		"author":     actorNode(issue.Author.Login),
-		"assignees":  assigneesNode(issue.Assignees),
-		"labels":     labelsNode(issue.Labels),
-		"milestone":  milestoneNode(issue.Milestone),
-		"createdAt":  issue.CreatedAt,
-		"updatedAt":  issue.UpdatedAt,
-		"closedAt":   issue.ClosedAt,
-		"url":        issue.URL,
-		"body":       issue.Body,
-		"comments":   commentNodes(issue.Comments),
+		"number":    issue.Number,
+		"title":     issue.Title,
+		"state":     issue.State,
+		"author":    actorNode(issue.Author.Login),
+		"assignees": assigneesNode(issue.Assignees),
+		"labels":    labelsNode(issue.Labels),
+		"milestone": milestoneNode(issue.Milestone),
+		"createdAt": issue.CreatedAt,
+		"updatedAt": issue.UpdatedAt,
+		"closedAt":  issue.ClosedAt,
+		"url":       issue.URL,
+		"body":      issue.Body,
+		"comments":  commentNodes(issue.Comments),
 	}
 }
 
@@ -463,47 +466,47 @@ func prToNodeSummary(pr *github.PullRequest) map[string]interface{} {
 		commentCount = len(pr.Comments)
 	}
 	return map[string]interface{}{
-		"number":          pr.Number,
-		"title":           pr.Title,
-		"state":           pr.State,
-		"isDraft":         pr.IsDraft,
-		"reviewDecision":  pr.ReviewDecision,
-		"author":          actorNode(pr.Author.Login),
-		"assignees":       assigneesNode(pr.Assignees),
-		"labels":          labelsNode(pr.Labels),
-		"milestone":       milestoneNode(pr.Milestone),
-		"baseRefName":     pr.BaseRefName,
-		"headRefName":     pr.HeadRefName,
-		"createdAt":       pr.CreatedAt,
-		"updatedAt":       pr.UpdatedAt,
-		"mergedAt":        pr.MergedAt,
-		"closedAt":        pr.ClosedAt,
-		"url":             pr.URL,
-		"body":            pr.Body,
-		"comments":        commentsSummary(commentCount),
+		"number":         pr.Number,
+		"title":          pr.Title,
+		"state":          pr.State,
+		"isDraft":        pr.IsDraft,
+		"reviewDecision": pr.ReviewDecision,
+		"author":         actorNode(pr.Author.Login),
+		"assignees":      assigneesNode(pr.Assignees),
+		"labels":         labelsNode(pr.Labels),
+		"milestone":      milestoneNode(pr.Milestone),
+		"baseRefName":    pr.BaseRefName,
+		"headRefName":    pr.HeadRefName,
+		"createdAt":      pr.CreatedAt,
+		"updatedAt":      pr.UpdatedAt,
+		"mergedAt":       pr.MergedAt,
+		"closedAt":       pr.ClosedAt,
+		"url":            pr.URL,
+		"body":           pr.Body,
+		"comments":       commentsSummary(commentCount),
 	}
 }
 
 func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 	return map[string]interface{}{
-		"number":          pr.Number,
-		"title":           pr.Title,
-		"state":           pr.State,
-		"isDraft":         pr.IsDraft,
-		"reviewDecision":  pr.ReviewDecision,
-		"author":          actorNode(pr.Author.Login),
-		"assignees":       assigneesNode(pr.Assignees),
-		"labels":          labelsNode(pr.Labels),
-		"milestone":       milestoneNode(pr.Milestone),
-		"baseRefName":     pr.BaseRefName,
-		"headRefName":     pr.HeadRefName,
-		"createdAt":       pr.CreatedAt,
-		"updatedAt":       pr.UpdatedAt,
-		"mergedAt":        pr.MergedAt,
-		"closedAt":        pr.ClosedAt,
-		"url":             pr.URL,
-		"body":            pr.Body,
-		"comments":        commentNodes(pr.Comments),
+		"number":         pr.Number,
+		"title":          pr.Title,
+		"state":          pr.State,
+		"isDraft":        pr.IsDraft,
+		"reviewDecision": pr.ReviewDecision,
+		"author":         actorNode(pr.Author.Login),
+		"assignees":      assigneesNode(pr.Assignees),
+		"labels":         labelsNode(pr.Labels),
+		"milestone":      milestoneNode(pr.Milestone),
+		"baseRefName":    pr.BaseRefName,
+		"headRefName":    pr.HeadRefName,
+		"createdAt":      pr.CreatedAt,
+		"updatedAt":      pr.UpdatedAt,
+		"mergedAt":       pr.MergedAt,
+		"closedAt":       pr.ClosedAt,
+		"url":            pr.URL,
+		"body":           pr.Body,
+		"comments":       commentNodes(pr.Comments),
 	}
 }
 
@@ -536,25 +539,25 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		commentCount = len(pr.Comments)
 	}
 	return map[string]interface{}{
-		"__typename":      "PullRequest",
-		"number":          pr.Number,
-		"title":           pr.Title,
-		"state":           pr.State,
-		"isDraft":         pr.IsDraft,
-		"reviewDecision":  pr.ReviewDecision,
-		"author":          actorNode(pr.Author.Login),
-		"assignees":       assigneesNode(pr.Assignees),
-		"labels":          labelsNode(pr.Labels),
-		"milestone":       milestoneNode(pr.Milestone),
-		"baseRefName":     pr.BaseRefName,
-		"headRefName":     pr.HeadRefName,
-		"createdAt":       pr.CreatedAt,
-		"updatedAt":       pr.UpdatedAt,
-		"mergedAt":        pr.MergedAt,
-		"closedAt":        pr.ClosedAt,
-		"url":             pr.URL,
-		"body":            pr.Body,
-		"comments":        commentsSummary(commentCount),
+		"__typename":     "PullRequest",
+		"number":         pr.Number,
+		"title":          pr.Title,
+		"state":          pr.State,
+		"isDraft":        pr.IsDraft,
+		"reviewDecision": pr.ReviewDecision,
+		"author":         actorNode(pr.Author.Login),
+		"assignees":      assigneesNode(pr.Assignees),
+		"labels":         labelsNode(pr.Labels),
+		"milestone":      milestoneNode(pr.Milestone),
+		"baseRefName":    pr.BaseRefName,
+		"headRefName":    pr.HeadRefName,
+		"createdAt":      pr.CreatedAt,
+		"updatedAt":      pr.UpdatedAt,
+		"mergedAt":       pr.MergedAt,
+		"closedAt":       pr.ClosedAt,
+		"url":            pr.URL,
+		"body":           pr.Body,
+		"comments":       commentsSummary(commentCount),
 	}
 }
 
@@ -566,7 +569,12 @@ func matchSearchFilters(issue *github.Issue, q string) bool {
 	for _, part := range strings.Fields(q) {
 		switch {
 		case strings.HasPrefix(part, "repo:"):
+		case strings.HasPrefix(part, "sort:"):
 		case part == "is:issue":
+		case strings.HasPrefix(part, "updated:>="):
+			if d, ok := parseUpdatedSince(part); ok && issue.UpdatedAt.Before(d) {
+				return false
+			}
 		case part == "is:open":
 			if !strings.EqualFold(issue.State, "OPEN") {
 				return false
@@ -613,7 +621,12 @@ func matchSearchFiltersPR(pr *github.PullRequest, q string) bool {
 	for _, part := range strings.Fields(q) {
 		switch {
 		case strings.HasPrefix(part, "repo:"):
+		case strings.HasPrefix(part, "sort:"):
 		case part == "is:pr":
+		case strings.HasPrefix(part, "updated:>="):
+			if d, ok := parseUpdatedSince(part); ok && pr.UpdatedAt.Before(d) {
+				return false
+			}
 		case part == "is:open":
 			if !strings.EqualFold(pr.State, "OPEN") {
 				return false
@@ -738,6 +751,27 @@ func parseRepoFromQuery(q string) (string, string) {
 
 func encodeCursor(offset int) string {
 	return strconv.Itoa(offset)
+}
+
+// parseUpdatedSince parses an `updated:>=YYYY-MM-DD` search qualifier into the
+// start of that day (UTC). ok is false when the value cannot be parsed.
+func parseUpdatedSince(part string) (time.Time, bool) {
+	raw := strings.TrimPrefix(part, "updated:>=")
+	t, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// sortByUpdatedAtAsc sorts indices in place by the updatedAt timestamp returned
+// by key (key receives a position in indices), oldest-first. This mirrors the
+// ASC ordering requested by the fetchAll queries, so multi-page fetches resume
+// correctly.
+func sortByUpdatedAtAsc(indices []int, key func(pos int) time.Time) {
+	sort.Slice(indices, func(i, j int) bool {
+		return key(i).Before(key(j))
+	})
 }
 
 func writeGQL(w http.ResponseWriter, data interface{}, errs []gqlError) {

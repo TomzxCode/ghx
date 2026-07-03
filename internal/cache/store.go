@@ -11,10 +11,13 @@ import (
 	"github.com/tomzxcode/ghx/internal/github"
 )
 
-// CacheInfo records when the full cache was last populated.
+// CacheInfo records the state of the on-disk cache for a repository.
 type CacheInfo struct {
-	CachedAt time.Time `json:"cachedAt"`
-	Duration int       `json:"duration"` // minutes
+	CachedAt    time.Time  `json:"cachedAt"`
+	Duration    int        `json:"duration"`              // minutes
+	Complete    bool       `json:"complete,omitempty"`    // last full fetch reached the newest item
+	IssueCursor *time.Time `json:"issueCursor,omitempty"` // max updatedAt written for issues (resume point)
+	PRCursor    *time.Time `json:"prCursor,omitempty"`    // max updatedAt written for PRs (resume point)
 }
 
 // Store manages the on-disk cache at ~/.cache/ghx/cache.
@@ -168,17 +171,30 @@ func (s *Store) LoadAllPRs(host, owner, repo string) ([]*github.PullRequest, err
 	return prs, nil
 }
 
-// SaveCacheInfo writes the cache metadata file.
+// SaveCacheInfo writes the cache metadata file, marking the cache as complete
+// at the current time with the given duration.
 func (s *Store) SaveCacheInfo(host, owner, repo string, duration int) error {
+	info := &CacheInfo{
+		CachedAt: time.Now(),
+		Duration: duration,
+		Complete: true,
+	}
+	return s.SaveCacheInfoFull(host, owner, repo, info)
+}
+
+// SaveCacheInfoFull writes the given cache metadata atomically. Use this during
+// a fetch to persist resume cursors before the fetch completes; SaveCacheInfo
+// (above) is the convenience helper for the success case.
+func (s *Store) SaveCacheInfoFull(host, owner, repo string, info *CacheInfo) error {
 	dir := s.repoDir(host, owner, repo)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(CacheInfo{CachedAt: time.Now(), Duration: duration}, "", "  ")
+	data, err := json.MarshalIndent(info, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, ".cache_info.json"), data, 0644)
+	return atomicWrite(filepath.Join(dir, ".cache_info.json"), data, 0644)
 }
 
 // LoadCacheInfo reads the cache metadata file.
@@ -194,30 +210,38 @@ func (s *Store) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error) {
 	return &info, nil
 }
 
-// IsCacheFresh reports whether the full cache was populated within its stored duration.
+// IsCacheFresh reports whether the cache is complete and was populated within
+// its stored duration. An interrupted (incomplete) fetch is never fresh.
 func (s *Store) IsCacheFresh(host, owner, repo string) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
 		return false, err
 	}
+	if !info.Complete {
+		return false, nil
+	}
 	return time.Since(info.CachedAt) < time.Duration(info.Duration)*time.Minute, nil
 }
 
-// IsCacheFreshWithDuration reports whether the full cache was populated within the given duration.
+// IsCacheFreshWithDuration reports whether the cache is complete and was
+// populated within the given duration.
 func (s *Store) IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
 		return false, err
+	}
+	if !info.Complete {
+		return false, nil
 	}
 	return time.Since(info.CachedAt) < time.Duration(duration)*time.Minute, nil
 }
 
 // CachedRepo describes a repository found in the local cache.
 type CachedRepo struct {
-	Host      string
-	Owner     string
-	Repo      string
-	Info      *CacheInfo
+	Host       string
+	Owner      string
+	Repo       string
+	Info       *CacheInfo
 	IssueCount int
 	PRCount    int
 }
@@ -277,4 +301,34 @@ func (s *Store) ListCachedRepos() ([]CachedRepo, error) {
 		}
 	}
 	return repos, nil
+}
+
+// atomicWrite writes data to path via a temp file in the same directory followed
+// by a rename, so an interrupted write cannot leave a truncated cache metadata
+// file. Resume cursors are persisted frequently during a fetch, so atomicity
+// matters here.
+func atomicWrite(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

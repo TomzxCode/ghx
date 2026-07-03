@@ -4,43 +4,43 @@ import "time"
 
 // Issue represents a GitHub issue as stored on disk and used throughout the app.
 type Issue struct {
-	Number    int        `json:"number"`
-	Title     string     `json:"title"`
-	State     string     `json:"state"`
-	Author    Actor      `json:"author"`
-	Assignees []Actor    `json:"assignees"`
-	Labels    []Label    `json:"labels"`
-	Milestone *Milestone `json:"milestone,omitempty"`
-	CreatedAt time.Time  `json:"createdAt"`
-	UpdatedAt time.Time  `json:"updatedAt"`
-	ClosedAt  *time.Time `json:"closedAt,omitempty"`
-	URL          string    `json:"url"`
-	Body         string    `json:"body"`
-	CommentCount int       `json:"commentCount"`
-	Comments     []Comment `json:"comments"`
+	Number       int        `json:"number"`
+	Title        string     `json:"title"`
+	State        string     `json:"state"`
+	Author       Actor      `json:"author"`
+	Assignees    []Actor    `json:"assignees"`
+	Labels       []Label    `json:"labels"`
+	Milestone    *Milestone `json:"milestone,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
+	ClosedAt     *time.Time `json:"closedAt,omitempty"`
+	URL          string     `json:"url"`
+	Body         string     `json:"body"`
+	CommentCount int        `json:"commentCount"`
+	Comments     []Comment  `json:"comments"`
 }
 
 // PullRequest represents a GitHub pull request as stored on disk.
 type PullRequest struct {
-	Number      int        `json:"number"`
-	Title       string     `json:"title"`
-	State       string     `json:"state"`
-	IsDraft     bool       `json:"isDraft"`
-	Author      Actor      `json:"author"`
-	Assignees   []Actor    `json:"assignees"`
-	Labels      []Label    `json:"labels"`
-	Milestone   *Milestone `json:"milestone,omitempty"`
-	BaseRefName string     `json:"baseRefName"`
-	HeadRefName string     `json:"headRefName"`
-	CreatedAt   time.Time  `json:"createdAt"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
-	MergedAt    *time.Time `json:"mergedAt,omitempty"`
-	ClosedAt    *time.Time `json:"closedAt,omitempty"`
-	URL            string    `json:"url"`
-	Body           string    `json:"body"`
-	CommentCount   int       `json:"commentCount"`
-	Comments       []Comment `json:"comments"`
-	ReviewDecision string    `json:"reviewDecision,omitempty"`
+	Number         int        `json:"number"`
+	Title          string     `json:"title"`
+	State          string     `json:"state"`
+	IsDraft        bool       `json:"isDraft"`
+	Author         Actor      `json:"author"`
+	Assignees      []Actor    `json:"assignees"`
+	Labels         []Label    `json:"labels"`
+	Milestone      *Milestone `json:"milestone,omitempty"`
+	BaseRefName    string     `json:"baseRefName"`
+	HeadRefName    string     `json:"headRefName"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	UpdatedAt      time.Time  `json:"updatedAt"`
+	MergedAt       *time.Time `json:"mergedAt,omitempty"`
+	ClosedAt       *time.Time `json:"closedAt,omitempty"`
+	URL            string     `json:"url"`
+	Body           string     `json:"body"`
+	CommentCount   int        `json:"commentCount"`
+	Comments       []Comment  `json:"comments"`
+	ReviewDecision string     `json:"reviewDecision,omitempty"`
 }
 
 // Comment is a single issue or PR comment.
@@ -70,7 +70,10 @@ type Milestone struct {
 	Title  string `json:"title"`
 }
 
-// ProgressFunc reports progress for long-running fetches.
-// current is the number of items fetched so far; total is the expected count
-// (0 when unknown). It is invoked after each page of results is fetched.
-type ProgressFunc func(current, total int)
+// IssueBatchFunc is invoked for each page of issues during a cache fetch.
+// batch is the page's issues; total is the server-reported total (0 when
+// unknown). A non-nil error aborts the fetch.
+type IssueBatchFunc func(batch []*Issue, total int) error
+
+// PRBatchFunc is the pull-request equivalent of IssueBatchFunc.
+type PRBatchFunc func(batch []*PullRequest, total int) error

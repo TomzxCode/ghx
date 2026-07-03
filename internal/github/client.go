@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,12 +13,23 @@ import (
 	"time"
 )
 
+// Retry behaviour used when a sane value is not explicitly configured.
+const (
+	defaultMaxRetries     = 3
+	defaultInitialBackoff = 10 * time.Second
+	defaultMaxBackoff     = 60 * time.Second
+)
+
 // Client is a minimal GitHub GraphQL client.
 type Client struct {
-	token      string
-	host       string
-	endpointURL string
-	httpClient *http.Client
+	token          string
+	host           string
+	endpointURL    string
+	httpClient     *http.Client
+	maxRetries     int
+	initialBackoff time.Duration
+	maxBackoff     time.Duration
+	sleep          func(time.Duration)
 }
 
 type gqlRequest struct {
@@ -40,11 +52,11 @@ func NewClient(host string) (*Client, error) {
 	if token == "" {
 		return nil, fmt.Errorf("no GitHub token found; set GH_TOKEN or GITHUB_TOKEN, or run `gh auth login`")
 	}
-	return &Client{
+	return (&Client{
 		token:      token,
 		host:       host,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-	}, nil
+	}).withDefaults(), nil
 }
 
 // NewClientWithURL creates a client that points at a custom GraphQL endpoint URL.
@@ -54,12 +66,30 @@ func NewClientWithURL(endpointURL, token, host string) (*Client, error) {
 	if host == "" {
 		host = "mock"
 	}
-	return &Client{
+	return (&Client{
 		token:       token,
 		host:        host,
 		endpointURL: endpointURL,
 		httpClient:  &http.Client{Timeout: 30 * time.Second},
-	}, nil
+	}).withDefaults(), nil
+}
+
+// withDefaults populates retry/backoff fields with sensible defaults when the
+// caller has not set them. It is a no-op for fields already configured.
+func (c *Client) withDefaults() *Client {
+	if c.maxRetries == 0 {
+		c.maxRetries = defaultMaxRetries
+	}
+	if c.initialBackoff == 0 {
+		c.initialBackoff = defaultInitialBackoff
+	}
+	if c.maxBackoff == 0 {
+		c.maxBackoff = defaultMaxBackoff
+	}
+	if c.sleep == nil {
+		c.sleep = time.Sleep
+	}
+	return c
 }
 
 func resolveToken(host string) string {
@@ -91,12 +121,44 @@ func (c *Client) endpoint() string {
 }
 
 // Query executes a GraphQL query and unmarshals the data field into result.
+// It retries transient GitHub rate limit responses (HTTP 429 and secondary
+// rate limit 403s) using exponential backoff, honouring GitHub's Retry-After
+// header when present. Other errors are returned immediately.
 func (c *Client) Query(query string, variables map[string]interface{}, result interface{}) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: variables})
 	if err != nil {
 		return fmt.Errorf("marshaling request: %w", err)
 	}
 
+	maxAttempts := c.maxRetries + 1
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			wait := c.nextBackoff(lastErr, attempt-1)
+			fmt.Fprintf(os.Stderr, "gh-cached: GitHub rate limit hit, retrying in %s (attempt %d of %d)...\n", wait, attempt+1, maxAttempts)
+			c.sleep(wait)
+		}
+
+		lastErr = c.queryOnce(body, result)
+		if lastErr == nil {
+			return nil
+		}
+
+		var rle *RateLimitError
+		if !errors.As(lastErr, &rle) {
+			return lastErr // not retryable
+		}
+	}
+
+	var rle *RateLimitError
+	if errors.As(lastErr, &rle) {
+		rle.Attempts = maxAttempts
+	}
+	return lastErr
+}
+
+// queryOnce performs a single GraphQL request attempt and parses the response.
+func (c *Client) queryOnce(body []byte, result interface{}) error {
 	req, err := http.NewRequest("POST", c.endpoint(), bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
@@ -114,6 +176,10 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading response body: %w", err)
+	}
+
+	if rle, ok := parseRateLimit(resp, respBody); ok {
+		return rle
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -139,4 +205,22 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 		}
 	}
 	return nil
+}
+
+// nextBackoff computes the wait before the next attempt. When the previous
+// error carried a Retry-After value, that is used (capped at maxBackoff);
+// otherwise exponential backoff is applied (initialBackoff * 2^attempt).
+func (c *Client) nextBackoff(err error, attempt int) time.Duration {
+	var rle *RateLimitError
+	if errors.As(err, &rle) && rle.RetryAfter > 0 {
+		if rle.RetryAfter > c.maxBackoff {
+			return c.maxBackoff
+		}
+		return rle.RetryAfter
+	}
+	wait := c.initialBackoff << attempt
+	if wait <= 0 || wait > c.maxBackoff {
+		return c.maxBackoff
+	}
+	return wait
 }

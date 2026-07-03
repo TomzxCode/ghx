@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -89,7 +90,7 @@ func TestClient_FetchAllPRs(t *testing.T) {
 		t.Fatalf("NewClientWithURL: %v", err)
 	}
 
-	prs, err := client.FetchAllPRs("acme", "myproject", nil, nil)
+	prs, err := client.FetchAllPRs("acme", "myproject", nil)
 	if err != nil {
 		t.Fatalf("FetchAllPRs: %v", err)
 	}
@@ -106,12 +107,13 @@ func TestClient_FetchAllIssues_ProgressCallback(t *testing.T) {
 		t.Fatalf("NewClientWithURL: %v", err)
 	}
 
-	var lastCurrent, lastTotal int
+	var lastTotal, count int
 	calls := 0
-	cb := func(current, total int) {
-		lastCurrent = current
+	cb := func(batch []*github.Issue, total int) error {
 		lastTotal = total
+		count += len(batch)
 		calls++
+		return nil
 	}
 
 	issues, err := client.FetchAllIssues("acme", "myproject", nil, cb)
@@ -122,13 +124,13 @@ func TestClient_FetchAllIssues_ProgressCallback(t *testing.T) {
 		t.Fatalf("got %d issues, want 5", len(issues))
 	}
 	if calls == 0 {
-		t.Fatal("progress callback was never invoked")
+		t.Fatal("batch callback was never invoked")
 	}
 	if lastTotal != 5 {
 		t.Errorf("last total = %d, want 5", lastTotal)
 	}
-	if lastCurrent != 5 {
-		t.Errorf("last current = %d, want 5", lastCurrent)
+	if count != 5 {
+		t.Errorf("batched count = %d, want 5", count)
 	}
 }
 
@@ -140,15 +142,16 @@ func TestClient_FetchAllPRs_ProgressCallback(t *testing.T) {
 		t.Fatalf("NewClientWithURL: %v", err)
 	}
 
-	var lastCurrent, lastTotal int
+	var lastTotal, count int
 	calls := 0
-	cb := func(current, total int) {
-		lastCurrent = current
+	cb := func(batch []*github.PullRequest, total int) error {
 		lastTotal = total
+		count += len(batch)
 		calls++
+		return nil
 	}
 
-	prs, err := client.FetchAllPRs("acme", "myproject", nil, cb)
+	prs, err := client.FetchAllPRs("acme", "myproject", cb)
 	if err != nil {
 		t.Fatalf("FetchAllPRs: %v", err)
 	}
@@ -156,13 +159,13 @@ func TestClient_FetchAllPRs_ProgressCallback(t *testing.T) {
 		t.Fatalf("got %d PRs, want 3", len(prs))
 	}
 	if calls == 0 {
-		t.Fatal("progress callback was never invoked")
+		t.Fatal("batch callback was never invoked")
 	}
 	if lastTotal != 3 {
 		t.Errorf("last total = %d, want 3", lastTotal)
 	}
-	if lastCurrent != 3 {
-		t.Errorf("last current = %d, want 3", lastCurrent)
+	if count != 3 {
+		t.Errorf("batched count = %d, want 3", count)
 	}
 }
 
@@ -312,7 +315,7 @@ func TestClient_FetchAndCache(t *testing.T) {
 		}
 	}
 
-	prs, err := client.FetchAllPRs("acme", "myproject", nil, nil)
+	prs, err := client.FetchAllPRs("acme", "myproject", nil)
 	if err != nil {
 		t.Fatalf("FetchAllPRs: %v", err)
 	}
@@ -397,7 +400,7 @@ func TestClient_GenerateLargeAndFetch(t *testing.T) {
 		t.Errorf("got %d issues, want 20", len(issues))
 	}
 
-	prs, err := client.FetchAllPRs("acme", "testrepo", nil, nil)
+	prs, err := client.FetchAllPRs("acme", "testrepo", nil)
 	if err != nil {
 		t.Fatalf("FetchAllPRs: %v", err)
 	}
@@ -414,5 +417,183 @@ func TestClient_GenerateLargeAndFetch(t *testing.T) {
 	}
 	if totalComments == 0 {
 		t.Error("expected some comments")
+	}
+}
+
+// advanceCursor mirrors cmd.advanceCursor so tests can reproduce the cache
+// command's resume-cursor bookkeeping without depending on the cmd package.
+func advanceCursor(cur **time.Time, t time.Time) {
+	if t.IsZero() {
+		return
+	}
+	if *cur == nil || t.After(**cur) {
+		x := t
+		*cur = &x
+	}
+}
+
+// TestClient_FetchAllIssues_OldestFirst verifies the cold fetch returns issues
+// ordered by updatedAt ascending, which is what makes resume-by-cursor correct.
+func TestClient_FetchAllIssues_OldestFirst(t *testing.T) {
+	srv := startServer(t, sampleScenario())
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	issues, err := client.FetchAllIssues("acme", "myproject", nil, nil)
+	if err != nil {
+		t.Fatalf("FetchAllIssues: %v", err)
+	}
+	for i := 1; i < len(issues); i++ {
+		if issues[i].UpdatedAt.Before(issues[i-1].UpdatedAt) {
+			t.Errorf("issues not ascending by updatedAt: #%d (%v) < #%d (%v)",
+				issues[i].Number, issues[i].UpdatedAt, issues[i-1].Number, issues[i-1].UpdatedAt)
+		}
+	}
+}
+
+// TestCache_ResumeAfterInterruption simulates an interrupted cold fetch (e.g. a
+// rate limit after the first page) and verifies that:
+//   - issues fetched so far are already on disk (incremental writes);
+//   - the resume cursor was persisted;
+//   - re-running resumes from the cursor and reaches a complete 150-issue cache.
+func TestCache_ResumeAfterInterruption(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:          3,
+		Repos:             []string{"acme/big"},
+		History:           60 * 24 * time.Hour,
+		IssuesPerRepo:     150,
+		PRsPerRepo:        0,
+		CommentsPerIssue:  0,
+		CloseRate:         0.3,
+		Seed:              7,
+		AssigneesPerIssue: 1,
+		LabelsPerItem:     1,
+		MilestonesPerRepo: 1,
+	}
+	scenario := mockserver.Generate(cfg)
+	srv := startServer(t, scenario)
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+	store := cache.NewStoreWithPath(t.TempDir())
+	info := &cache.CacheInfo{}
+
+	// First pass: write + persist cursor after each page, but abort after the
+	// first page to simulate an interruption.
+	page := 0
+	interruptHandler := func(batch []*github.Issue, total int) error {
+		page++
+		for _, issue := range batch {
+			if err := store.SaveIssue("mock", "acme", "big", issue); err != nil {
+				return err
+			}
+			advanceCursor(&info.IssueCursor, issue.UpdatedAt)
+		}
+		if err := store.SaveCacheInfoFull("mock", "acme", "big", info); err != nil {
+			return err
+		}
+		if page == 1 {
+			return errors.New("simulated interruption after first page")
+		}
+		return nil
+	}
+	if _, err := client.FetchAllIssues("acme", "big", nil, interruptHandler); err == nil {
+		t.Fatal("expected interruption error on first pass")
+	}
+
+	// Incremental writes: the first page is already on disk.
+	onDisk, err := store.LoadAllIssues("mock", "acme", "big")
+	if err != nil {
+		t.Fatalf("LoadAllIssues after interruption: %v", err)
+	}
+	if len(onDisk) == 0 {
+		t.Fatal("no issues persisted after first page; incremental writes are broken")
+	}
+
+	// Cursor persisted; cache not marked complete.
+	saved, err := store.LoadCacheInfo("mock", "acme", "big")
+	if err != nil {
+		t.Fatalf("LoadCacheInfo after interruption: %v", err)
+	}
+	if saved.IssueCursor == nil {
+		t.Fatal("resume cursor was not persisted")
+	}
+	if saved.Complete {
+		t.Error("cache should not be marked complete after an interruption")
+	}
+
+	// Resume: fetch from the cursor with a handler that completes.
+	resumeHandler := func(batch []*github.Issue, total int) error {
+		for _, issue := range batch {
+			if err := store.SaveIssue("mock", "acme", "big", issue); err != nil {
+				return err
+			}
+			advanceCursor(&info.IssueCursor, issue.UpdatedAt)
+		}
+		return store.SaveCacheInfoFull("mock", "acme", "big", info)
+	}
+	if _, err := client.FetchAllIssues("acme", "big", info.IssueCursor, resumeHandler); err != nil {
+		t.Fatalf("resume FetchAllIssues: %v", err)
+	}
+	info.Complete = true
+	info.CachedAt = time.Now()
+	info.Duration = 60
+	if err := store.SaveCacheInfoFull("mock", "acme", "big", info); err != nil {
+		t.Fatalf("final SaveCacheInfoFull: %v", err)
+	}
+
+	onDisk2, err := store.LoadAllIssues("mock", "acme", "big")
+	if err != nil {
+		t.Fatalf("LoadAllIssues after resume: %v", err)
+	}
+	if len(onDisk2) != 150 {
+		t.Errorf("after resume got %d issues, want 150 (resume lost or duplicated data)", len(onDisk2))
+	}
+
+	// Freshness now reflects a complete cache.
+	if fresh, _ := store.IsCacheFresh("mock", "acme", "big"); !fresh {
+		t.Error("cache should be fresh after a complete resume")
+	}
+}
+
+// TestClient_FetchPRsUpdated verifies the search-based PR delta path returns
+// only PRs updated at or after the cutoff.
+func TestClient_FetchPRsUpdated(t *testing.T) {
+	srv := startServer(t, sampleScenario())
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	// Pick a cutoff that leaves some PRs after it.
+	all, err := client.FetchAllPRs("acme", "myproject", nil)
+	if err != nil {
+		t.Fatalf("FetchAllPRs: %v", err)
+	}
+	var cutoff time.Time
+	for _, pr := range all {
+		if pr.Number == 7 { // "WIP: refactor auth", most recently updated in the sample
+			cutoff = pr.UpdatedAt.Add(-1 * time.Second)
+		}
+	}
+
+	got, err := client.FetchPRsUpdated("acme", "myproject", cutoff, nil)
+	if err != nil {
+		t.Fatalf("FetchPRsUpdated: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected at least one PR updated since the cutoff")
+	}
+	for _, pr := range got {
+		day := cutoff.UTC().Truncate(24 * time.Hour)
+		if pr.UpdatedAt.Before(day) {
+			t.Errorf("PR #%d updatedAt=%v is before cutoff day %v", pr.Number, pr.UpdatedAt, day)
+		}
 	}
 }

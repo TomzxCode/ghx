@@ -177,3 +177,51 @@ func TestIsCacheFreshWithDuration_Stale(t *testing.T) {
 		t.Error("expected not fresh with duration=0")
 	}
 }
+
+func TestSaveCacheInfoFull_PersistsCursorsAndComplete(t *testing.T) {
+	s := newTempStore(t)
+
+	cursor := time.Date(2024, 1, 15, 12, 30, 0, 0, time.UTC)
+	if err := s.SaveCacheInfoFull("github.com", "owner", "repo", &CacheInfo{
+		CachedAt:    time.Now(),
+		Duration:    60,
+		Complete:    false,
+		IssueCursor: &cursor,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+
+	info, err := s.LoadCacheInfo("github.com", "owner", "repo")
+	if err != nil {
+		t.Fatalf("LoadCacheInfo: %v", err)
+	}
+	if info.Complete {
+		t.Error("Complete should be false for a partial fetch")
+	}
+	if info.IssueCursor == nil || !info.IssueCursor.Equal(cursor) {
+		t.Errorf("IssueCursor = %v, want %v", info.IssueCursor, cursor)
+	}
+	// An incomplete cache must not be considered fresh even within duration.
+	if fresh, _ := s.IsCacheFresh("github.com", "owner", "repo"); fresh {
+		t.Error("incomplete cache should not be fresh")
+	}
+}
+
+func TestIsCacheFresh_RequiresComplete(t *testing.T) {
+	s := newTempStore(t)
+
+	// Persist an incomplete cache (e.g. an interrupted fetch advanced the cursor
+	// but never marked completion). It must not be served as fresh.
+	cursor := time.Now()
+	if err := s.SaveCacheInfoFull("github.com", "owner", "repo", &CacheInfo{
+		CachedAt:    time.Now(),
+		Duration:    60,
+		Complete:    false,
+		IssueCursor: &cursor,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+	if fresh, _ := s.IsCacheFresh("github.com", "owner", "repo"); fresh {
+		t.Error("incomplete cache should not be fresh")
+	}
+}

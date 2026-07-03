@@ -65,43 +65,43 @@ type commentNode struct {
 }
 
 type issueNode struct {
-	Number    int           `json:"number"`
-	Title     string        `json:"title"`
-	State     string        `json:"state"`
-	Author    actorNode     `json:"author"`
+	Number    int                         `json:"number"`
+	Title     string                      `json:"title"`
+	State     string                      `json:"state"`
+	Author    actorNode                   `json:"author"`
 	Assignees struct{ Nodes []actorNode } `json:"assignees"`
-	Labels    struct{ Nodes []labelNode }  `json:"labels"`
-	Milestone *milestoneNode               `json:"milestone"`
-	CreatedAt time.Time     `json:"createdAt"`
-	UpdatedAt time.Time     `json:"updatedAt"`
-	ClosedAt  *time.Time    `json:"closedAt"`
-	URL       string        `json:"url"`
-	Body      string        `json:"body"`
-	Comments struct {
+	Labels    struct{ Nodes []labelNode } `json:"labels"`
+	Milestone *milestoneNode              `json:"milestone"`
+	CreatedAt time.Time                   `json:"createdAt"`
+	UpdatedAt time.Time                   `json:"updatedAt"`
+	ClosedAt  *time.Time                  `json:"closedAt"`
+	URL       string                      `json:"url"`
+	Body      string                      `json:"body"`
+	Comments  struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
 	} `json:"comments"`
 }
 
 type prNode struct {
-	Number         int            `json:"number"`
-	Title          string         `json:"title"`
-	State          string         `json:"state"`
-	IsDraft        bool           `json:"isDraft"`
-	ReviewDecision string         `json:"reviewDecision"`
-	Author         actorNode      `json:"author"`
+	Number         int                         `json:"number"`
+	Title          string                      `json:"title"`
+	State          string                      `json:"state"`
+	IsDraft        bool                        `json:"isDraft"`
+	ReviewDecision string                      `json:"reviewDecision"`
+	Author         actorNode                   `json:"author"`
 	Assignees      struct{ Nodes []actorNode } `json:"assignees"`
-	Labels         struct{ Nodes []labelNode }  `json:"labels"`
-	Milestone      *milestoneNode               `json:"milestone"`
-	BaseRefName    string         `json:"baseRefName"`
-	HeadRefName    string         `json:"headRefName"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
-	MergedAt       *time.Time     `json:"mergedAt"`
-	ClosedAt       *time.Time     `json:"closedAt"`
-	URL            string         `json:"url"`
-	Body           string         `json:"body"`
-	Comments struct {
+	Labels         struct{ Nodes []labelNode } `json:"labels"`
+	Milestone      *milestoneNode              `json:"milestone"`
+	BaseRefName    string                      `json:"baseRefName"`
+	HeadRefName    string                      `json:"headRefName"`
+	CreatedAt      time.Time                   `json:"createdAt"`
+	UpdatedAt      time.Time                   `json:"updatedAt"`
+	MergedAt       *time.Time                  `json:"mergedAt"`
+	ClosedAt       *time.Time                  `json:"closedAt"`
+	URL            string                      `json:"url"`
+	Body           string                      `json:"body"`
+	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
 	} `json:"comments"`
@@ -109,25 +109,25 @@ type prNode struct {
 
 // searchNode covers both Issue and PullRequest fields from a search result.
 type searchNode struct {
-	Typename       string         `json:"__typename"`
-	Number         int            `json:"number"`
-	Title          string         `json:"title"`
-	State          string         `json:"state"`
-	IsDraft        bool           `json:"isDraft"`
-	ReviewDecision string         `json:"reviewDecision"`
-	Author         actorNode      `json:"author"`
+	Typename       string                      `json:"__typename"`
+	Number         int                         `json:"number"`
+	Title          string                      `json:"title"`
+	State          string                      `json:"state"`
+	IsDraft        bool                        `json:"isDraft"`
+	ReviewDecision string                      `json:"reviewDecision"`
+	Author         actorNode                   `json:"author"`
 	Assignees      struct{ Nodes []actorNode } `json:"assignees"`
-	Labels         struct{ Nodes []labelNode }  `json:"labels"`
-	Milestone      *milestoneNode               `json:"milestone"`
-	BaseRefName    string         `json:"baseRefName"`
-	HeadRefName    string         `json:"headRefName"`
-	CreatedAt      time.Time      `json:"createdAt"`
-	UpdatedAt      time.Time      `json:"updatedAt"`
-	MergedAt       *time.Time     `json:"mergedAt"`
-	ClosedAt       *time.Time     `json:"closedAt"`
-	URL            string         `json:"url"`
-	Body           string         `json:"body"`
-	Comments struct {
+	Labels         struct{ Nodes []labelNode } `json:"labels"`
+	Milestone      *milestoneNode              `json:"milestone"`
+	BaseRefName    string                      `json:"baseRefName"`
+	HeadRefName    string                      `json:"headRefName"`
+	CreatedAt      time.Time                   `json:"createdAt"`
+	UpdatedAt      time.Time                   `json:"updatedAt"`
+	MergedAt       *time.Time                  `json:"mergedAt"`
+	ClosedAt       *time.Time                  `json:"closedAt"`
+	URL            string                      `json:"url"`
+	Body           string                      `json:"body"`
+	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
 	} `json:"comments"`
@@ -331,7 +331,7 @@ query($query: String!, $first: Int!, $after: String) {
 const fetchAllIssuesQuery = `
 query($owner: String!, $repo: String!, $after: String, $since: DateTime) {
   repository(owner: $owner, name: $repo) {
-    issues(first: 100, states: [OPEN, CLOSED], filterBy: {since: $since}, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    issues(first: 100, states: [OPEN, CLOSED], filterBy: {since: $since}, after: $after, orderBy: {field: UPDATED_AT, direction: ASC}) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -513,11 +513,12 @@ func (c *Client) GetIssue(owner, repo string, number int) (*Issue, error) {
 	return nodeToIssue(result.Repository.Issue), nil
 }
 
-// FetchAllIssues retrieves every issue (all states) with comments for caching.
-// If since is non-nil, only issues updated at or after that time are fetched (delta update).
-// progress (optional) is invoked after each page with the running count and the
-// server-reported total.
-func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, progress ProgressFunc) ([]*Issue, error) {
+// FetchAllIssues retrieves every issue (all states) with comments for caching,
+// oldest-updated-first. If since is non-nil, only issues updated at or after
+// that time are fetched (delta update / resume). onBatch is invoked with each
+// page as it arrives so callers can persist incrementally; a non-nil error from
+// onBatch aborts the fetch.
+func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch IssueBatchFunc) ([]*Issue, error) {
 	var issues []*Issue
 	var cursor string
 	total := 0
@@ -548,19 +549,23 @@ func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, progress P
 		}
 
 		if err := c.Query(fetchAllIssuesQuery, vars, &result); err != nil {
-			return nil, err
+			return issues, err
 		}
 
 		if total == 0 {
 			total = result.Repository.Issues.TotalCount
 		}
 
+		var batch []*Issue
 		for i := range result.Repository.Issues.Nodes {
-			issues = append(issues, nodeToIssue(&result.Repository.Issues.Nodes[i]))
+			batch = append(batch, nodeToIssue(&result.Repository.Issues.Nodes[i]))
 		}
+		issues = append(issues, batch...)
 
-		if progress != nil {
-			progress(len(issues), total)
+		if onBatch != nil {
+			if err := onBatch(batch, total); err != nil {
+				return issues, err
+			}
 		}
 
 		if !result.Repository.Issues.PageInfo.HasNextPage {
@@ -636,7 +641,7 @@ query($query: String!, $first: Int!, $after: String) {
 const fetchAllPRsQuery = `
 query($owner: String!, $repo: String!, $after: String) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: ASC}) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -810,12 +815,12 @@ func (c *Client) GetPR(owner, repo string, number int) (*PullRequest, error) {
 	return nodeToPR(result.Repository.PullRequest), nil
 }
 
-// FetchAllPRs retrieves every pull request (all states) with comments for caching.
-// If since is non-nil, pagination stops early once a PR updated before that time is seen.
-// progress (optional) is invoked after each page. In a delta fetch (since != nil) the
-// reported total is 0 (unknown) because the server's totalCount counts all PRs, not
-// just updated ones; in a full fetch the real server-reported total is used.
-func (c *Client) FetchAllPRs(owner, repo string, since *time.Time, progress ProgressFunc) ([]*PullRequest, error) {
+// FetchAllPRs retrieves every pull request (all states) with comments for
+// caching, oldest-updated-first. It is intended for the cold/full cache path
+// (the pullRequests connection has no server-side date filter, so delta/resume
+// is handled by FetchPRsUpdated). onBatch is invoked per page so callers can
+// persist incrementally; a non-nil error aborts the fetch.
+func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRequest, error) {
 	var prs []*PullRequest
 	var cursor string
 	total := 0
@@ -843,34 +848,26 @@ func (c *Client) FetchAllPRs(owner, repo string, since *time.Time, progress Prog
 		}
 
 		if err := c.Query(fetchAllPRsQuery, vars, &result); err != nil {
-			return nil, err
+			return prs, err
 		}
 
 		if total == 0 {
 			total = result.Repository.PullRequests.TotalCount
 		}
 
-		done := false
+		var batch []*PullRequest
 		for i := range result.Repository.PullRequests.Nodes {
-			n := &result.Repository.PullRequests.Nodes[i]
-			if since != nil && n.UpdatedAt.Before(*since) {
-				done = true
-				break
+			batch = append(batch, nodeToPR(&result.Repository.PullRequests.Nodes[i]))
+		}
+		prs = append(prs, batch...)
+
+		if onBatch != nil {
+			if err := onBatch(batch, total); err != nil {
+				return prs, err
 			}
-			prs = append(prs, nodeToPR(n))
 		}
 
-		if progress != nil {
-			// Delta scans cannot produce a meaningful total (server counts all PRs),
-			// so report 0 to signal an indeterminate progress indicator.
-			progressTotal := total
-			if since != nil {
-				progressTotal = 0
-			}
-			progress(len(prs), progressTotal)
-		}
-
-		if done || !result.Repository.PullRequests.PageInfo.HasNextPage {
+		if !result.Repository.PullRequests.PageInfo.HasNextPage {
 			break
 		}
 		cursor = result.Repository.PullRequests.PageInfo.EndCursor
@@ -879,8 +876,89 @@ func (c *Client) FetchAllPRs(owner, repo string, since *time.Time, progress Prog
 	return prs, nil
 }
 
+const searchPRsForCacheQuery = `
+query($query: String!, $first: Int!, $after: String) {
+  search(query: $query, type: ISSUE, first: $first, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      __typename
+      ... on PullRequest {
+        number title state isDraft reviewDecision
+        author { login }
+        assignees(first: 10) { nodes { login } }
+        labels(first: 20) { nodes { name color } }
+        milestone { number title }
+        baseRefName headRefName
+        createdAt updatedAt mergedAt closedAt url body
+        comments(first: 100) {
+          totalCount
+          nodes { id author { login } body createdAt updatedAt url }
+        }
+      }
+    }
+  }
+}`
+
+// FetchPRsUpdated retrieves pull requests updated at or after since via the
+// search API, for delta updates and resuming an interrupted fetch. The search
+// connection is used because the pullRequests connection has no server-side
+// date filter. Note that GitHub's search `updated:` qualifier is day-granular
+// and capped at 1000 results, so very large/active repos may need a --force
+// cold fetch. onBatch is invoked per page so callers can persist incrementally.
+func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PRBatchFunc) ([]*PullRequest, error) {
+	q := fmt.Sprintf("repo:%s/%s is:pr updated:>=%s", owner, repo, since.UTC().Format("2006-01-02"))
+	var prs []*PullRequest
+	var cursor string
+
+	for {
+		pageSize := 100
+		vars := map[string]interface{}{
+			"query": q,
+			"first": pageSize,
+		}
+		if cursor != "" {
+			vars["after"] = cursor
+		}
+
+		var result struct {
+			Search struct {
+				PageInfo struct {
+					HasNextPage bool   `json:"hasNextPage"`
+					EndCursor   string `json:"endCursor"`
+				} `json:"pageInfo"`
+				Nodes []searchNode `json:"nodes"`
+			} `json:"search"`
+		}
+
+		if err := c.Query(searchPRsForCacheQuery, vars, &result); err != nil {
+			return prs, err
+		}
+
+		var batch []*PullRequest
+		for i := range result.Search.Nodes {
+			n := &result.Search.Nodes[i]
+			if n.Typename == "PullRequest" && n.Number > 0 {
+				batch = append(batch, searchNodeToPR(n))
+			}
+		}
+		prs = append(prs, batch...)
+
+		if onBatch != nil {
+			if err := onBatch(batch, 0); err != nil {
+				return prs, err
+			}
+		}
+
+		if !result.Search.PageInfo.HasNextPage {
+			break
+		}
+		cursor = result.Search.PageInfo.EndCursor
+	}
+
+	return prs, nil
+}
+
 // ---------------------------------------------------------------------------
-// Search query builders
 // ---------------------------------------------------------------------------
 
 func buildIssueSearchQuery(owner, repo string, opts IssueListOptions) string {
