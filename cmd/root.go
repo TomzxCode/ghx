@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
-	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/version"
 )
 
@@ -46,6 +46,7 @@ func init() {
 	rootCmd.AddCommand(prCmd)
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(repoCmd)
+	rootCmd.AddCommand(statsCmd)
 }
 
 // getRepo resolves the target repository from the --repo flag or the current
