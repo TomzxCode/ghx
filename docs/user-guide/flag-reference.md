@@ -141,6 +141,7 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 | `--state string` | `-s` | `all` | Filter by PR state: `open`, `closed`, `merged`, or `all` |
 | `--output string` | `-o` | `stats-report.html` | Output HTML file path |
 | `--include-bots` | | `false` | Include bot accounts as reviewers |
+| `--list-prs` | | `false` | Include the table of individual pull requests (can be large) |
 
 ## mock serve
 

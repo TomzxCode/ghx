@@ -20,6 +20,7 @@ var (
 	statsState       string
 	statsOutput      string
 	statsIncludeBots bool
+	statsListPRs     bool
 )
 
 var statsCmd = &cobra.Command{
@@ -46,6 +47,7 @@ func init() {
 	statsCmd.Flags().StringVarP(&statsState, "state", "s", "all", "Filter by PR state: {open|closed|merged|all}")
 	statsCmd.Flags().StringVarP(&statsOutput, "output", "o", "stats-report.html", "Output HTML file path")
 	statsCmd.Flags().BoolVar(&statsIncludeBots, "include-bots", false, "Include bot accounts as reviewers")
+	statsCmd.Flags().BoolVar(&statsListPRs, "list-prs", false, "Include the table of individual pull requests (can be large)")
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
@@ -86,6 +88,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 		To:          to,
 		State:       statsState,
 		IncludeBots: statsIncludeBots,
+		ListPRs:     statsListPRs,
 	}
 
 	report := buildReport(repos, allPRs, filters)
