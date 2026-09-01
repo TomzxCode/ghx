@@ -128,6 +128,20 @@ These flags apply to all commands.
 
 No command-specific flags. Uses only the global `--cache-dir`.
 
+## stats
+
+Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the repository is resolved from `--repo` or the current directory's git remote.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--author strings` | `-A` | | Only count PRs authored by these users |
+| `--reviewer strings` | | | Only count comments by these reviewers |
+| `--from string` | | | Period start (`YYYY-MM-DD` or RFC3339) |
+| `--to string` | | | Period end, inclusive (`YYYY-MM-DD` or RFC3339) |
+| `--state string` | `-s` | `all` | Filter by PR state: `open`, `closed`, `merged`, or `all` |
+| `--output string` | `-o` | `stats-report.html` | Output HTML file path |
+| `--include-bots` | | `false` | Include bot accounts as reviewers |
+
 ## mock serve
 
 | Flag | Default | Description |

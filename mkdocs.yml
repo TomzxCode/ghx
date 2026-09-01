@@ -47,6 +47,7 @@ nav:
     - Comments: user-guide/comments.md
     - Reviews: user-guide/reviews.md
     - Repositories: user-guide/repositories.md
+    - Stats: user-guide/stats.md
     - Mock Server: user-guide/mock-server.md
     - Flag Reference: user-guide/flag-reference.md
   - Context:

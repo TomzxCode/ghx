@@ -557,8 +557,18 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		"closedAt":       pr.ClosedAt,
 		"url":            pr.URL,
 		"body":           pr.Body,
-		"comments":       commentsSummary(commentCount),
+		"comments":       commentNodesWithCount(commentCount, pr.Comments),
 	}
+}
+
+// commentNodesWithCount mirrors the real search API, which returns the comment
+// nodes requested by the query alongside the total count. When the scenario
+// stores only a count (no cached comment bodies), the node list is empty.
+func commentNodesWithCount(totalCount int, comments []github.Comment) map[string]interface{} {
+	if len(comments) == 0 {
+		return commentsSummary(totalCount)
+	}
+	return commentNodes(comments)
 }
 
 // ---------------------------------------------------------------------------
