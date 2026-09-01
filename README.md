@@ -37,6 +37,8 @@ ghx cache
 ghx cache --repo cli/cli
 ghx cache --cache-duration 120   # treat cache as fresh for 2 hours
 ghx cache --cache-duration 0     # always re-fetch (delta)
+ghx cache --since 2026-09-01     # refresh entries created/updated since a date
+ghx cache --type issues            # refresh only issues (or prs)
 ghx cache --force                  # force full re-fetch
 ```
 
@@ -267,11 +269,32 @@ ghx issue comment 42 --body-file -
 ghx issue view 42 --ids                 # show comment IDs
 ```
 
+### Stats
+
+Generate an HTML report of pull request activity (lead times, review
+engagement, PR sizes, trends) for one or more repositories:
+
+```bash
+ghx cache                                            # populate the cache first
+ghx stats --from 2026-05-01 --to 2026-05-31          # current repository
+ghx stats acme/widget acme/gadget --from 2026-05-01 --to 2026-05-31 \
+    --author alice,carol --reviewer alice,bob -o may-report.html
+```
+
+The report includes summary cards, a monthly trend chart, an author × reviewer
+matrix, per-author lead times (time to merge, time in draft, time to first
+review, time to approve), contribution and PR size breakdowns, reviewer
+engagement with review-request response times, a PR size versus merge time
+table, peak-activity and size-distribution charts, notable PR lists, and an
+optional appendix of individual PRs (`--list-prs`).
+Run `ghx cache --force` once after upgrading so reports can use the review,
+timeline and size data collected during caching.
+
 ## How caching works
 
 | Command | Cache behaviour |
 |---|---|
-| `cache` | Fetches everything (all states, with comments) and writes one JSON file per issue/PR. Skips if cache is younger than `--cache-duration`. |
+| `cache` | Fetches everything (all states, with comments) and writes one JSON file per issue/PR. Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
 | `issue list` / `pr list` | Reads all cached files and filters in-memory when cache is fresh; falls back to the GitHub API with server-side filters otherwise. |
 | `issue view` / `pr view` | Serves from the individual cached file when it is less than 60 minutes old; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
 
@@ -291,6 +314,9 @@ ghx issue view 42 --ids                 # show comment IDs
 |---|---|---|
 | `--cache-duration int` | `60` | Minutes before the cache is considered stale |
 | `--force` | `false` | Re-fetch even if the cache is still fresh (full fetch, not delta) |
+| `--since string` | | Only refresh entries created or updated since this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
+| `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
+| `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |
 
 ### `issue list`
 
@@ -341,6 +367,20 @@ ghx issue view 42 --ids                 # show comment IDs
 | `-c, --comments` | Show comments |
 | `--json` | Output as JSON |
 | `--refresh` | Force fetch from GitHub and update cache |
+
+### `stats`
+
+| Flag | Default | Description |
+|---|---|---|
+| `-A, --author strings` | | Only count PRs authored by these users |
+| `--reviewer strings` | | Only count comments by these reviewers |
+| `--from string` | | Period start (`YYYY-MM-DD` or RFC3339) |
+| `--to string` | | Period end, inclusive (`YYYY-MM-DD` or RFC3339) |
+| `-s, --state string` | `all` | `open` \| `closed` \| `merged` \| `all` |
+| `-o, --output string` | `stats-report.html` | Output HTML file path |
+| `--include-bots` | `false` | Include bot accounts as reviewers |
+| `--top int` | `5` | Number of pull requests per notable-PRs list |
+| `--list-prs` | `false` | Include the table of individual pull requests (can be large) |
 
 ## Related projects
 

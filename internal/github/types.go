@@ -22,25 +22,57 @@ type Issue struct {
 
 // PullRequest represents a GitHub pull request as stored on disk.
 type PullRequest struct {
-	Number         int        `json:"number"`
-	Title          string     `json:"title"`
-	State          string     `json:"state"`
-	IsDraft        bool       `json:"isDraft"`
-	Author         Actor      `json:"author"`
-	Assignees      []Actor    `json:"assignees"`
-	Labels         []Label    `json:"labels"`
-	Milestone      *Milestone `json:"milestone,omitempty"`
-	BaseRefName    string     `json:"baseRefName"`
-	HeadRefName    string     `json:"headRefName"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
-	MergedAt       *time.Time `json:"mergedAt,omitempty"`
-	ClosedAt       *time.Time `json:"closedAt,omitempty"`
-	URL            string     `json:"url"`
-	Body           string     `json:"body"`
-	CommentCount   int        `json:"commentCount"`
-	Comments       []Comment  `json:"comments"`
-	ReviewDecision string     `json:"reviewDecision,omitempty"`
+	Number         int             `json:"number"`
+	Title          string          `json:"title"`
+	State          string          `json:"state"`
+	IsDraft        bool            `json:"isDraft"`
+	Author         Actor           `json:"author"`
+	Assignees      []Actor         `json:"assignees"`
+	Labels         []Label         `json:"labels"`
+	Milestone      *Milestone      `json:"milestone,omitempty"`
+	BaseRefName    string          `json:"baseRefName"`
+	HeadRefName    string          `json:"headRefName"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	UpdatedAt      time.Time       `json:"updatedAt"`
+	MergedAt       *time.Time      `json:"mergedAt,omitempty"`
+	ClosedAt       *time.Time      `json:"closedAt,omitempty"`
+	URL            string          `json:"url"`
+	Body           string          `json:"body"`
+	CommentCount   int             `json:"commentCount"`
+	Comments       []Comment       `json:"comments"`
+	ReviewDecision string          `json:"reviewDecision,omitempty"`
+	Additions      int             `json:"additions"`
+	Deletions      int             `json:"deletions"`
+	Reviews        []PRReview      `json:"reviews,omitempty"`
+	Timeline       []TimelineEvent `json:"timeline,omitempty"`
+}
+
+// PRReview is a single review submitted on a pull request.
+type PRReview struct {
+	Author      Actor     `json:"author"`
+	State       string    `json:"state"`
+	SubmittedAt time.Time `json:"submittedAt"`
+}
+
+// TimelineEventKind identifies a pull request timeline event tracked for
+// statistics.
+type TimelineEventKind string
+
+const (
+	TimelineReadyForReview   TimelineEventKind = "ready_for_review"
+	TimelineConvertedToDraft TimelineEventKind = "converted_to_draft"
+	TimelineReviewRequested  TimelineEventKind = "review_requested"
+)
+
+// TimelineEvent is a normalized pull request timeline event. GitHub records
+// review re-requests as additional ReviewRequestedEvent entries rather than a
+// distinct type; the stats command treats later request events for a reviewer
+// who already reviewed as re-requests.
+type TimelineEvent struct {
+	Kind              TimelineEventKind `json:"kind"`
+	Actor             Actor             `json:"actor"`
+	RequestedReviewer Actor             `json:"requestedReviewer,omitempty"`
+	CreatedAt         time.Time         `json:"createdAt"`
 }
 
 // Comment is a single issue or PR comment.

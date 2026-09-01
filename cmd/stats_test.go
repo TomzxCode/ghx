@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -378,11 +379,317 @@ func TestLoadStatsPRs_FallbackFetchesComments(t *testing.T) {
 	}
 }
 
+func TestBuildReport_LeadTimeAndContribution(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mergedAt := base.Add(48 * time.Hour)
+
+	pr := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+	})
+	pr.MergedAt = &mergedAt
+	pr.Additions = 400
+	pr.Deletions = 100
+
+	// bob's PR, closed without merge, never reviewed.
+	closedAt := base.Add(24 * time.Hour)
+	closed := statsTestPR(2, "bob", base, "CLOSED", nil)
+	closed.ClosedAt = &closedAt
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}, {Repo: "org/repo1", PR: closed}},
+		statsFilters{State: "all"},
+	)
+
+	if report.MedianMerge != "2d 0h" {
+		t.Errorf("MedianMerge: got %q, want 2d 0h", report.MedianMerge)
+	}
+	if len(report.LeadRows) != 1 || report.LeadRows[0].Login != "alice" {
+		t.Fatalf("LeadRows: got %+v, want only alice", report.LeadRows)
+	}
+	lead := report.LeadRows[0]
+	if lead.MergedCount != 1 || lead.MedianMerge != "2d 0h" {
+		t.Errorf("alice lead row: got %+v", lead)
+	}
+
+	var aliceRow, bobRow *ContributionRow
+	for _, row := range report.ContributionRows {
+		switch row.Login {
+		case "alice":
+			aliceRow = row
+		case "bob":
+			bobRow = row
+		}
+	}
+	if aliceRow == nil || bobRow == nil {
+		t.Fatalf("contribution rows missing: %+v", report.ContributionRows)
+	}
+	if aliceRow.Opened != 1 || aliceRow.Merged != 1 || aliceRow.MergeRate != "100%" {
+		t.Errorf("alice contribution: got %+v", aliceRow)
+	}
+	if aliceRow.Additions != 400 || aliceRow.Deletions != 100 || !aliceRow.HasSizeData {
+		t.Errorf("alice size data: got %+v", aliceRow)
+	}
+	if aliceRow.SizeCounts[2] != 1 { // 500 changed lines -> m bucket
+		t.Errorf("alice size bucket: got %+v, want m bucket", aliceRow.SizeCounts)
+	}
+	if bobRow.NoReview != 1 || bobRow.Closed != 1 {
+		t.Errorf("bob contribution: got %+v", bobRow)
+	}
+	if report.TotalAdditions != 400 || report.TotalDeletions != 100 {
+		t.Errorf("totals: got +%d/-%d, want +400/-100", report.TotalAdditions, report.TotalDeletions)
+	}
+}
+
+func TestBuildReport_SizeBuckets(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mkPR := func(number int, additions, deletions int) *github.PullRequest {
+		pr := statsTestPR(number, "alice", base, "MERGED", nil)
+		mergedAt := base.Add(time.Duration(number) * time.Hour)
+		pr.MergedAt = &mergedAt
+		pr.Additions = additions
+		pr.Deletions = deletions
+		return pr
+	}
+	prs := []*repoPR{
+		{Repo: "org/repo1", PR: mkPR(1, 50, 49)},     // 99 -> xs
+		{Repo: "org/repo1", PR: mkPR(2, 300, 100)},   // 400 -> s
+		{Repo: "org/repo1", PR: mkPR(3, 500, 500)},   // 1000 -> l? 1000 is not < 1000 -> l
+		{Repo: "org/repo1", PR: mkPR(4, 1000, 1000)}, // 2000 -> xl
+	}
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all"},
+	)
+	want := [sizeBucketCount]int{1, 1, 0, 1, 1}
+	for i, row := range report.SizeRows {
+		if row.Count != want[i] {
+			t.Errorf("size row %s: got %d, want %d", row.Bucket, row.Count, want[i])
+		}
+	}
+}
+
+func TestBuildReport_ReviewerEngagement(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mergedAt := base.Add(72 * time.Hour)
+
+	pr := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
+		{Author: github.Actor{Login: "carol"}, CreatedAt: base.Add(2 * time.Hour)},
+	})
+	pr.MergedAt = &mergedAt
+	pr.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "CHANGES_REQUESTED", SubmittedAt: base.Add(3 * time.Hour)},
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: base.Add(8 * time.Hour)},
+		{Author: github.Actor{Login: "carol"}, State: "COMMENTED", SubmittedAt: base.Add(4 * time.Hour)},
+	}
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+		// GitHub records a re-request as another review-requested event.
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: base.Add(6 * time.Hour)},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+
+	if report.TotalReviews != 3 {
+		t.Errorf("TotalReviews: got %d, want 3", report.TotalReviews)
+	}
+	if len(report.EngagementRows) != 2 {
+		t.Fatalf("EngagementRows: got %d, want 2", len(report.EngagementRows))
+	}
+	// bob: 2 reviews, sorted first (2 reviews vs carol's 1 comment+1 review = 2? carol has 1 comment + 1 review = 2 total; tie broken by login).
+	var bobRow, carolRow *ReviewerEngagementRow
+	for _, row := range report.EngagementRows {
+		switch row.Login {
+		case "bob":
+			bobRow = row
+		case "carol":
+			carolRow = row
+		}
+	}
+	if bobRow == nil || carolRow == nil {
+		t.Fatalf("engagement rows missing: %+v", report.EngagementRows)
+	}
+	if bobRow.Reviews != 2 || bobRow.Approvals != 1 || bobRow.ChangesRequested != 1 || bobRow.CommentOnly != 0 {
+		t.Errorf("bob engagement: got %+v", bobRow)
+	}
+	// bob's first review came 3h after opening; his re-request at +6h was
+	// answered by the +8h approval (2h later).
+	if bobRow.MedianOpenResponse != "3h 0m" {
+		t.Errorf("bob open response: got %q, want 3h 0m", bobRow.MedianOpenResponse)
+	}
+	if bobRow.MedianRerequestResponse != "2h 0m" {
+		t.Errorf("bob re-request response: got %q, want 2h 0m", bobRow.MedianRerequestResponse)
+	}
+	// Request at +1h answered at +3h.
+	if bobRow.MedianRequestResponse != "2h 0m" {
+		t.Errorf("bob request response: got %q, want 2h 0m", bobRow.MedianRequestResponse)
+	}
+	if carolRow.PRsCommented != 1 || carolRow.Comments != 1 || carolRow.CommentOnly != 1 {
+		t.Errorf("carol engagement: got %+v", carolRow)
+	}
+
+	// Author-side lead time: first review at +3h, first approval at +8h.
+	if len(report.LeadRows) != 1 {
+		t.Fatalf("LeadRows: got %d, want 1", len(report.LeadRows))
+	}
+	if report.LeadRows[0].MedianFirstReview != "3h 0m" {
+		t.Errorf("median first review: got %q, want 3h 0m", report.LeadRows[0].MedianFirstReview)
+	}
+	if report.LeadRows[0].MedianApprove != "8h 0m" {
+		t.Errorf("median approve: got %q, want 8h 0m", report.LeadRows[0].MedianApprove)
+	}
+}
+
+func TestBuildReport_DraftTime(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mergedAt := base.Add(48 * time.Hour)
+
+	pr := statsTestPR(1, "alice", base, "MERGED", nil)
+	pr.MergedAt = &mergedAt
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineReadyForReview, CreatedAt: base.Add(2 * time.Hour)},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+
+	if len(report.LeadRows) != 1 || report.LeadRows[0].MedianDraft != "2h 0m" {
+		t.Errorf("draft time: got %+v, want median draft 2h 0m", report.LeadRows)
+	}
+
+	// A review request recorded before the ready-for-review event must not
+	// hide the draft period.
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+		{Kind: github.TimelineReadyForReview, CreatedAt: base.Add(2 * time.Hour)},
+	}
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	if len(report.LeadRows) != 1 || report.LeadRows[0].MedianDraft != "2h 0m" {
+		t.Errorf("draft time with earlier request: got %+v, want median draft 2h 0m", report.LeadRows)
+	}
+
+	// A convert-to-draft cycle is measured from the conversion, not creation.
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineConvertedToDraft, CreatedAt: base.Add(8 * time.Hour)},
+		{Kind: github.TimelineReadyForReview, CreatedAt: base.Add(10 * time.Hour)},
+	}
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	if len(report.LeadRows) != 1 || report.LeadRows[0].MedianDraft != "2h 0m" {
+		t.Errorf("draft time after conversion: got %+v, want median draft 2h 0m", report.LeadRows)
+	}
+}
+
+func TestBuildReport_NotablePRs(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mkMerged := func(number int, hours float64) *github.PullRequest {
+		pr := statsTestPR(number, "alice", base, "MERGED", nil)
+		mergedAt := base.Add(time.Duration(hours * float64(time.Hour)))
+		pr.MergedAt = &mergedAt
+		pr.Title = fmt.Sprintf("PR %d", number)
+		return pr
+	}
+	openStale := statsTestPR(10, "alice", base.Add(-240*time.Hour), "OPEN", nil)
+	openStale.Title = "Stale open PR"
+
+	prs := []*repoPR{
+		{Repo: "org/repo1", PR: mkMerged(1, 24)},
+		{Repo: "org/repo1", PR: mkMerged(2, 72)},
+		{Repo: "org/repo1", PR: openStale},
+	}
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all", Top: 1},
+	)
+
+	if report.TopN != 1 {
+		t.Errorf("TopN: got %d, want 1", report.TopN)
+	}
+	if len(report.NotableMerge) != 1 || report.NotableMerge[0].Number != 2 {
+		t.Errorf("notable merge: got %+v, want PR 2 first", report.NotableMerge)
+	}
+	if len(report.NotableAwaiting) != 1 || report.NotableAwaiting[0].Number != 10 {
+		t.Errorf("notable awaiting: got %+v, want PR 10", report.NotableAwaiting)
+	}
+	if !strings.Contains(report.NotableAwaiting[0].Value, "awaiting") {
+		t.Errorf("awaiting value: got %q", report.NotableAwaiting[0].Value)
+	}
+}
+
+func TestLoadStatsPRs_FetchesReviewData(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	scenario := mockserver.NewScenario(
+		mockserver.WithScenarioPR("acme", "widget", github.PullRequest{
+			Number:    1,
+			Title:     "Fix bug",
+			State:     "MERGED",
+			Author:    github.Actor{Login: "alice"},
+			CreatedAt: base,
+			UpdatedAt: base.Add(time.Hour),
+			Additions: 120,
+			Deletions: 30,
+			Reviews: []github.PRReview{{
+				Author:      github.Actor{Login: "bob"},
+				State:       "APPROVED",
+				SubmittedAt: base.Add(2 * time.Hour),
+			}},
+			Timeline: []github.TimelineEvent{{
+				Kind:              github.TimelineReviewRequested,
+				RequestedReviewer: github.Actor{Login: "bob"},
+				CreatedAt:         base.Add(30 * time.Minute),
+			}},
+		}),
+	)
+	srv := mockserver.NewServer(scenario)
+	defer srv.Close()
+
+	savedURL, savedDir := apiURLFlag, cacheDir
+	apiURLFlag, cacheDir = srv.URL(), t.TempDir()
+	defer func() { apiURLFlag, cacheDir = savedURL, savedDir }()
+
+	repo := &gitremote.Repo{Host: "mock", Owner: "acme", Name: "widget"}
+	prs, err := loadStatsPRs(newStore(), repo, time.Time{})
+	if err != nil {
+		t.Fatalf("loadStatsPRs: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("got %d prs, want 1", len(prs))
+	}
+	pr := prs[0]
+	if pr.Additions != 120 || pr.Deletions != 30 {
+		t.Errorf("size data: got +%d/-%d, want +120/-30", pr.Additions, pr.Deletions)
+	}
+	if len(pr.Reviews) != 1 || pr.Reviews[0].Author.Login != "bob" || pr.Reviews[0].State != "APPROVED" {
+		t.Errorf("reviews: got %+v", pr.Reviews)
+	}
+	if len(pr.Timeline) != 1 || pr.Timeline[0].Kind != github.TimelineReviewRequested || pr.Timeline[0].RequestedReviewer.Login != "bob" {
+		t.Errorf("timeline: got %+v", pr.Timeline)
+	}
+}
+
 func TestRenderReport(t *testing.T) {
 	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 	pr := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
 		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
 	})
+	mergedAt := base.Add(24 * time.Hour)
+	pr.MergedAt = &mergedAt
 	pr.Title = "Fix <script>alert(1)</script>"
 
 	report := buildReport(
@@ -436,6 +743,76 @@ func TestRenderReport(t *testing.T) {
 			t.Errorf("rendered HTML missing matrix filter marker %q", want)
 		}
 	}
+
+	for _, want := range []string{
+		"Lead time",
+		"Contribution",
+		"Reviewer engagement",
+		"PR size vs merge time",
+		"Peak activity",
+		"Notable pull requests",
+		`id="trend-chart"`,
+		`id="activity-chart"`,
+		`id="size-chart"`,
+		"cdn.jsdelivr.net/npm/chart.js",
+		"Median time to merge",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered HTML missing analytics marker %q", want)
+		}
+	}
+}
+
+func TestRenderReport_LegacyNotice(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	// A PR with no review, size or timeline data looks like it came from a
+	// cache created before analytics data was collected.
+	pr := statsTestPR(1, "alice", base, "OPEN", nil)
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	if !report.LegacyCache {
+		t.Error("LegacyCache: got false, want true for PR without analytics data")
+	}
+	html, err := renderReport(report)
+	if err != nil {
+		t.Fatalf("renderReport: %v", err)
+	}
+	if !strings.Contains(html, "ghx cache --force") {
+		t.Error("rendered HTML missing legacy cache notice")
+	}
+
+	// With review data present the notice must disappear.
+	pr.Reviews = []github.PRReview{{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: base.Add(time.Hour)}}
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	if report.LegacyCache {
+		t.Error("LegacyCache: got true, want false for PR with review data")
+	}
+
+	// A small share of PRs without data (genuinely empty diffs) must not
+	// trigger the notice.
+	withData := statsTestPR(2, "alice", base, "OPEN", nil)
+	withData.Additions = 10
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: withData}, {Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	if report.LegacyCache {
+		t.Error("LegacyCache: got true, want false when most PRs carry analytics data")
+	}
+}
+
+func TestRenderReport_PRsOmittedByDefault(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	pr := statsTestPR(1, "alice", base, "MERGED", nil)
 
 	omitted := buildReport(
 		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
