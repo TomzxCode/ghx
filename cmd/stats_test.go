@@ -275,6 +275,21 @@ func TestBuildReport_SummaryTablesAndPRList(t *testing.T) {
 		t.Errorf("reviewer rows: got %+v", report.ReviewerRows)
 	}
 
+	if report.ShowPRs || report.PRs != nil {
+		t.Errorf("PR list should be omitted by default: ShowPRs=%v PRs=%v", report.ShowPRs, report.PRs)
+	}
+
+	report = buildReport(
+		[]*gitremote.Repo{
+			{Host: "github.com", Owner: "org", Name: "repo1"},
+			{Host: "github.com", Owner: "org", Name: "repo2"},
+		},
+		prs,
+		statsFilters{State: "all", ListPRs: true},
+	)
+	if !report.ShowPRs {
+		t.Error("ShowPRs: got false, want true with ListPRs")
+	}
 	if len(report.PRs) != 2 {
 		t.Fatalf("PR list: got %d, want 2", len(report.PRs))
 	}
@@ -373,7 +388,7 @@ func TestRenderReport(t *testing.T) {
 	report := buildReport(
 		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
 		[]*repoPR{{Repo: "org/repo1", PR: pr}},
-		statsFilters{State: "all"},
+		statsFilters{State: "all", ListPRs: true},
 	)
 
 	html, err := renderReport(report)
@@ -386,6 +401,7 @@ func TestRenderReport(t *testing.T) {
 		"alice",
 		"bob",
 		"Fix &lt;script&gt;alert(1)&lt;/script&gt;",
+		"Pull requests in period",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing %q", want)
@@ -419,5 +435,18 @@ func TestRenderReport(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing matrix filter marker %q", want)
 		}
+	}
+
+	omitted := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: pr}},
+		statsFilters{State: "all"},
+	)
+	omittedHTML, err := renderReport(omitted)
+	if err != nil {
+		t.Fatalf("renderReport without PR list: %v", err)
+	}
+	if strings.Contains(omittedHTML, "Pull requests in period") {
+		t.Error("PR list section rendered without --list-prs")
 	}
 }

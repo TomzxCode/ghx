@@ -52,7 +52,9 @@ nothing is cached.
 - **Per-author summary**: PRs authored, merged count, and time to first
   comment received.
 - **Per-reviewer summary**: PRs reviewed and time to first comment given.
-- **Pull requests in period**: the full list of matching PRs with links.
+- **Pull requests in period** (only with `--list-prs`): the full list of
+  matching PRs with links. Off by default since the table can be very large
+  for active repositories.
 
 Reviewers are derived from PR comments written by someone other than the PR
 author; bot accounts are excluded unless `--include-bots` is set.
