@@ -3,6 +3,8 @@ package github
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -64,6 +66,19 @@ type commentNode struct {
 	URL       string    `json:"url"`
 }
 
+type reviewNode struct {
+	Author      actorNode `json:"author"`
+	State       string    `json:"state"`
+	SubmittedAt time.Time `json:"submittedAt"`
+}
+
+type timelineNode struct {
+	Typename          string     `json:"__typename"`
+	Actor             actorNode  `json:"actor"`
+	RequestedReviewer *actorNode `json:"requestedReviewer"`
+	CreatedAt         time.Time  `json:"createdAt"`
+}
+
 type issueNode struct {
 	Number    int                         `json:"number"`
 	Title     string                      `json:"title"`
@@ -84,23 +99,27 @@ type issueNode struct {
 }
 
 type prNode struct {
-	Number         int                         `json:"number"`
-	Title          string                      `json:"title"`
-	State          string                      `json:"state"`
-	IsDraft        bool                        `json:"isDraft"`
-	ReviewDecision string                      `json:"reviewDecision"`
-	Author         actorNode                   `json:"author"`
-	Assignees      struct{ Nodes []actorNode } `json:"assignees"`
-	Labels         struct{ Nodes []labelNode } `json:"labels"`
-	Milestone      *milestoneNode              `json:"milestone"`
-	BaseRefName    string                      `json:"baseRefName"`
-	HeadRefName    string                      `json:"headRefName"`
-	CreatedAt      time.Time                   `json:"createdAt"`
-	UpdatedAt      time.Time                   `json:"updatedAt"`
-	MergedAt       *time.Time                  `json:"mergedAt"`
-	ClosedAt       *time.Time                  `json:"closedAt"`
-	URL            string                      `json:"url"`
-	Body           string                      `json:"body"`
+	Number         int                            `json:"number"`
+	Title          string                         `json:"title"`
+	State          string                         `json:"state"`
+	IsDraft        bool                           `json:"isDraft"`
+	ReviewDecision string                         `json:"reviewDecision"`
+	Author         actorNode                      `json:"author"`
+	Assignees      struct{ Nodes []actorNode }    `json:"assignees"`
+	Labels         struct{ Nodes []labelNode }    `json:"labels"`
+	Milestone      *milestoneNode                 `json:"milestone"`
+	BaseRefName    string                         `json:"baseRefName"`
+	HeadRefName    string                         `json:"headRefName"`
+	CreatedAt      time.Time                      `json:"createdAt"`
+	UpdatedAt      time.Time                      `json:"updatedAt"`
+	MergedAt       *time.Time                     `json:"mergedAt"`
+	ClosedAt       *time.Time                     `json:"closedAt"`
+	URL            string                         `json:"url"`
+	Body           string                         `json:"body"`
+	Additions      int                            `json:"additions"`
+	Deletions      int                            `json:"deletions"`
+	Reviews        struct{ Nodes []reviewNode }   `json:"reviews"`
+	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
 	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
@@ -109,24 +128,28 @@ type prNode struct {
 
 // searchNode covers both Issue and PullRequest fields from a search result.
 type searchNode struct {
-	Typename       string                      `json:"__typename"`
-	Number         int                         `json:"number"`
-	Title          string                      `json:"title"`
-	State          string                      `json:"state"`
-	IsDraft        bool                        `json:"isDraft"`
-	ReviewDecision string                      `json:"reviewDecision"`
-	Author         actorNode                   `json:"author"`
-	Assignees      struct{ Nodes []actorNode } `json:"assignees"`
-	Labels         struct{ Nodes []labelNode } `json:"labels"`
-	Milestone      *milestoneNode              `json:"milestone"`
-	BaseRefName    string                      `json:"baseRefName"`
-	HeadRefName    string                      `json:"headRefName"`
-	CreatedAt      time.Time                   `json:"createdAt"`
-	UpdatedAt      time.Time                   `json:"updatedAt"`
-	MergedAt       *time.Time                  `json:"mergedAt"`
-	ClosedAt       *time.Time                  `json:"closedAt"`
-	URL            string                      `json:"url"`
-	Body           string                      `json:"body"`
+	Typename       string                         `json:"__typename"`
+	Number         int                            `json:"number"`
+	Title          string                         `json:"title"`
+	State          string                         `json:"state"`
+	IsDraft        bool                           `json:"isDraft"`
+	ReviewDecision string                         `json:"reviewDecision"`
+	Author         actorNode                      `json:"author"`
+	Assignees      struct{ Nodes []actorNode }    `json:"assignees"`
+	Labels         struct{ Nodes []labelNode }    `json:"labels"`
+	Milestone      *milestoneNode                 `json:"milestone"`
+	BaseRefName    string                         `json:"baseRefName"`
+	HeadRefName    string                         `json:"headRefName"`
+	CreatedAt      time.Time                      `json:"createdAt"`
+	UpdatedAt      time.Time                      `json:"updatedAt"`
+	MergedAt       *time.Time                     `json:"mergedAt"`
+	ClosedAt       *time.Time                     `json:"closedAt"`
+	URL            string                         `json:"url"`
+	Body           string                         `json:"body"`
+	Additions      int                            `json:"additions"`
+	Deletions      int                            `json:"deletions"`
+	Reviews        struct{ Nodes []reviewNode }   `json:"reviews"`
+	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
 	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
@@ -183,6 +206,7 @@ func nodeToPR(n *prNode) *PullRequest {
 		Body:           n.Body,
 		CommentCount:   n.Comments.TotalCount,
 	}
+	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, Actor{Login: a.Login})
 	}
@@ -196,6 +220,49 @@ func nodeToPR(n *prNode) *PullRequest {
 		pr.Comments = append(pr.Comments, commentNodeToComment(c))
 	}
 	return pr
+}
+
+// applyPRExtras fills the review-analytics fields (additions, deletions,
+// reviews, timeline events) on a PullRequest from parsed API nodes.
+func applyPRExtras(pr *PullRequest, additions, deletions int, reviews []reviewNode, timeline []timelineNode) {
+	pr.Additions = additions
+	pr.Deletions = deletions
+	for _, r := range reviews {
+		pr.Reviews = append(pr.Reviews, PRReview{
+			Author:      Actor{Login: r.Author.Login},
+			State:       r.State,
+			SubmittedAt: r.SubmittedAt,
+		})
+	}
+	for _, t := range timeline {
+		kind, ok := timelineKindFromTypename(t.Typename)
+		if !ok {
+			continue
+		}
+		ev := TimelineEvent{Kind: kind, Actor: Actor{Login: t.Actor.Login}, CreatedAt: t.CreatedAt}
+		if t.RequestedReviewer != nil {
+			ev.RequestedReviewer = Actor{Login: t.RequestedReviewer.Login}
+		}
+		pr.Timeline = append(pr.Timeline, ev)
+	}
+}
+
+// timelineKindFromTypename maps a GraphQL timeline item __typename to its
+// normalized event kind. Untracked event types are dropped. Review
+// re-requests have no GraphQL event type of their own; GitHub records them as
+// additional ReviewRequestedEvent entries, which the stats command splits
+// into initial requests and re-requests.
+func timelineKindFromTypename(typename string) (TimelineEventKind, bool) {
+	switch typename {
+	case "ReadyForReviewEvent":
+		return TimelineReadyForReview, true
+	case "ConvertToDraftEvent":
+		return TimelineConvertedToDraft, true
+	case "ReviewRequestedEvent":
+		return TimelineReviewRequested, true
+	default:
+		return "", false
+	}
 }
 
 func searchNodeToIssue(n *searchNode) *Issue {
@@ -244,6 +311,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 		Body:           n.Body,
 		CommentCount:   n.Comments.TotalCount,
 	}
+	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, Actor{Login: a.Login})
 	}
@@ -581,6 +649,22 @@ func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch Is
 // Pull request API
 // ---------------------------------------------------------------------------
 
+// PR delta-fetch tuning. prFullPageSize bounds each full-payload page: with
+// reviews, timeline items, and comments attached, 50+ node pages regularly
+// exceed what GitHub's GraphQL backend evaluates within its timeout and fail
+// with HTML 502s from the edge. prScanPageSize is the light walk's page size;
+// it must be a multiple of prFullPageSize so each block is a whole number of
+// full pages. prBlocksInFlight bounds how many block chains are fetched in
+// parallel; it is deliberately low because GitHub's secondary rate limits
+// trigger on concurrent request patterns, and each trip costs a 60s
+// Retry-After wait, which more than cancels the parallelism.
+const (
+	prScanPageSize   = 100
+	prFullPageSize   = 25
+	prBlocksInFlight = 2
+	prPagesPerBlock  = prScanPageSize / prFullPageSize
+)
+
 const listPRsQuery = `
 query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!], $labels: [String!], $baseRefName: String, $headRefName: String, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -600,6 +684,20 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
   }
 }`
 
+// prTimelineSelection is the timelineItems selection shared by the
+// cache-facing queries. PullRequestTimelineItems is a union, so member fields
+// require inline fragments; RequestedReviewer is a union of User, Team and
+// Mannequin, so only User logins are read.
+const prTimelineSelection = `
+timelineItems(first: 250, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) {
+  nodes {
+    __typename
+    ... on ReadyForReviewEvent { actor { login } createdAt }
+    ... on ConvertToDraftEvent { actor { login } createdAt }
+    ... on ReviewRequestedEvent { actor { login } createdAt requestedReviewer { ... on User { login } } }
+  }
+}`
+
 const getPRQuery = `
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -611,6 +709,11 @@ query($owner: String!, $repo: String!, $number: Int!) {
       milestone { number title }
       baseRefName headRefName
       createdAt updatedAt mergedAt closedAt url body
+      additions deletions
+      reviews(first: 100) {
+        nodes { author { login } state submittedAt }
+      }
+      ` + prTimelineSelection + `
       comments(first: 100) {
         nodes { id author { login } body createdAt updatedAt url }
       }
@@ -639,9 +742,9 @@ query($query: String!, $first: Int!, $after: String) {
 }`
 
 const fetchAllPRsQuery = `
-query($owner: String!, $repo: String!, $after: String) {
+query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(first: 100, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: ASC}) {
+    pullRequests(first: 50, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: $dir}) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -652,6 +755,11 @@ query($owner: String!, $repo: String!, $after: String) {
         milestone { number title }
         baseRefName headRefName
         createdAt updatedAt mergedAt closedAt url body
+        additions deletions
+        reviews(first: 100) {
+          nodes { author { login } state submittedAt }
+        }
+` + prTimelineSelection + `
         comments(first: 100) {
           totalCount
           nodes { id author { login } body createdAt updatedAt url }
@@ -817,9 +925,11 @@ func (c *Client) GetPR(owner, repo string, number int) (*PullRequest, error) {
 
 // FetchAllPRs retrieves every pull request (all states) with comments for
 // caching, oldest-updated-first. It is intended for the cold/full cache path
-// (the pullRequests connection has no server-side date filter, so delta/resume
-// is handled by FetchPRsUpdated). onBatch is invoked per page so callers can
-// persist incrementally; a non-nil error aborts the fetch.
+// (delta/resume is handled by FetchPRsUpdated). Pages are capped at 50 PRs:
+// with reviews, timeline items, and comments attached, 100-node pages exceed
+// what GitHub's GraphQL backend reliably evaluates and it responds with 502s.
+// onBatch is invoked per page so callers can persist incrementally; a non-nil
+// error aborts the fetch.
 func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRequest, error) {
 	var prs []*PullRequest
 	var cursor string
@@ -829,6 +939,7 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 		vars := map[string]interface{}{
 			"owner": owner,
 			"repo":  repo,
+			"dir":   "ASC",
 		}
 		if cursor != "" {
 			vars["after"] = cursor
@@ -876,86 +987,276 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 	return prs, nil
 }
 
-const searchPRsForCacheQuery = `
-query($query: String!, $first: Int!, $after: String) {
-  search(query: $query, type: ISSUE, first: $first, after: $after) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      __typename
-      ... on PullRequest {
-        number title state isDraft reviewDecision
-        author { login }
-        assignees(first: 10) { nodes { login } }
-        labels(first: 20) { nodes { name color } }
-        milestone { number title }
-        baseRefName headRefName
-        createdAt updatedAt mergedAt closedAt url body
-        comments(first: 100) {
-          totalCount
-          nodes { id author { login } body createdAt updatedAt url }
-        }
+const fetchPRsUpdatedLightQuery = `
+query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $first: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(first: $first, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: $dir}) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        updatedAt
       }
     }
   }
 }`
 
-// FetchPRsUpdated retrieves pull requests updated at or after since via the
-// search API, for delta updates and resuming an interrupted fetch. The search
-// connection is used because the pullRequests connection has no server-side
-// date filter. Note that GitHub's search `updated:` qualifier is day-granular
-// and capped at 1000 results, so very large/active repos may need a --force
-// cold fetch. onBatch is invoked per page so callers can persist incrementally.
-func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PRBatchFunc) ([]*PullRequest, error) {
-	q := fmt.Sprintf("repo:%s/%s is:pr updated:>=%s", owner, repo, since.UTC().Format("2006-01-02"))
-	var prs []*PullRequest
+// FetchPRsUpdated retrieves pull requests updated at or after since, for
+// delta updates, resuming an interrupted fetch, and --since windows. It runs
+// in two phases:
+//
+//  1. A lightweight newest-first walk over the pullRequests connection that
+//     reads only number and updatedAt, prScanPageSize at a time, stopping as
+//     soon as a page's oldest updatedAt falls before since. Light pages are
+//     cheap, so scanning runs wide, and the walk yields the exact number of
+//     in-window PRs plus each block's start cursor up front.
+//  2. A full-payload fetch of the window. Pages carrying 50+ fully-populated
+//     PR nodes (reviews, timeline items, comments) regularly exceed what
+//     GitHub's GraphQL backend evaluates within its timeout, surfacing as
+//     HTML 502s from the edge, so full pages are capped at prFullPageSize
+//     nodes. The window is divided into prScanPageSize-wide blocks, and each
+//     block is fetched as a chain of prPagesPerBlock full pages seeded by the
+//     block's cursor; chains run prBlocksInFlight at a time in parallel.
+//
+// onBatch is invoked per completed page (in completion order; caching is
+// order-independent) with total reporting the exact number of in-window PRs
+// so callers can render a determinate progress bar. onScan, when non-nil, is
+// invoked after each phase 1 page with the number of PRs scanned so far, so
+// callers can show progress while the window is being located. A non-nil
+// error from onBatch aborts the fetch.
+func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PRBatchFunc, onScan func(scanned int)) ([]*PullRequest, error) {
+	// Phase 1: locate the window with the light query, recording each
+	// block's start cursor (the light page's own start cursor) so phase 2
+	// can fetch blocks concurrently.
+	var candidateCount, scanned int
+	blockCursors := []string{""} // blockCursors[b] = after-cursor for block b
+	var blockCandidates []int    // candidates per walked block
 	var cursor string
 
 	for {
-		pageSize := 100
 		vars := map[string]interface{}{
-			"query": q,
-			"first": pageSize,
+			"owner": owner,
+			"repo":  repo,
+			"first": prScanPageSize,
+			"dir":   "DESC",
 		}
 		if cursor != "" {
 			vars["after"] = cursor
 		}
 
 		var result struct {
-			Search struct {
+			Repository struct {
+				PullRequests struct {
+					PageInfo struct {
+						HasNextPage bool   `json:"hasNextPage"`
+						EndCursor   string `json:"endCursor"`
+					} `json:"pageInfo"`
+					Nodes []struct {
+						Number    int       `json:"number"`
+						UpdatedAt time.Time `json:"updatedAt"`
+					} `json:"nodes"`
+				} `json:"pullRequests"`
+			} `json:"repository"`
+		}
+
+		if err := c.Query(fetchPRsUpdatedLightQuery, vars, &result); err != nil {
+			return nil, err
+		}
+
+		page := result.Repository.PullRequests.Nodes
+		var pageOldest time.Time
+		count := 0
+		for _, n := range page {
+			scanned++
+			if pageOldest.IsZero() || n.UpdatedAt.Before(pageOldest) {
+				pageOldest = n.UpdatedAt
+			}
+			if !n.UpdatedAt.Before(since) {
+				count++
+			}
+		}
+		blockCandidates = append(blockCandidates, count)
+		candidateCount += count
+		if onScan != nil {
+			onScan(scanned)
+		}
+
+		// Newest-first: once a page reaches items older than since, every
+		// later page is older still. The walk continues while pageOldest is
+		// on or after since, so equal timestamps straddling a page boundary
+		// are not dropped.
+		if pageOldest.Before(since) || !result.Repository.PullRequests.PageInfo.HasNextPage {
+			break
+		}
+		cursor = result.Repository.PullRequests.PageInfo.EndCursor
+		blockCursors = append(blockCursors, cursor)
+	}
+
+	if candidateCount == 0 {
+		return nil, nil
+	}
+
+	// Phase 2: fetch the window's blocks in parallel. Candidate blocks form
+	// a contiguous prefix (newest-first order), so trailing empty blocks are
+	// dropped.
+	blocks := len(blockCandidates)
+	for blocks > 0 && blockCandidates[blocks-1] == 0 {
+		blocks--
+	}
+
+	var prs []*PullRequest
+	workers := prBlocksInFlight
+	if blocks < workers {
+		workers = blocks
+	}
+
+	type pageResult struct {
+		batch []*PullRequest
+		err   error
+		done  bool // last message of a block
+	}
+	jobs := make(chan int)
+	results := make(chan pageResult, blocks*(prPagesPerBlock+1)) // buffered: workers never block
+	var wg sync.WaitGroup
+	var mu sync.Mutex // guards firstErr
+	var firstErr error
+	var abort atomic.Bool // stop starting new pages after a failure
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Each worker owns whole blocks: a chain of full pages seeded
+			// by the block cursor, where each page's endCursor seeds the
+			// next page of the same block.
+			for blockIdx := range jobs {
+				if abort.Load() {
+					results <- pageResult{done: true}
+					continue
+				}
+				cursor := blockCursors[blockIdx]
+				for page := 0; page < prPagesPerBlock; page++ {
+					if abort.Load() {
+						break
+					}
+					res, err := c.fetchPRPage(owner, repo, cursor, since)
+					if err != nil {
+						mu.Lock()
+						if firstErr == nil {
+							firstErr = err
+						}
+						mu.Unlock()
+						abort.Store(true)
+						results <- pageResult{err: err}
+						break
+					}
+					results <- pageResult{batch: res.batch}
+					if res.oldest.Before(since) || !res.hasNext {
+						break
+					}
+					cursor = res.end
+				}
+				results <- pageResult{done: true}
+			}
+		}()
+	}
+	for b := 0; b < blocks; b++ {
+		jobs <- b
+	}
+	close(jobs)
+
+	// Deliver pages as they complete so persistence and progress stay live.
+	// The connection is not snapshot-consistent: while pages are in flight the
+	// repo keeps churning, so pages can overlap at their edges. Deduplicate by
+	// number so the cache count reflects reality.
+	seen := make(map[int]bool, candidateCount)
+	var onBatchErr error
+	for blocksDone := 0; blocksDone < blocks; {
+		res := <-results
+		if res.done {
+			blocksDone++
+			continue
+		}
+		if res.err != nil {
+			continue
+		}
+		unique := res.batch[:0:0]
+		for _, pr := range res.batch {
+			if !seen[pr.Number] {
+				seen[pr.Number] = true
+				unique = append(unique, pr)
+			}
+		}
+		prs = append(prs, unique...)
+		if onBatch != nil && onBatchErr == nil {
+			if err := onBatch(unique, candidateCount); err != nil {
+				onBatchErr = err
+			}
+		}
+	}
+	wg.Wait()
+	if firstErr != nil {
+		return prs, firstErr
+	}
+	if onBatchErr != nil {
+		return prs, onBatchErr
+	}
+	return prs, nil
+}
+
+// prPage is one fetched full-payload page plus its pagination info.
+type prPage struct {
+	batch   []*PullRequest
+	end     string // endCursor for the next page
+	hasNext bool
+	oldest  time.Time // oldest updatedAt in the page (zero when empty)
+}
+
+// fetchPRPage fetches one full-payload page of PRs starting at the given
+// after-cursor and returns those updated at or after since.
+func (c *Client) fetchPRPage(owner, repo, after string, since time.Time) (prPage, error) {
+	vars := map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"first": prFullPageSize,
+		"dir":   "DESC",
+	}
+	if after != "" {
+		vars["after"] = after
+	}
+
+	var result struct {
+		Repository struct {
+			PullRequests struct {
 				PageInfo struct {
 					HasNextPage bool   `json:"hasNextPage"`
 					EndCursor   string `json:"endCursor"`
 				} `json:"pageInfo"`
-				Nodes []searchNode `json:"nodes"`
-			} `json:"search"`
-		}
-
-		if err := c.Query(searchPRsForCacheQuery, vars, &result); err != nil {
-			return prs, err
-		}
-
-		var batch []*PullRequest
-		for i := range result.Search.Nodes {
-			n := &result.Search.Nodes[i]
-			if n.Typename == "PullRequest" && n.Number > 0 {
-				batch = append(batch, searchNodeToPR(n))
-			}
-		}
-		prs = append(prs, batch...)
-
-		if onBatch != nil {
-			if err := onBatch(batch, 0); err != nil {
-				return prs, err
-			}
-		}
-
-		if !result.Search.PageInfo.HasNextPage {
-			break
-		}
-		cursor = result.Search.PageInfo.EndCursor
+				Nodes []prNode `json:"nodes"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
 	}
 
-	return prs, nil
+	if err := c.Query(fetchAllPRsQuery, vars, &result); err != nil {
+		return prPage{}, err
+	}
+
+	page := result.Repository.PullRequests
+	batch := make([]*PullRequest, 0, len(page.Nodes))
+	var oldest time.Time
+	for i := range page.Nodes {
+		pr := nodeToPR(&page.Nodes[i])
+		if oldest.IsZero() || pr.UpdatedAt.Before(oldest) {
+			oldest = pr.UpdatedAt
+		}
+		if !pr.UpdatedAt.Before(since) {
+			batch = append(batch, pr)
+		}
+	}
+	return prPage{
+		batch:   batch,
+		end:     page.PageInfo.EndCursor,
+		hasNext: page.PageInfo.HasNextPage,
+		oldest:  oldest,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

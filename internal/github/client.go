@@ -9,13 +9,17 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // Retry behaviour used when a sane value is not explicitly configured.
+// defaultMaxRetries is the number of additional attempts after the first, so
+// the default is 3 total attempts.
 const (
-	defaultMaxRetries     = 3
+	defaultMaxRetries     = 2
 	defaultInitialBackoff = 10 * time.Second
 	defaultMaxBackoff     = 60 * time.Second
 )
@@ -30,6 +34,7 @@ type Client struct {
 	initialBackoff time.Duration
 	maxBackoff     time.Duration
 	sleep          func(time.Duration)
+	lastRemaining  atomic.Int64 // x-ratelimit-remaining of the last response, -1 = unknown
 }
 
 type gqlRequest struct {
@@ -89,7 +94,25 @@ func (c *Client) withDefaults() *Client {
 	if c.sleep == nil {
 		c.sleep = time.Sleep
 	}
+	c.lastRemaining.Store(-1)
 	return c
+}
+
+// SetRetries overrides how many additional attempts are made after a failed
+// initial request. 0 means a single attempt with no retries. Negative values
+// are clamped to 0. Only use this before the first request.
+func (c *Client) SetRetries(maxRetries int) {
+	if maxRetries < 0 {
+		maxRetries = 0
+	}
+	c.maxRetries = maxRetries
+}
+
+// RateLimitRemaining reports the x-ratelimit-remaining value from the most
+// recent GraphQL response, or -1 when no response has been received yet. It
+// is safe for concurrent use.
+func (c *Client) RateLimitRemaining() int {
+	return int(c.lastRemaining.Load())
 }
 
 func resolveToken(host string) string {
@@ -121,9 +144,10 @@ func (c *Client) endpoint() string {
 }
 
 // Query executes a GraphQL query and unmarshals the data field into result.
-// It retries transient GitHub rate limit responses (HTTP 429 and secondary
-// rate limit 403s) using exponential backoff, honouring GitHub's Retry-After
-// header when present. Other errors are returned immediately.
+// It retries transient failures using exponential backoff: GitHub rate limit
+// responses (HTTP 429 and secondary rate limit 403s, honouring the Retry-After
+// header) and transient server errors (5xx, for example an HTML 502 from a
+// proxy). Other errors are returned immediately.
 func (c *Client) Query(query string, variables map[string]interface{}, result interface{}) error {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: variables})
 	if err != nil {
@@ -135,7 +159,7 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			wait := c.nextBackoff(lastErr, attempt-1)
-			fmt.Fprintf(os.Stderr, "gh-cached: GitHub rate limit hit, retrying in %s (attempt %d of %d)...\n", wait, attempt+1, maxAttempts)
+			fmt.Fprintf(os.Stderr, "%s, retrying in %s (attempt %d of %d)...\n", retryReason(lastErr), wait, attempt+1, maxAttempts)
 			c.sleep(wait)
 		}
 
@@ -144,8 +168,7 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 			return nil
 		}
 
-		var rle *RateLimitError
-		if !errors.As(lastErr, &rle) {
+		if !retryable(lastErr) {
 			return lastErr // not retryable
 		}
 	}
@@ -154,7 +177,28 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 	if errors.As(lastErr, &rle) {
 		rle.Attempts = maxAttempts
 	}
+	var te *TransientError
+	if errors.As(lastErr, &te) {
+		te.Attempts = maxAttempts
+	}
 	return lastErr
+}
+
+// retryable reports whether an error from queryOnce should trigger another
+// attempt: rate limits and transient server errors.
+func retryable(err error) bool {
+	var rle *RateLimitError
+	var te *TransientError
+	return errors.As(err, &rle) || errors.As(err, &te)
+}
+
+// retryReason describes the failure class for the retry log line.
+func retryReason(err error) string {
+	var rle *RateLimitError
+	if errors.As(err, &rle) {
+		return "GitHub rate limit hit"
+	}
+	return "transient GitHub error"
 }
 
 // queryOnce performs a single GraphQL request attempt and parses the response.
@@ -169,13 +213,21 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("executing request: %w", err)
+		// Transport failures (DNS, connection reset, HTTP/2 stream cancel)
+		// are transient: retry with backoff like server-side 5xx.
+		return &TransientError{Message: "executing request: " + err.Error()}
 	}
 	defer resp.Body.Close()
 
+	if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			c.lastRemaining.Store(int64(n))
+		}
+	}
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return fmt.Errorf("reading response body: %w", err)
+		return &TransientError{Message: "reading response body: " + err.Error()}
 	}
 
 	if rle, ok := parseRateLimit(resp, respBody); ok {
@@ -183,11 +235,24 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		body := truncateBody(respBody)
+		if isTransientStatus(resp.StatusCode) {
+			return &TransientError{Status: resp.StatusCode, Message: body}
+		}
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
 	}
 
 	var gqlResp gqlResponse
 	if err := json.Unmarshal(respBody, &gqlResp); err != nil {
+		var syn *json.SyntaxError
+		if errors.As(err, &syn) && syn.Error() == "unexpected end of JSON input" {
+			// Empty or truncated body: the request succeeded but the
+			// response was cut off mid-stream, the flaky-edge variant of a
+			// transient failure. Retry it like a 5xx.
+			return &TransientError{Message: "parsing GraphQL response: " + err.Error()}
+		}
+		// A complete body that is not valid JSON is deterministic (broken
+		// proxy, encoding bug): fail fast so it gets diagnosed.
 		return fmt.Errorf("parsing GraphQL response: %w", err)
 	}
 
@@ -200,6 +265,8 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 	}
 
 	if result != nil {
+		// The envelope parsed, so the body is complete; a data parse failure
+		// here is deterministic, not transient.
 		if err := json.Unmarshal(gqlResp.Data, result); err != nil {
 			return fmt.Errorf("parsing response data: %w", err)
 		}

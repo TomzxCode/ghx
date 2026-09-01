@@ -21,6 +21,7 @@ var (
 	statsOutput      string
 	statsIncludeBots bool
 	statsListPRs     bool
+	statsTop         int
 )
 
 var statsCmd = &cobra.Command{
@@ -48,6 +49,7 @@ func init() {
 	statsCmd.Flags().StringVarP(&statsOutput, "output", "o", "stats-report.html", "Output HTML file path")
 	statsCmd.Flags().BoolVar(&statsIncludeBots, "include-bots", false, "Include bot accounts as reviewers")
 	statsCmd.Flags().BoolVar(&statsListPRs, "list-prs", false, "Include the table of individual pull requests (can be large)")
+	statsCmd.Flags().IntVar(&statsTop, "top", 5, "Number of pull requests per notable-PRs list")
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
@@ -89,6 +91,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 		State:       statsState,
 		IncludeBots: statsIncludeBots,
 		ListPRs:     statsListPRs,
+		Top:         statsTop,
 	}
 
 	report := buildReport(repos, allPRs, filters)
@@ -161,7 +164,7 @@ func loadStatsPRs(store *cache.Store, repo *gitremote.Repo, from time.Time) ([]*
 	}
 	fmt.Fprintf(os.Stderr, "No cached pull requests for %s/%s; fetching (with comments) from GitHub since %s...\n",
 		repo.Owner, repo.Name, since.Format("2006-01-02"))
-	return client.FetchPRsUpdated(repo.Owner, repo.Name, since, nil)
+	return client.FetchPRsUpdated(repo.Owner, repo.Name, since, nil, nil)
 }
 
 // toLowerSet converts a slice of logins to a lowercase set. An empty input

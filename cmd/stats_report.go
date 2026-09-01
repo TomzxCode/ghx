@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"sort"
@@ -28,6 +29,7 @@ type statsFilters struct {
 	To          time.Time
 	State       string
 	IncludeBots bool
+	Top         int
 	ListPRs     bool
 }
 
@@ -79,6 +81,98 @@ type ReviewerSummary struct {
 	Avg         string
 }
 
+// NotablePR references one pull request in a notable-PRs list.
+type NotablePR struct {
+	Repo   string
+	Number int
+	Title  string
+	URL    string
+	Author string
+	Value  string
+}
+
+// MonthTrend aggregates PR activity for one calendar month.
+type MonthTrend struct {
+	Month       string // "2026-03"
+	Opened      int
+	Merged      int
+	MedianMerge string
+
+	// medianHrs is the median merge time in hours, feeding the trend chart.
+	medianHrs float64
+}
+
+// SizeRow aggregates one PR size bucket for the size-versus-lead-time table.
+type SizeRow struct {
+	Bucket      string // xs, s, m, l, xl
+	Count       int
+	MergedCount int
+	MedianMerge string
+}
+
+// LeadTimeRow aggregates merged-PR lead times for one author.
+type LeadTimeRow struct {
+	Login             string
+	MergedCount       int
+	MedianMerge       string
+	AvgMerge          string
+	MedianDraft       string
+	MedianFirstReview string
+	MedianApprove     string
+}
+
+// sizeBucketCount is the number of PR size buckets (xs, s, m, l, xl).
+const sizeBucketCount = 5
+
+// sizeBucketNames labels the size buckets in order.
+var sizeBucketNames = [sizeBucketCount]string{"xs", "s", "m", "l", "xl"}
+
+// sizeBucketThresholds bound each bucket by total changed lines:
+// xs <100, s <500, m <1000, l <2000, xl >=2000.
+var sizeBucketThresholds = [sizeBucketCount]int{100, 500, 1000, 2000}
+
+// sizeBucket maps a total changed-line count to its bucket index.
+func sizeBucket(changed int) int {
+	for i, t := range sizeBucketThresholds {
+		if changed < t {
+			return i
+		}
+	}
+	return sizeBucketCount - 1
+}
+
+// ContributionRow aggregates workload for one author.
+type ContributionRow struct {
+	Login            string
+	Opened           int
+	Merged           int
+	Closed           int
+	MergeRate        string
+	NoReview         int
+	CommentsReceived int
+	Additions        int
+	Deletions        int
+	HasSizeData      bool
+	SizeCounts       [sizeBucketCount]int
+}
+
+// ReviewerEngagementRow aggregates formal review activity and response times
+// for one reviewer. PRsCommented counts PRs where the reviewer left issue
+// comments; PRsReviewed counts PRs where they submitted a review.
+type ReviewerEngagementRow struct {
+	Login                   string
+	PRsCommented            int
+	Comments                int
+	PRsReviewed             int
+	Reviews                 int
+	Approvals               int
+	ChangesRequested        int
+	CommentOnly             int
+	MedianOpenResponse      string
+	MedianRequestResponse   string
+	MedianRerequestResponse string
+}
+
 // PRRow is one row of the appendix table listing every PR in the period.
 type PRRow struct {
 	Repo      string
@@ -111,12 +205,133 @@ type Report struct {
 	ReviewerRows  []*ReviewerSummary
 	Matrix        *Matrix
 	PRs           []*PRRow
+
+	MedianMerge      string
+	TotalReviews     int
+	TotalAdditions   int
+	TotalDeletions   int
+	LegacyCache      bool
+	TopN             int
+	LeadRows         []*LeadTimeRow
+	ContributionRows []*ContributionRow
+	EngagementRows   []*ReviewerEngagementRow
+	SizeRows         []*SizeRow
+	Trends           []*MonthTrend
+	ActivityHours    []int
+	NotableAwaiting  []*NotablePR
+	NotableMerge     []*NotablePR
+	NotableCommented []*NotablePR
+}
+
+// chartsPayload is the data bundle serialized to JSON for the Chart.js
+// scripts in the rendered report.
+type chartsPayload struct {
+	Months    []string  `json:"months"`
+	Opened    []int     `json:"opened"`
+	Merged    []int     `json:"merged"`
+	MedianHrs []float64 `json:"medianHrs"`
+	Hours     []int     `json:"hours"`
+	Sizes     []int     `json:"sizes"`
 }
 
 // reviewerComment is a comment left on a PR by someone other than its author.
 type reviewerComment struct {
 	Login string
 	At    time.Time
+}
+
+// reviewActivity is one submitted review on a PR, normalized for aggregation.
+type reviewActivity struct {
+	Login       string // lowercase reviewer login
+	State       string // APPROVED, CHANGES_REQUESTED or COMMENTED
+	SubmittedAt time.Time
+}
+
+// statReviewerAllowed reports whether a reviewer login participates in the
+// report: bots are excluded unless requested, and an explicit reviewer filter
+// restricts the set.
+func statReviewerAllowed(login string, pr *github.PullRequest, f statsFilters) bool {
+	lower := strings.ToLower(login)
+	if lower == "" || lower == strings.ToLower(pr.Author.Login) {
+		return false
+	}
+	if !f.IncludeBots && isBotLogin(login) {
+		return false
+	}
+	if len(f.Reviewers) > 0 && !f.Reviewers[lower] {
+		return false
+	}
+	return true
+}
+
+// authorComments counts issue comments written by the PR author.
+func authorComments(pr *github.PullRequest) int {
+	n := 0
+	author := strings.ToLower(pr.Author.Login)
+	for _, c := range pr.Comments {
+		if strings.ToLower(c.Author.Login) == author {
+			n++
+		}
+	}
+	return n
+}
+
+// draftDuration reconstructs total time spent in draft from timeline events.
+// A ready-for-review event without a preceding convert-to-draft event implies
+// the PR was created as a draft, so the draft interval starts at creation.
+// The remaining interval of a still-draft PR is measured to its last update.
+// ok is false when the PR has no draft/ready timeline data at all.
+func draftDuration(pr *github.PullRequest) (time.Duration, bool) {
+	if len(pr.Timeline) == 0 {
+		return 0, false
+	}
+	events := make([]github.TimelineEvent, len(pr.Timeline))
+	copy(events, pr.Timeline)
+	sort.Slice(events, func(i, j int) bool { return events[i].CreatedAt.Before(events[j].CreatedAt) })
+
+	var total time.Duration
+	var draftStart time.Time
+	inDraft := false
+	for _, ev := range events {
+		switch ev.Kind {
+		case github.TimelineConvertedToDraft:
+			if !inDraft {
+				inDraft = true
+				draftStart = ev.CreatedAt
+			}
+		case github.TimelineReadyForReview:
+			if inDraft {
+				total += durationSince(draftStart, ev.CreatedAt)
+				inDraft = false
+			} else {
+				// No convert-to-draft before this event: the PR started as
+				// a draft when it was created.
+				total += durationSince(pr.CreatedAt, ev.CreatedAt)
+			}
+		}
+	}
+	if inDraft {
+		total += durationSince(draftStart, pr.UpdatedAt)
+	}
+	return total, true
+}
+
+// earliestReviewBy returns the earliest review the given reviewer submitted at
+// or after at (zero time = no bound), or false when there is none.
+func earliestReviewBy(reviews []reviewActivity, login string, at time.Time) (time.Time, bool) {
+	var best time.Time
+	for _, r := range reviews {
+		if r.Login != login {
+			continue
+		}
+		if !at.IsZero() && r.SubmittedAt.Before(at) {
+			continue
+		}
+		if best.IsZero() || r.SubmittedAt.Before(best) {
+			best = r.SubmittedAt
+		}
+	}
+	return best, !best.IsZero()
 }
 
 // buildReport filters the given PRs and computes every statistic rendered by
@@ -137,6 +352,23 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	type prEntry struct {
 		item      *repoPR
 		reviewers map[string]time.Time // reviewer login -> first comment time
+		// commentCounts counts non-author issue comments per reviewer login.
+		commentCounts map[string]int
+		// reviews holds the PR's submitted reviews (author and bots excluded,
+		// honouring the reviewer filter).
+		reviews             []reviewActivity
+		firstReviewAt       time.Time
+		firstApproveAt      time.Time
+		hasChangesRequested bool
+		mergeDuration       time.Duration
+		closeDuration       time.Duration
+		draftDuration       time.Duration
+		draftKnown          bool
+		requestTimes        map[string][]time.Time // reviewer -> request event times (re-requests included)
+		commentsReceived    int                    // non-author issue comments on the PR
+		sizeLines           int
+		sizeKnown           bool
+		hasNewData          bool // PR carries review, size or timeline data
 	}
 	var entries []*prEntry
 	firstCommentAll := []time.Duration{}
@@ -151,22 +383,71 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			continue
 		}
 
-		e := &prEntry{item: rp, reviewers: map[string]time.Time{}}
+		e := &prEntry{
+			item:          rp,
+			reviewers:     map[string]time.Time{},
+			commentCounts: map[string]int{},
+			requestTimes:  map[string][]time.Time{},
+		}
 		for _, c := range pr.Comments {
 			login := c.Author.Login
 			lower := strings.ToLower(login)
 			if lower == strings.ToLower(pr.Author.Login) {
 				continue // the author's own comments are not reviews
 			}
-			if !f.IncludeBots && isBotLogin(login) {
+			if !statReviewerAllowed(login, pr, f) {
 				continue
 			}
-			if len(f.Reviewers) > 0 && !f.Reviewers[lower] {
-				continue
-			}
+			e.commentCounts[lower]++
 			if _, ok := e.reviewers[lower]; !ok || c.CreatedAt.Before(e.reviewers[lower]) {
 				e.reviewers[lower] = c.CreatedAt
 			}
+		}
+		for _, rev := range pr.Reviews {
+			if !statReviewerAllowed(rev.Author.Login, pr, f) {
+				continue
+			}
+			switch strings.ToUpper(rev.State) {
+			case "APPROVED", "CHANGES_REQUESTED", "COMMENTED":
+			default:
+				continue // DISMISSED, PENDING and unknown states are not activity
+			}
+			e.reviews = append(e.reviews, reviewActivity{Login: strings.ToLower(rev.Author.Login), State: strings.ToUpper(rev.State), SubmittedAt: rev.SubmittedAt})
+			if e.firstReviewAt.IsZero() || rev.SubmittedAt.Before(e.firstReviewAt) {
+				e.firstReviewAt = rev.SubmittedAt
+			}
+			if strings.EqualFold(rev.State, "APPROVED") {
+				if e.firstApproveAt.IsZero() || rev.SubmittedAt.Before(e.firstApproveAt) {
+					e.firstApproveAt = rev.SubmittedAt
+				}
+			}
+			if strings.EqualFold(rev.State, "CHANGES_REQUESTED") {
+				e.hasChangesRequested = true
+			}
+		}
+		for _, ev := range pr.Timeline {
+			if ev.Kind != github.TimelineReviewRequested {
+				continue
+			}
+			if !statReviewerAllowed(ev.RequestedReviewer.Login, pr, f) {
+				continue
+			}
+			login := strings.ToLower(ev.RequestedReviewer.Login)
+			e.requestTimes[login] = append(e.requestTimes[login], ev.CreatedAt)
+		}
+		e.commentsReceived = len(pr.Comments) - authorComments(pr)
+		if pr.MergedAt != nil {
+			e.mergeDuration = durationSince(pr.CreatedAt, *pr.MergedAt)
+		} else if pr.ClosedAt != nil && strings.EqualFold(pr.State, "CLOSED") {
+			e.closeDuration = durationSince(pr.CreatedAt, *pr.ClosedAt)
+		}
+		e.draftDuration, e.draftKnown = draftDuration(pr)
+		e.sizeLines = pr.Additions + pr.Deletions
+		e.sizeKnown = pr.Additions > 0 || pr.Deletions > 0
+		if e.reviews != nil || e.sizeKnown || len(pr.Timeline) > 0 {
+			// At least one new-style field carried data; the PR is not from a
+			// pre-analytics cache.
+			e.hasNewData = true
 		}
 
 		entries = append(entries, e)
@@ -315,6 +596,349 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.OverallMedian = "-"
 		r.OverallAvg = "-"
 	}
+
+	// ------------------------------------------------------------------
+	// Review analytics: lead time, contribution, engagement, trends.
+	// ------------------------------------------------------------------
+	now := time.Now()
+	top := f.Top
+	if top <= 0 {
+		top = 5
+	}
+	r.TopN = top
+
+	type authorAgg struct {
+		merged      int
+		opened      int
+		closed      int
+		noReview    int
+		commentsRcv int
+		additions   int
+		deletions   int
+		hasSize     bool
+		sizes       [sizeBucketCount]int
+		mergeDurs   []time.Duration
+		draftDurs   []time.Duration
+		firstRev    []time.Duration
+		approveDurs []time.Duration
+	}
+	authorAggs := map[string]*authorAgg{}
+
+	type engAgg struct {
+		prsCommented int
+		comments     int
+		prsReviewed  int
+		reviews      int
+		approvals    int
+		changesReq   int
+		commentOnly  int
+		openResp     []time.Duration
+		reqResp      []time.Duration
+		rereqResp    []time.Duration
+	}
+	engagement := map[string]*engAgg{}
+	ensureEng := func(login string) *engAgg {
+		g := engagement[login]
+		if g == nil {
+			g = &engAgg{}
+			engagement[login] = g
+		}
+		return g
+	}
+
+	mergeAll := []time.Duration{}
+	sizeCounts := [sizeBucketCount]int{}
+	sizeMergeDurs := make([][]time.Duration, sizeBucketCount)
+	monthOpened := map[string]int{}
+	monthMerged := map[string]int{}
+	monthMergeDurs := map[string][]time.Duration{}
+	activityHours := make([]int, 24)
+	noDataCount := 0
+
+	for _, e := range entries {
+		pr := e.item.PR
+		author := strings.ToLower(pr.Author.Login)
+		agg := authorAggs[author]
+		if agg == nil {
+			agg = &authorAgg{}
+			authorAggs[author] = agg
+		}
+		agg.opened++
+		agg.commentsRcv += e.commentsReceived
+		if len(e.reviewers) == 0 && len(e.reviews) == 0 {
+			agg.noReview++
+		}
+		if e.sizeKnown {
+			agg.hasSize = true
+			agg.additions += pr.Additions
+			agg.deletions += pr.Deletions
+			agg.sizes[sizeBucket(e.sizeLines)]++
+		}
+		if !e.hasNewData {
+			noDataCount++
+		}
+		r.TotalReviews += len(e.reviews)
+		r.TotalAdditions += pr.Additions
+		r.TotalDeletions += pr.Deletions
+
+		merged := pr.MergedAt != nil && strings.EqualFold(pr.State, "MERGED")
+		if merged {
+			agg.merged++
+			agg.mergeDurs = append(agg.mergeDurs, e.mergeDuration)
+			mergeAll = append(mergeAll, e.mergeDuration)
+			if e.sizeKnown {
+				b := sizeBucket(e.sizeLines)
+				sizeCounts[b]++
+				sizeMergeDurs[b] = append(sizeMergeDurs[b], e.mergeDuration)
+			}
+			if e.draftKnown {
+				agg.draftDurs = append(agg.draftDurs, e.draftDuration)
+			}
+			if !e.firstReviewAt.IsZero() {
+				agg.firstRev = append(agg.firstRev, durationSince(pr.CreatedAt, e.firstReviewAt))
+			}
+			if !e.firstApproveAt.IsZero() {
+				agg.approveDurs = append(agg.approveDurs, durationSince(pr.CreatedAt, e.firstApproveAt))
+			}
+		} else if strings.EqualFold(pr.State, "CLOSED") {
+			agg.closed++
+		}
+
+		monthOpened[pr.CreatedAt.Format("2006-01")]++
+		activityHours[pr.CreatedAt.Hour()%24]++
+		if merged {
+			mm := pr.MergedAt.Format("2006-01")
+			monthMerged[mm]++
+			monthMergeDurs[mm] = append(monthMergeDurs[mm], e.mergeDuration)
+		}
+
+		// Reviewer engagement on this PR.
+		for login := range e.reviewers {
+			g := ensureEng(login)
+			g.prsCommented++
+			g.comments += e.commentCounts[login]
+		}
+		perReviewer := map[string][]reviewActivity{}
+		for _, rev := range e.reviews {
+			g := ensureEng(rev.Login)
+			g.reviews++
+			switch rev.State {
+			case "APPROVED":
+				g.approvals++
+			case "CHANGES_REQUESTED":
+				g.changesReq++
+			case "COMMENTED":
+				g.commentOnly++
+			}
+			perReviewer[rev.Login] = append(perReviewer[rev.Login], rev)
+		}
+		for login, revs := range perReviewer {
+			g := ensureEng(login)
+			g.prsReviewed++
+			if first, ok := earliestReviewBy(revs, login, time.Time{}); ok {
+				g.openResp = append(g.openResp, durationSince(pr.CreatedAt, first))
+			}
+			// Split the reviewer's request events into the initial request
+			// and re-requests (events after a review already happened).
+			requests := append([]time.Time(nil), e.requestTimes[login]...)
+			sort.Slice(requests, func(i, j int) bool { return requests[i].Before(requests[j]) })
+			if len(requests) > 0 {
+				firstReq := requests[0]
+				if firstReview, ok := earliestReviewBy(revs, login, firstReq); ok {
+					g.reqResp = append(g.reqResp, durationSince(firstReq, firstReview))
+					for _, reqAt := range requests[1:] {
+						if reqAt.After(firstReview) {
+							if next, ok := earliestReviewBy(revs, login, reqAt); ok {
+								g.rereqResp = append(g.rereqResp, durationSince(reqAt, next))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if len(mergeAll) > 0 {
+		r.MedianMerge = formatStatDuration(medianDuration(mergeAll))
+	} else {
+		r.MedianMerge = "-"
+	}
+
+	// Flag a mostly-stale cache: PRs legitimately without analytics data
+	// (empty diffs) exist, so only a large share triggers the notice.
+	r.LegacyCache = r.TotalPRs > 0 && noDataCount*5 > r.TotalPRs
+
+	// Lead time rows: authors with merged PRs, busiest first.
+	for _, author := range authors {
+		agg := authorAggs[author]
+		if agg == nil || len(agg.mergeDurs) == 0 {
+			continue
+		}
+		row := &LeadTimeRow{
+			Login:       author,
+			MergedCount: len(agg.mergeDurs),
+			MedianMerge: formatStatDuration(medianDuration(agg.mergeDurs)),
+			AvgMerge:    formatStatDuration(avgDuration(agg.mergeDurs)),
+		}
+		if len(agg.draftDurs) > 0 {
+			row.MedianDraft = formatStatDuration(medianDuration(agg.draftDurs))
+		}
+		if len(agg.firstRev) > 0 {
+			row.MedianFirstReview = formatStatDuration(medianDuration(agg.firstRev))
+		}
+		if len(agg.approveDurs) > 0 {
+			row.MedianApprove = formatStatDuration(medianDuration(agg.approveDurs))
+		}
+		r.LeadRows = append(r.LeadRows, row)
+	}
+
+	// Contribution rows: one per author, in the same order as the matrix.
+	for _, author := range authors {
+		agg := authorAggs[author]
+		if agg == nil {
+			continue
+		}
+		rate := "-"
+		if agg.opened > 0 {
+			rate = fmt.Sprintf("%d%%", agg.merged*100/agg.opened)
+		}
+		row := &ContributionRow{
+			Login:            author,
+			Opened:           agg.opened,
+			Merged:           agg.merged,
+			Closed:           agg.closed,
+			MergeRate:        rate,
+			NoReview:         agg.noReview,
+			CommentsReceived: agg.commentsRcv,
+			Additions:        agg.additions,
+			Deletions:        agg.deletions,
+			HasSizeData:      agg.hasSize,
+			SizeCounts:       agg.sizes,
+		}
+		r.ContributionRows = append(r.ContributionRows, row)
+	}
+
+	// Engagement rows: comment-based and review-based reviewers combined.
+	engRows := make([]*ReviewerEngagementRow, 0, len(engagement))
+	for login, g := range engagement {
+		row := &ReviewerEngagementRow{
+			Login:            login,
+			PRsCommented:     g.prsCommented,
+			Comments:         g.comments,
+			PRsReviewed:      g.prsReviewed,
+			Reviews:          g.reviews,
+			Approvals:        g.approvals,
+			ChangesRequested: g.changesReq,
+			CommentOnly:      g.commentOnly,
+		}
+		if len(g.openResp) > 0 {
+			row.MedianOpenResponse = formatStatDuration(medianDuration(g.openResp))
+		}
+		if len(g.reqResp) > 0 {
+			row.MedianRequestResponse = formatStatDuration(medianDuration(g.reqResp))
+		}
+		if len(g.rereqResp) > 0 {
+			row.MedianRerequestResponse = formatStatDuration(medianDuration(g.rereqResp))
+		}
+		engRows = append(engRows, row)
+	}
+	sort.Slice(engRows, func(i, j int) bool {
+		ti := engRows[i].Reviews + engRows[i].Comments
+		tj := engRows[j].Reviews + engRows[j].Comments
+		if ti != tj {
+			return ti > tj
+		}
+		return engRows[i].Login < engRows[j].Login
+	})
+	r.EngagementRows = engRows
+
+	// Size buckets: all five rows for a stable table.
+	for i, name := range sizeBucketNames {
+		row := &SizeRow{Bucket: name, Count: sizeCounts[i]}
+		if ds := sizeMergeDurs[i]; len(ds) > 0 {
+			row.MergedCount = len(ds)
+			row.MedianMerge = formatStatDuration(medianDuration(ds))
+		}
+		r.SizeRows = append(r.SizeRows, row)
+	}
+
+	// Monthly trends across the union of opened and merged months.
+	monthSet := map[string]bool{}
+	for m := range monthOpened {
+		monthSet[m] = true
+	}
+	for m := range monthMerged {
+		monthSet[m] = true
+	}
+	months := make([]string, 0, len(monthSet))
+	for m := range monthSet {
+		months = append(months, m)
+	}
+	sort.Strings(months)
+	for _, m := range months {
+		row := &MonthTrend{Month: m, Opened: monthOpened[m], Merged: monthMerged[m]}
+		if ds := monthMergeDurs[m]; len(ds) > 0 {
+			row.MedianMerge = formatStatDuration(medianDuration(ds))
+			row.medianHrs = medianDuration(ds).Hours()
+		}
+		r.Trends = append(r.Trends, row)
+	}
+	r.ActivityHours = activityHours
+
+	// Notable PR lists: outstanding cases first, ranked by the list metric.
+	type notable struct {
+		row *NotablePR
+		key time.Duration
+	}
+	var awaiting, longest, mostCommented []notable
+	for _, e := range entries {
+		pr := e.item.PR
+		base := func(value string) *NotablePR {
+			return &NotablePR{Repo: e.item.Repo, Number: pr.Number, Title: pr.Title, URL: pr.URL, Author: pr.Author.Login, Value: value}
+		}
+		if strings.EqualFold(pr.State, "OPEN") && len(e.reviewers) == 0 && len(e.reviews) == 0 {
+			age := now.Sub(pr.CreatedAt)
+			if age < 0 {
+				age = 0
+			}
+			awaiting = append(awaiting, notable{row: base(formatStatDuration(age) + " awaiting"), key: age})
+		}
+		if pr.MergedAt != nil && strings.EqualFold(pr.State, "MERGED") {
+			longest = append(longest, notable{row: base(formatStatDuration(e.mergeDuration) + " to merge"), key: e.mergeDuration})
+		}
+		comments := pr.CommentCount
+		if comments == 0 {
+			comments = len(pr.Comments)
+		}
+		if comments > 0 {
+			mostCommented = append(mostCommented, notable{
+				row: base(fmt.Sprintf("%d comments", comments)),
+				key: time.Duration(comments),
+			})
+		}
+	}
+	pickNotable := func(list []notable) []*NotablePR {
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].key != list[j].key {
+				return list[i].key > list[j].key
+			}
+			if list[i].row.Repo != list[j].row.Repo {
+				return list[i].row.Repo < list[j].row.Repo
+			}
+			return list[i].row.Number < list[j].row.Number
+		})
+		if len(list) > top {
+			list = list[:top]
+		}
+		rows := make([]*NotablePR, 0, len(list))
+		for _, n := range list {
+			rows = append(rows, n.row)
+		}
+		return rows
+	}
+	r.NotableAwaiting = pickNotable(awaiting)
+	r.NotableMerge = pickNotable(longest)
+	r.NotableCommented = pickNotable(mostCommented)
 
 	// Appendix: every PR in the period, only when requested since the table
 	// can be very large.
@@ -481,6 +1105,9 @@ const reportTemplate = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Repository activity report</title>
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.6.2/dist/css/tom-select.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.6.2/dist/js/tom-select.complete.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script>
 (function() {
   var stored = null;
@@ -572,6 +1199,35 @@ const reportTemplate = `<!DOCTYPE html>
   .state-merged { color: var(--state-merged); font-weight: 600; }
   .state-open { color: var(--state-open); font-weight: 600; }
   .state-closed { color: var(--state-closed); font-weight: 600; }
+  .matrix-filters .ts-wrapper { width: 12rem; }
+  .ts-wrapper .ts-control {
+    background: var(--surface); color: var(--fg); border-color: var(--border);
+    border-radius: 6px; font-size: 0.8rem; min-height: 0; padding: 0.25rem 0.5rem;
+  }
+  .ts-wrapper.focus .ts-control { border-color: var(--link); box-shadow: none; background: var(--surface); }
+  .ts-wrapper.multi .ts-control > div { background: var(--surface-alt); border-color: var(--border); color: var(--fg); }
+  .ts-wrapper.multi .ts-control > div.active { background: var(--surface-alt); color: var(--fg); }
+  .ts-wrapper .ts-control input { color: var(--fg); }
+  .ts-wrapper .ts-control input::placeholder { color: var(--muted); }
+  .ts-dropdown { background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
+  .ts-dropdown .option { color: var(--fg); }
+  .ts-dropdown .option.active, .ts-dropdown .option:hover { background: var(--surface-alt); color: var(--fg); }
+  .ts-dropdown .dropdown-input { background: var(--surface); color: var(--fg); border-color: var(--border); }
+  .ts-dropdown .dropdown-input::placeholder { color: var(--muted); }
+  .notice {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid #d29922;
+    border-radius: 6px; padding: 0.6rem 0.9rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: var(--fg);
+  }
+  .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; max-width: 900px; }
+  .chart-wrap { position: relative; height: 340px; }
+  .chart-note { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
+  .notable { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+  .notable > div { flex: 1 1 260px; min-width: 240px; }
+  .notable h3 { font-size: 0.85rem; margin: 0 0 0.5rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .notable ol { margin: 0; padding-left: 1.4rem; font-size: 0.85rem; }
+  .notable li { margin-bottom: 0.4rem; }
+  .notable .value { color: var(--muted); font-size: 0.75rem; display: block; }
+  h2 .section-hint { font-size: 0.75rem; color: var(--muted); font-weight: 400; margin-left: 0.5rem; }
 </style>
 </head>
 <body>
@@ -592,7 +1248,22 @@ const reportTemplate = `<!DOCTYPE html>
   <div class="card"><div class="value">{{.ReviewerCount}}</div><div class="label">Reviewers</div></div>
   <div class="card"><div class="value">{{.OverallMedian}}</div><div class="label">Median first comment</div></div>
   <div class="card"><div class="value">{{.OverallAvg}}</div><div class="label">Average first comment</div></div>
+  <div class="card"><div class="value">{{.MedianMerge}}</div><div class="label">Median time to merge</div></div>
+  <div class="card"><div class="value">{{.TotalReviews}}</div><div class="label">Reviews submitted</div></div>
 </div>
+
+{{if .LegacyCache}}
+<div class="notice">Some pull requests were cached before review, size and timeline data was collected.
+Run <code>ghx cache --force</code> for these repositories to enable the full set of metrics.</div>
+{{end}}
+
+{{if .Trends}}
+<h2>Monthly trend</h2>
+<div class="chart-box">
+  <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+  <div class="chart-note">Pull requests opened and merged per month, with the median time from opening to merge.</div>
+</div>
+{{end}}
 
 <h2>Author × reviewer matrix</h2>
 <p class="meta">Each cell counts the PRs authored by the row author that the column reviewer commented on,
@@ -600,8 +1271,14 @@ with the average and median time from PR creation to that reviewer's first comme
 Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.</p>
 {{if .Matrix.Rows}}
 <div class="matrix-filters">
-  <label for="author-filter">Authors</label><input type="search" id="author-filter" placeholder="filter authors" autocomplete="off">
-  <label for="reviewer-filter">Reviewers</label><input type="search" id="reviewer-filter" placeholder="filter reviewers" autocomplete="off">
+  <label for="author-filter">Authors</label>
+  <select id="author-filter" multiple placeholder="Filter authors" autocomplete="off">
+    {{range .Matrix.Rows}}<option value="{{.Author}}">{{.Author}}</option>{{end}}
+  </select>
+  <label for="reviewer-filter">Reviewers</label>
+  <select id="reviewer-filter" multiple placeholder="Filter reviewers" autocomplete="off">
+    {{range .Matrix.Cols}}{{if not .NoComments}}<option value="{{.Reviewer}}">{{.Reviewer}}</option>{{end}}{{end}}
+  </select>
   <span id="matrix-filter-hint"></span>
 </div>
 <table class="matrix" id="matrix-table">
@@ -658,6 +1335,56 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 <p class="empty">No authors matched.</p>
 {{end}}
 
+{{if .LeadRows}}
+<h2>Lead time <span class="section-hint">merged PRs only</span></h2>
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">Merged PRs</th><th class="num">Median time to merge</th><th class="num">Average time to merge</th><th class="num">Median time in draft</th><th class="num">Median time to first review</th><th class="num">Median time to approve</th></tr>
+  </thead>
+  <tbody>
+    {{range .LeadRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.MergedCount}}</td>
+      <td class="num">{{.MedianMerge}}</td>
+      <td class="num">{{.AvgMerge}}</td>
+      <td class="num">{{if .MedianDraft}}{{.MedianDraft}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianFirstReview}}{{.MedianFirstReview}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianApprove}}{{.MedianApprove}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">Draft time is reconstructed from ready-for-review and convert-to-draft timeline events;
+review and approve times come from submitted reviews. A dash means the underlying events were not recorded.</p>
+{{end}}
+
+{{if .ContributionRows}}
+<h2>Contribution</h2>
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">Opened</th><th class="num">Merged</th><th class="num">Closed</th><th class="num">Merge rate</th><th class="num">PRs w/o review</th><th class="num">Comments received</th><th class="num">+/-</th><th class="num">Size xs/s/m/l/xl</th></tr>
+  </thead>
+  <tbody>
+    {{range .ContributionRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.Opened}}</td>
+      <td class="num">{{.Merged}}</td>
+      <td class="num">{{.Closed}}</td>
+      <td class="num">{{.MergeRate}}</td>
+      <td class="num">{{.NoReview}}</td>
+      <td class="num">{{.CommentsReceived}}</td>
+      <td class="num">{{if .HasSizeData}}+{{.Additions}}/-{{.Deletions}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .HasSizeData}}{{index .SizeCounts 0}}/{{index .SizeCounts 1}}/{{index .SizeCounts 2}}/{{index .SizeCounts 3}}/{{index .SizeCounts 4}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">Size buckets count changed lines per PR: xs &lt;100, s &lt;500, m &lt;1000, l &lt;2000, xl &ge;2000.
+"PRs w/o review" counts PRs that received no reviewer comment and no review.</p>
+{{end}}
+
 <h2>Per-reviewer summary</h2>
 {{if .ReviewerRows}}
 <table>
@@ -677,6 +1404,101 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 </table>
 {{else}}
 <p class="empty">No reviewer comments matched.</p>
+{{end}}
+
+{{if .EngagementRows}}
+<h2>Reviewer engagement</h2>
+<table>
+  <thead>
+    <tr><th>Reviewer</th><th class="num">PRs commented</th><th class="num">Comments</th><th class="num">PRs reviewed</th><th class="num">Reviews</th><th class="num">Approvals</th><th class="num">Changes requested</th><th class="num">Comment-only</th><th class="num">Median open to review</th><th class="num">Median request to review</th><th class="num">Median re-request to review</th></tr>
+  </thead>
+  <tbody>
+    {{range .EngagementRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.PRsCommented}}</td>
+      <td class="num">{{.Comments}}</td>
+      <td class="num">{{.PRsReviewed}}</td>
+      <td class="num">{{.Reviews}}</td>
+      <td class="num">{{.Approvals}}</td>
+      <td class="num">{{.ChangesRequested}}</td>
+      <td class="num">{{.CommentOnly}}</td>
+      <td class="num">{{if .MedianOpenResponse}}{{.MedianOpenResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianRequestResponse}}{{.MedianRequestResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianRerequestResponse}}{{.MedianRerequestResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">"Median open to review" measures PR creation to the reviewer's first review;
+"request to review" and "re-request to review" measure from the review request timeline event.
+Request columns need review-request events in the cached data.</p>
+{{end}}
+
+{{if .SizeRows}}
+<h2>PR size vs merge time</h2>
+<table>
+  <thead>
+    <tr><th>Size</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Median time to merge</th></tr>
+  </thead>
+  <tbody>
+    {{range .SizeRows}}
+    <tr>
+      <td>{{.Bucket}}</td>
+      <td class="num">{{.Count}}</td>
+      <td class="num">{{.MergedCount}}</td>
+      <td class="num">{{if .MedianMerge}}{{.MedianMerge}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<div class="chart-box" style="margin-top: 0.75rem;">
+  <div class="chart-wrap" style="height: 260px;"><canvas id="size-chart"></canvas></div>
+</div>
+{{end}}
+
+{{if .ActivityHours}}
+<h2>Peak activity <span class="section-hint">PR opens by hour of day</span></h2>
+<div class="chart-box">
+  <div class="chart-wrap"><canvas id="activity-chart"></canvas></div>
+  <div class="chart-note">Hours use the timezone recorded on each pull request's creation timestamp.</div>
+</div>
+{{end}}
+
+{{if or .NotableAwaiting .NotableMerge .NotableCommented}}
+<h2>Notable pull requests</h2>
+<div class="notable">
+  {{if .NotableAwaiting}}
+  <div>
+    <h3>Longest awaiting first review</h3>
+    <ol>
+      {{range .NotableAwaiting}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+  {{if .NotableMerge}}
+  <div>
+    <h3>Longest time to merge</h3>
+    <ol>
+      {{range .NotableMerge}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+  {{if .NotableCommented}}
+  <div>
+    <h3>Most discussed</h3>
+    <ol>
+      {{range .NotableCommented}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+</div>
 {{end}}
 
 {{if .ShowPRs}}
@@ -705,7 +1527,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 {{end}}
 {{end}}
 
-<footer>Generated by <code>ghx stats</code>. Reviewers are derived from PR comments cached by <code>ghx cache</code>.</footer>
+<footer>Generated by <code>ghx stats</code>. Reviewers are derived from PR comments and reviews cached by <code>ghx cache</code>.</footer>
 <script>
 (function() {
   var root = document.documentElement;
@@ -714,6 +1536,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
     root.classList.toggle("dark", theme === "dark");
     btn.textContent = theme === "dark" ? "Light theme" : "Dark theme";
     try { localStorage.setItem("ghx-theme", theme); } catch (e) {}
+    document.dispatchEvent(new Event("ghx-theme"));
   }
   apply(root.classList.contains("dark") ? "dark" : "light");
   btn.addEventListener("click", function() {
@@ -723,8 +1546,8 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 (function() {
   var table = document.getElementById("matrix-table");
   if (!table) return;
-  var authorInput = document.getElementById("author-filter");
-  var reviewerInput = document.getElementById("reviewer-filter");
+  var authorEl = document.getElementById("author-filter");
+  var reviewerEl = document.getElementById("reviewer-filter");
   var hint = document.getElementById("matrix-filter-hint");
   var headCells = table.tHead.rows[0].cells;
   var bodyRows = table.tBodies[0].rows;
@@ -732,23 +1555,34 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
   for (var i = 0; i < headCells.length; i++) {
     if (headCells[i].getAttribute("data-reviewer") !== null) reviewerCols.push(i);
   }
+  if (typeof TomSelect !== "undefined") {
+    var config = { plugins: ["remove_button", "dropdown_input", "clear_button"], maxOptions: 1000 };
+    new TomSelect(authorEl, config);
+    new TomSelect(reviewerEl, config);
+  }
+  function selected(el) {
+    if (el.tomselect) return el.tomselect.getValue();
+    return Array.prototype.map.call(el.selectedOptions, function(o) { return o.value; });
+  }
   function apply() {
-    var qa = authorInput.value.trim().toLowerCase();
-    var qr = reviewerInput.value.trim().toLowerCase();
-    var filtered = qa !== "" || qr !== "";
+    var qa = selected(authorEl), qr = selected(reviewerEl);
+    var qaSet = {}, qrSet = {}, i;
+    for (i = 0; i < qa.length; i++) qaSet[qa[i]] = true;
+    for (i = 0; i < qr.length; i++) qrSet[qr[i]] = true;
+    var filtered = qa.length > 0 || qr.length > 0;
     var showCol = [];
     var visibleReviewers = 0;
-    for (var i = 0; i < headCells.length; i++) showCol.push(true);
+    for (i = 0; i < headCells.length; i++) showCol.push(true);
     for (var r = 0; r < reviewerCols.length; r++) {
       var c = reviewerCols[r];
-      showCol[c] = qr === "" || headCells[c].getAttribute("data-reviewer").toLowerCase().indexOf(qr) !== -1;
+      showCol[c] = qr.length === 0 || qrSet[headCells[c].getAttribute("data-reviewer")] === true;
       if (showCol[c]) visibleReviewers++;
     }
     var visibleAuthors = 0;
     for (var j = 0; j < bodyRows.length; j++) {
       var row = bodyRows[j];
       var cells = row.cells;
-      var rowVisible = qa === "" || cells[0].getAttribute("data-author").toLowerCase().indexOf(qa) !== -1;
+      var rowVisible = qa.length === 0 || qaSet[cells[0].getAttribute("data-author")] === true;
       row.style.display = rowVisible ? "" : "none";
       if (!rowVisible) continue;
       visibleAuthors++;
@@ -763,8 +1597,89 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
       ? visibleAuthors + " of " + bodyRows.length + " authors · " + visibleReviewers + " of " + reviewerCols.length + " reviewers"
       : "";
   }
-  authorInput.addEventListener("input", apply);
-  reviewerInput.addEventListener("input", apply);
+  authorEl.addEventListener("change", apply);
+  reviewerEl.addEventListener("change", apply);
+})();
+(function() {
+  var DATA = {{.ChartsJSON}};
+  var charts = [];
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function buildCharts() {
+    charts.forEach(function(c) { c.destroy(); });
+    charts = [];
+    if (typeof Chart === "undefined") {
+      document.querySelectorAll(".chart-box").forEach(function(el) {
+        el.innerHTML = '<div class="chart-note">Charts unavailable: Chart.js could not be loaded from the CDN.</div>';
+      });
+      return;
+    }
+    var border = cssVar("--border");
+    Chart.defaults.color = cssVar("--muted");
+    Chart.defaults.borderColor = border;
+    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
+
+    var trend = document.getElementById("trend-chart");
+    if (trend && DATA.months && DATA.months.length) {
+      charts.push(new Chart(trend, {
+        type: "bar",
+        data: {
+          labels: DATA.months,
+          datasets: [
+            { label: "Opened", data: DATA.opened, backgroundColor: "rgba(76, 141, 255, 0.65)" },
+            { label: "Merged", data: DATA.merged, backgroundColor: "rgba(63, 185, 80, 0.65)" },
+            { type: "line", label: "Median hours to merge", data: DATA.medianHrs, yAxisID: "y2",
+              borderColor: "#d29922", backgroundColor: "#d29922", tension: 0.3, pointRadius: 3 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: "PRs" }, grid: { color: border } },
+            y2: { position: "right", beginAtZero: true, title: { display: true, text: "hours" }, grid: { drawOnChartArea: false } },
+            x: { grid: { display: false } }
+          }
+        }
+      }));
+    }
+
+    var size = document.getElementById("size-chart");
+    if (size && DATA.sizes && DATA.sizes.length) {
+      charts.push(new Chart(size, {
+        type: "bar",
+        data: {
+          labels: ["xs", "s", "m", "l", "xl"],
+          datasets: [{ label: "PRs", data: DATA.sizes, backgroundColor: "rgba(171, 125, 248, 0.65)" }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+    }
+
+    var activity = document.getElementById("activity-chart");
+    if (activity && DATA.hours && DATA.hours.length) {
+      var hours = [];
+      for (var h = 0; h < 24; h++) hours.push(String(h));
+      charts.push(new Chart(activity, {
+        type: "bar",
+        data: {
+          labels: hours,
+          datasets: [{ label: "PRs opened", data: DATA.hours, backgroundColor: "rgba(76, 141, 255, 0.65)" }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+    }
+  }
+  buildCharts();
+  document.addEventListener("ghx-theme", buildCharts);
 })();
 </script>
 </body>
@@ -776,6 +1691,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 type reportView struct {
 	*Report
 	ReposLabel string
+	ChartsJSON template.JS
 }
 
 // renderReport renders the report to a complete HTML document.
@@ -785,6 +1701,19 @@ func renderReport(r *Report) (string, error) {
 		return "", err
 	}
 	view := &reportView{Report: r, ReposLabel: strings.Join(r.Repos, ", ")}
+	payload := chartsPayload{Hours: r.ActivityHours}
+	for _, t := range r.Trends {
+		payload.Months = append(payload.Months, t.Month)
+		payload.Opened = append(payload.Opened, t.Opened)
+		payload.Merged = append(payload.Merged, t.Merged)
+		payload.MedianHrs = append(payload.MedianHrs, t.medianHrs)
+	}
+	for _, s := range r.SizeRows {
+		payload.Sizes = append(payload.Sizes, s.Count)
+	}
+	if b, err := json.Marshal(payload); err == nil {
+		view.ChartsJSON = template.JS(b)
+	}
 	var sb strings.Builder
 	if err := tmpl.Execute(&sb, view); err != nil {
 		return "", err

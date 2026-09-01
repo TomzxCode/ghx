@@ -102,7 +102,7 @@ func (s *Server) route(query string, vars map[string]interface{}) (interface{}, 
 		return s.fetchAllIssues(vars)
 	case strings.Contains(query, "issues(first:"):
 		return s.listIssues(vars)
-	case strings.Contains(query, "pullRequests(first: 100") && strings.Contains(query, "states: [OPEN, CLOSED, MERGED]"):
+	case strings.Contains(query, "pullRequests(first:") && strings.Contains(query, "states: [OPEN, CLOSED, MERGED]"):
 		return s.fetchAllPRs(vars)
 	case strings.Contains(query, "pullRequests(first:"):
 		return s.listPRs(vars)
@@ -187,10 +187,20 @@ func (s *Server) listPRs(vars map[string]interface{}) (interface{}, []gqlError) 
 func (s *Server) fetchAllPRs(vars map[string]interface{}) (interface{}, []gqlError) {
 	owner := strVar(vars, "owner")
 	repo := strVar(vars, "repo")
+	pageSize := intVar(vars, "first")
+	if pageSize <= 0 {
+		pageSize = 50
+	}
 
 	filtered := s.filterPRs(owner, repo, nil)
-	sortByUpdatedAtAsc(filtered, func(i int) time.Time { return s.scenario.PRs[filtered[i]].PullRequest.UpdatedAt })
-	return s.paginatePRsFull(filtered, 100, vars), nil
+	key := func(i int) time.Time { return s.scenario.PRs[filtered[i]].PullRequest.UpdatedAt }
+	if strVar(vars, "dir") == "DESC" {
+		// Newest-first, as requested by the delta/resume fetch (FetchPRsUpdated).
+		sort.Slice(filtered, func(i, j int) bool { return key(i).After(key(j)) })
+	} else {
+		sortByUpdatedAtAsc(filtered, key)
+	}
+	return s.paginatePRsFull(filtered, pageSize, vars), nil
 }
 
 func (s *Server) search(vars map[string]interface{}) (interface{}, []gqlError) {
@@ -506,6 +516,10 @@ func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 		"closedAt":       pr.ClosedAt,
 		"url":            pr.URL,
 		"body":           pr.Body,
+		"additions":      pr.Additions,
+		"deletions":      pr.Deletions,
+		"reviews":        reviewNodes(pr.Reviews),
+		"timelineItems":  timelineNodes(pr.Timeline),
 		"comments":       commentNodes(pr.Comments),
 	}
 }
@@ -557,8 +571,51 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		"closedAt":       pr.ClosedAt,
 		"url":            pr.URL,
 		"body":           pr.Body,
+		"additions":      pr.Additions,
+		"deletions":      pr.Deletions,
+		"reviews":        reviewNodes(pr.Reviews),
+		"timelineItems":  timelineNodes(pr.Timeline),
 		"comments":       commentNodesWithCount(commentCount, pr.Comments),
 	}
+}
+
+// reviewNodes mirrors the reviews(first: N) { nodes { ... } } connection shape
+// expected by the API client.
+func reviewNodes(reviews []github.PRReview) map[string]interface{} {
+	nodes := make([]map[string]interface{}, 0, len(reviews))
+	for _, r := range reviews {
+		nodes = append(nodes, map[string]interface{}{
+			"author":      actorNode(r.Author.Login),
+			"state":       r.State,
+			"submittedAt": r.SubmittedAt,
+		})
+	}
+	return map[string]interface{}{"nodes": nodes}
+}
+
+// timelineNodes mirrors the timelineItems(first: N) { nodes { ... } }
+// connection shape expected by the API client, mapping normalized event kinds
+// back to GraphQL __typename values. RequestedReviewer is serialized as the
+// User union member the client reads.
+func timelineNodes(events []github.TimelineEvent) map[string]interface{} {
+	typenames := map[github.TimelineEventKind]string{
+		github.TimelineReadyForReview:   "ReadyForReviewEvent",
+		github.TimelineConvertedToDraft: "ConvertToDraftEvent",
+		github.TimelineReviewRequested:  "ReviewRequestedEvent",
+	}
+	nodes := make([]map[string]interface{}, 0, len(events))
+	for _, e := range events {
+		node := map[string]interface{}{
+			"__typename": typenames[e.Kind],
+			"actor":      actorNode(e.Actor.Login),
+			"createdAt":  e.CreatedAt,
+		}
+		if e.RequestedReviewer.Login != "" {
+			node["requestedReviewer"] = actorNode(e.RequestedReviewer.Login)
+		}
+		nodes = append(nodes, node)
+	}
+	return map[string]interface{}{"nodes": nodes}
 }
 
 // commentNodesWithCount mirrors the real search API, which returns the comment

@@ -2,6 +2,12 @@ package integration
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
+	"sort"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -561,8 +567,9 @@ func TestCache_ResumeAfterInterruption(t *testing.T) {
 	}
 }
 
-// TestClient_FetchPRsUpdated verifies the search-based PR delta path returns
-// only PRs updated at or after the cutoff.
+// TestClient_FetchPRsUpdated verifies the connection-walk PR delta path
+// returns exactly the PRs updated at or after the cutoff (exact timestamps,
+// not day-granular like the search API it replaced).
 func TestClient_FetchPRsUpdated(t *testing.T) {
 	srv := startServer(t, sampleScenario())
 
@@ -577,23 +584,185 @@ func TestClient_FetchPRsUpdated(t *testing.T) {
 		t.Fatalf("FetchAllPRs: %v", err)
 	}
 	var cutoff time.Time
+	want := map[int]bool{}
 	for _, pr := range all {
 		if pr.Number == 7 { // "WIP: refactor auth", most recently updated in the sample
 			cutoff = pr.UpdatedAt.Add(-1 * time.Second)
 		}
 	}
+	for _, pr := range all {
+		if !pr.UpdatedAt.Before(cutoff) {
+			want[pr.Number] = true
+		}
+	}
 
-	got, err := client.FetchPRsUpdated("acme", "myproject", cutoff, nil)
+	got, err := client.FetchPRsUpdated("acme", "myproject", cutoff, nil, nil)
 	if err != nil {
 		t.Fatalf("FetchPRsUpdated: %v", err)
 	}
 	if len(got) == 0 {
 		t.Fatal("expected at least one PR updated since the cutoff")
 	}
+	gotNums := map[int]bool{}
 	for _, pr := range got {
-		day := cutoff.UTC().Truncate(24 * time.Hour)
-		if pr.UpdatedAt.Before(day) {
-			t.Errorf("PR #%d updatedAt=%v is before cutoff day %v", pr.Number, pr.UpdatedAt, day)
+		if pr.UpdatedAt.Before(cutoff) {
+			t.Errorf("PR #%d updatedAt=%v is before cutoff %v", pr.Number, pr.UpdatedAt, cutoff)
+		}
+		gotNums[pr.Number] = true
+	}
+	if len(gotNums) != len(want) {
+		t.Errorf("got %d distinct PRs, want %d", len(gotNums), len(want))
+	}
+	for n := range want {
+		if !gotNums[n] {
+			t.Errorf("PR #%d updated at or after the cutoff is missing from the delta result", n)
+		}
+	}
+}
+
+// TestClient_FetchPRsUpdated_StopsEarly verifies the newest-first delta walk
+// stops paginating as soon as a page reaches the cutoff, so a delta over a
+// large repo costs only a couple of requests instead of walking all pages.
+func TestClient_FetchPRsUpdated_StopsEarly(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:          3,
+		Repos:             []string{"acme/big"},
+		History:           60 * 24 * time.Hour,
+		IssuesPerRepo:     5,   // PR bodies reference issue numbers, so not zero
+		PRsPerRepo:        250, // 5 pages of 50
+		CommentsPerIssue:  0,
+		CommentsPerPR:     0,
+		CloseRate:         0.3,
+		MergeRate:         0.3,
+		DraftRate:         0.1,
+		ReviewRate:        0.5,
+		Seed:              11,
+		AssigneesPerIssue: 0,
+		AssigneesPerPR:    1,
+		LabelsPerItem:     1,
+		MilestonesPerRepo: 1,
+	}
+	mock := mockserver.NewServer(mockserver.Generate(cfg))
+	t.Cleanup(mock.Close)
+
+	// Count GraphQL requests reaching the mock via a reverse proxy.
+	var count int32
+	target, err := url.Parse(mock.URL())
+	if err != nil {
+		t.Fatalf("parsing mock URL: %v", err)
+	}
+	counting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&count, 1)
+		httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+	}))
+	t.Cleanup(counting.Close)
+
+	client, err := github.NewClientWithURL(counting.URL, "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	all, err := client.FetchAllPRs("acme", "big", nil)
+	if err != nil {
+		t.Fatalf("FetchAllPRs: %v", err)
+	}
+	if len(all) != 250 {
+		t.Fatalf("got %d PRs, want 250", len(all))
+	}
+
+	// Cutoff leaves only the 5 newest PRs on the delta side.
+	desc := append([]*github.PullRequest(nil), all...)
+	sort.Slice(desc, func(i, j int) bool { return desc[i].UpdatedAt.After(desc[j].UpdatedAt) })
+	cutoff := desc[4].UpdatedAt
+	want := 0
+	for _, pr := range all {
+		if !pr.UpdatedAt.Before(cutoff) {
+			want++
+		}
+	}
+
+	atomic.StoreInt32(&count, 0)
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	if err != nil {
+		t.Fatalf("FetchPRsUpdated: %v", err)
+	}
+
+	if len(got) != want {
+		t.Errorf("delta returned %d PRs, want %d", len(got), want)
+	}
+	for _, pr := range got {
+		if pr.UpdatedAt.Before(cutoff) {
+			t.Errorf("PR #%d updatedAt=%v is before cutoff %v", pr.Number, pr.UpdatedAt, cutoff)
+		}
+	}
+	// Phase 1 (light walk) stops after the first page because the cutoff is
+	// within the first page (page size 25); phase 2 covers the window with a
+	// single full page. Allow slack for boundary ties.
+	if got := atomic.LoadInt32(&count); got > 3 {
+		t.Errorf("delta made %d requests, want at most 3 (walks did not stop early)", got)
+	}
+}
+
+// TestClient_FetchPRsUpdated_ParallelPages verifies a window spanning several
+// pages is assembled completely when pages are fetched concurrently.
+func TestClient_FetchPRsUpdated_ParallelPages(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:          3,
+		Repos:             []string{"acme/big"},
+		History:           60 * 24 * time.Hour,
+		IssuesPerRepo:     5,
+		PRsPerRepo:        250, // 10 pages of 25
+		CommentsPerIssue:  0,
+		CommentsPerPR:     0,
+		CloseRate:         0.3,
+		MergeRate:         0.3,
+		DraftRate:         0.1,
+		ReviewRate:        0.5,
+		Seed:              11,
+		AssigneesPerIssue: 0,
+		AssigneesPerPR:    1,
+		LabelsPerItem:     1,
+		MilestonesPerRepo: 1,
+	}
+	srv := startServer(t, mockserver.Generate(cfg))
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	all, err := client.FetchAllPRs("acme", "big", nil)
+	if err != nil {
+		t.Fatalf("FetchAllPRs: %v", err)
+	}
+
+	desc := append([]*github.PullRequest(nil), all...)
+	sort.Slice(desc, func(i, j int) bool { return desc[i].UpdatedAt.After(desc[j].UpdatedAt) })
+	cutoff := desc[99].UpdatedAt // 100th newest → 4 pages of 25
+	want := map[int]bool{}
+	for _, pr := range all {
+		if !pr.UpdatedAt.Before(cutoff) {
+			want[pr.Number] = true
+		}
+	}
+
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	if err != nil {
+		t.Fatalf("FetchPRsUpdated: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("delta returned %d PRs, want %d", len(got), len(want))
+	}
+	seen := map[int]bool{}
+	for _, pr := range got {
+		if pr.UpdatedAt.Before(cutoff) {
+			t.Errorf("PR #%d updatedAt=%v is before cutoff %v", pr.Number, pr.UpdatedAt, cutoff)
+		}
+		seen[pr.Number] = true
+	}
+	for n := range want {
+		if !seen[n] {
+			t.Errorf("PR #%d updated at or after the cutoff is missing from the delta result", n)
 		}
 	}
 }

@@ -3,6 +3,8 @@ package mockserver
 import (
 	"testing"
 	"time"
+
+	"github.com/tomzxcode/ghx/internal/github"
 )
 
 func TestGenerate_SmallConfig(t *testing.T) {
@@ -129,20 +131,53 @@ func TestGenerate_MergeRateZero(t *testing.T) {
 	}
 }
 
+func TestGenerate_MergeTimesDistinct(t *testing.T) {
+	cfg := SmallConfig()
+	cfg.MergeRate = 1.0
+	cfg.History = 90 * 24 * time.Hour
+	scenario := Generate(cfg)
+
+	// Every merged PR must merge after creation, and merge times must not
+	// all collapse onto the same instant (a loop-variable aliasing bug).
+	distinct := map[string]bool{}
+	for _, pr := range scenario.PRs {
+		if pr.MergedAt == nil {
+			continue
+		}
+		if pr.MergedAt.Before(pr.CreatedAt) {
+			t.Errorf("PR #%d merged before it was created", pr.Number)
+		}
+		distinct[pr.MergedAt.String()] = true
+	}
+	if len(distinct) < 2 {
+		t.Errorf("expected distinct merge times, got %d", len(distinct))
+	}
+}
+
 func TestGenerate_DraftRate(t *testing.T) {
 	cfg := SmallConfig()
 	cfg.DraftRate = 1.0
 	cfg.MergeRate = 0.0
 	scenario := Generate(cfg)
 
-	drafts := 0
+	// Drafts either stay in draft or carry a ready-for-review event; some
+	// of both should appear across the generated PRs.
+	drafts, ready := 0, 0
 	for _, pr := range scenario.PRs {
 		if pr.IsDraft {
 			drafts++
 		}
+		for _, ev := range pr.Timeline {
+			if ev.Kind == github.TimelineReadyForReview {
+				ready++
+			}
+		}
 	}
-	if drafts == 0 {
-		t.Error("with DraftRate=1.0: expected at least some drafts")
+	if drafts == 0 && ready == 0 {
+		t.Error("with DraftRate=1.0: expected drafts or ready-for-review events")
+	}
+	if ready == 0 {
+		t.Error("with DraftRate=1.0: expected some drafts to become ready for review")
 	}
 }
 

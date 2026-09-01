@@ -113,6 +113,8 @@ const (
 	eventReviewPR
 	eventMergePR
 	eventClosePR
+	eventReadyPR
+	eventRequestReview
 )
 
 type simEvent struct {
@@ -151,23 +153,27 @@ type simIssue struct {
 }
 
 type simPR struct {
-	number          int
-	author          string
-	title           string
-	body            string
-	state           string
-	isDraft         bool
-	reviewDecision  string
-	labels          []github.Label
-	milestone       *github.Milestone
-	assignees       []github.Actor
-	baseRefName     string
-	headRefName     string
-	createdAt       time.Time
-	updatedAt       time.Time
-	mergedAt        *time.Time
-	closedAt        *time.Time
-	comments        []github.Comment
+	number         int
+	author         string
+	title          string
+	body           string
+	state          string
+	isDraft        bool
+	reviewDecision string
+	labels         []github.Label
+	milestone      *github.Milestone
+	assignees      []github.Actor
+	baseRefName    string
+	headRefName    string
+	createdAt      time.Time
+	updatedAt      time.Time
+	mergedAt       *time.Time
+	closedAt       *time.Time
+	comments       []github.Comment
+	additions      int
+	deletions      int
+	reviews        []github.PRReview
+	timeline       []github.TimelineEvent
 }
 
 // ---------------------------------------------------------------------------
@@ -477,12 +483,12 @@ func Generate(cfg SimulationConfig) *Scenario {
 			for j := 0; j < cfg.CommentsPerIssue; j++ {
 				commentDelay := time.Duration(rng.Int63n(int64(48 * time.Hour)))
 				events = append(events, simEvent{
-					t:     created.Add(commentDelay + time.Minute),
-					typ:   eventCommentIssue,
-					user:  pickUser(),
-					owner: repo.owner,
-					repo:  repo.name,
-					ref:   num,
+					t:       created.Add(commentDelay + time.Minute),
+					typ:     eventCommentIssue,
+					user:    pickUser(),
+					owner:   repo.owner,
+					repo:    repo.name,
+					ref:     num,
 					payload: expandTemplateInt(pickString(commentBodies), issues[rng.Intn(len(issues))]),
 				})
 			}
@@ -513,11 +519,12 @@ func Generate(cfg SimulationConfig) *Scenario {
 			created := sampleTime()
 
 			isDraft := rng.Float64() < cfg.DraftRate
+			author := pickUser()
 
 			events = append(events, simEvent{
 				t:       created,
 				typ:     eventCreatePR,
-				user:    pickUser(),
+				user:    author,
 				owner:   repo.owner,
 				repo:    repo.name,
 				ref:     num,
@@ -525,30 +532,53 @@ func Generate(cfg SimulationConfig) *Scenario {
 				labels:  pickLabels(),
 			})
 
-			if isDraft {
+			if isDraft && rng.Float64() < 0.7 {
 				events[len(events)-1].payload += "\n[draft]"
+				// Most drafts become ready for review within a couple of
+				// days; the rest stay in draft.
+				readyDelay := time.Duration(1+rng.Int63n(47)) * time.Hour
+				events = append(events, simEvent{
+					t:     created.Add(readyDelay),
+					typ:   eventReadyPR,
+					user:  author,
+					owner: repo.owner,
+					repo:  repo.name,
+					ref:   num,
+				})
 			}
 
 			for j := 0; j < cfg.CommentsPerPR; j++ {
 				commentDelay := time.Duration(rng.Int63n(int64(24 * time.Hour)))
 				events = append(events, simEvent{
-					t:     created.Add(commentDelay + time.Minute),
-					typ:   eventCommentPR,
-					user:  pickUser(),
-					owner: repo.owner,
-					repo:  repo.name,
-					ref:   num,
+					t:       created.Add(commentDelay + time.Minute),
+					typ:     eventCommentPR,
+					user:    pickUser(),
+					owner:   repo.owner,
+					repo:    repo.name,
+					ref:     num,
 					payload: expandTemplateInt(pickString(commentBodies), issues[rng.Intn(len(issues))]),
 				})
 			}
 
 			if rng.Float64() < cfg.ReviewRate {
+				// A review request precedes the review itself, and the
+				// requested reviewer is the one who reviews.
+				reviewer := pickUser()
+				requestDelay := time.Duration(rng.Int63n(int64(12*time.Hour))) + 30*time.Minute
+				events = append(events, simEvent{
+					t:     created.Add(requestDelay),
+					typ:   eventRequestReview,
+					user:  reviewer,
+					owner: repo.owner,
+					repo:  repo.name,
+					ref:   num,
+				})
 				reviewDelay := time.Duration(rng.Int63n(int64(48 * time.Hour)))
 				decisions := []string{"APPROVED", "CHANGES_REQUESTED", "APPROVED", "APPROVED"}
 				events = append(events, simEvent{
-					t:       created.Add(reviewDelay + 30*time.Minute),
+					t:       created.Add(requestDelay + reviewDelay + 30*time.Minute),
 					typ:     eventReviewPR,
-					user:    pickUser(),
+					user:    reviewer,
 					owner:   repo.owner,
 					repo:    repo.name,
 					ref:     num,
@@ -641,7 +671,8 @@ func Generate(cfg SimulationConfig) *Scenario {
 				continue
 			}
 			si.state = "CLOSED"
-			si.closedAt = &ev.t
+			closedAt := ev.t
+			si.closedAt = &closedAt
 			si.updatedAt = ev.t
 
 		case eventCreatePR:
@@ -669,6 +700,8 @@ func Generate(cfg SimulationConfig) *Scenario {
 				headRefName:    fmt.Sprintf("%s/%s-%d", pickString(headBranchPrefixes), mod, ev.ref),
 				createdAt:      ev.t,
 				updatedAt:      ev.t,
+				additions:      10 + rng.Intn(800),
+				deletions:      rng.Intn(300),
 			}
 			prMap[prKey(ev.owner, ev.repo, ev.ref)] = sp
 
@@ -696,6 +729,52 @@ func Generate(cfg SimulationConfig) *Scenario {
 				continue
 			}
 			sp.reviewDecision = ev.payload
+			sp.reviews = append(sp.reviews, github.PRReview{
+				Author:      github.Actor{Login: ev.user},
+				State:       ev.payload,
+				SubmittedAt: ev.t,
+			})
+			// A changes-requested review is followed by a re-request, which
+			// GitHub records as another review-requested event.
+			if ev.payload == "CHANGES_REQUESTED" {
+				sp.timeline = append(sp.timeline, github.TimelineEvent{
+					Kind:              github.TimelineReviewRequested,
+					Actor:             github.Actor{Login: ev.user},
+					RequestedReviewer: github.Actor{Login: ev.user},
+					CreatedAt:         ev.t.Add(time.Hour),
+				})
+			}
+			sp.updatedAt = ev.t
+
+		case eventReadyPR:
+			k := prKey(ev.owner, ev.repo, ev.ref)
+			sp, ok := prMap[k]
+			if !ok {
+				continue
+			}
+			if sp.state != "OPEN" {
+				continue // merged or closed while still draft
+			}
+			sp.isDraft = false
+			sp.timeline = append(sp.timeline, github.TimelineEvent{
+				Kind:      github.TimelineReadyForReview,
+				Actor:     github.Actor{Login: ev.user},
+				CreatedAt: ev.t,
+			})
+			sp.updatedAt = ev.t
+
+		case eventRequestReview:
+			k := prKey(ev.owner, ev.repo, ev.ref)
+			sp, ok := prMap[k]
+			if !ok {
+				continue
+			}
+			sp.timeline = append(sp.timeline, github.TimelineEvent{
+				Kind:              github.TimelineReviewRequested,
+				Actor:             github.Actor{Login: ev.user},
+				RequestedReviewer: github.Actor{Login: ev.user},
+				CreatedAt:         ev.t,
+			})
 			sp.updatedAt = ev.t
 
 		case eventMergePR:
@@ -705,8 +784,9 @@ func Generate(cfg SimulationConfig) *Scenario {
 				continue
 			}
 			sp.state = "MERGED"
-			sp.mergedAt = &ev.t
-			sp.closedAt = &ev.t
+			mergedAt := ev.t
+			sp.mergedAt = &mergedAt
+			sp.closedAt = &mergedAt
 			sp.updatedAt = ev.t
 			sp.isDraft = false
 
@@ -717,7 +797,8 @@ func Generate(cfg SimulationConfig) *Scenario {
 				continue
 			}
 			sp.state = "CLOSED"
-			sp.closedAt = &ev.t
+			closedAt := ev.t
+			sp.closedAt = &closedAt
 			sp.updatedAt = ev.t
 			sp.isDraft = false
 		}
@@ -780,6 +861,10 @@ func Generate(cfg SimulationConfig) *Scenario {
 			Body:           sp.body,
 			CommentCount:   len(sp.comments),
 			Comments:       sp.comments,
+			Additions:      sp.additions,
+			Deletions:      sp.deletions,
+			Reviews:        sp.reviews,
+			Timeline:       sp.timeline,
 		}
 		scenario.PRs = append(scenario.PRs, ScenarioPR{
 			Owner:       parts[0],

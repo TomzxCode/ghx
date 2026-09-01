@@ -18,6 +18,9 @@ These flags apply to all commands.
 |---|---|---|
 | `--cache-duration int` | `60` | Minutes before the cache is considered stale |
 | `--force` | `false` | Re-fetch even if the cache is still fresh (full fetch, not delta) |
+| `--since string` | | Only refresh entries created or updated since this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
+| `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
+| `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |
 
 ## issue list
 
@@ -141,6 +144,7 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 | `--state string` | `-s` | `all` | Filter by PR state: `open`, `closed`, `merged`, or `all` |
 | `--output string` | `-o` | `stats-report.html` | Output HTML file path |
 | `--include-bots` | | `false` | Include bot accounts as reviewers |
+| `--top int` | | `5` | Number of pull requests per notable-PRs list |
 | `--list-prs` | | `false` | Include the table of individual pull requests (can be large) |
 
 ## mock serve
