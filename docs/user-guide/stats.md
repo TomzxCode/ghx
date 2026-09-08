@@ -46,6 +46,18 @@ nothing is cached.
   total number of submitted reviews.
 - **Monthly trend chart**: PRs opened and merged per month plus the median
   time from opening to merge (Chart.js, loaded from the jsDelivr CDN).
+- **Merge speed** (merged PRs only): how many merged PRs landed within 1 hour,
+  1 day, and 1 week of being opened, each with its share of merged PRs, plus
+  the p50/p90/p99 percentiles of the time from opening to merge. The same
+  statistics are also broken down per author in a "Merge speed by author"
+  table.
+- **Merge speed over time**: line charts of the within-1h/1d/1w shares and the
+  p50/p90/p99 of time to merge, grouped by merge date, with daily, weekly, and
+  monthly granularity buttons, a Cumulative toggle that aggregates the PRs
+  merged up to each point instead of only that bucket's PRs, a Window field
+  bounding how far back each cumulative point looks (default 28d, units d/w/m,
+  empty for all past), and From/To date fields limiting the displayed period
+  (Chart.js, loaded from the jsDelivr CDN).
 - **Author × reviewer matrix**: authors as rows, reviewers as columns. Each
   cell shows how many PRs the combination appears in, plus the average and
   median time from PR creation to that reviewer's first comment. Cells are
@@ -78,6 +90,11 @@ nothing is cached.
 - **Pull requests in period** (only with `--list-prs`): the full list of
   matching PRs with links. Off by default since the table can be very large
   for active repositories.
+- **Section sidebar**: a fixed, full-height table of contents on the left,
+  with the section currently in view highlighted while scrolling. On narrow
+  screens it is replaced by a drawer opened by swiping right from the left
+  edge or tapping the fixed ☰ button (dismissed by the ✕ button, swiping
+  left, tapping outside, or pressing Escape).
 
 Reviewers are derived from PR comments and reviews written by someone other
 than the PR author; bot accounts are excluded unless `--include-bots` is set.
