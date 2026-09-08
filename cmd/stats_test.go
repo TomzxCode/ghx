@@ -306,6 +306,112 @@ func TestBuildReport_SummaryTablesAndPRList(t *testing.T) {
 	}
 }
 
+func TestPercentileDuration(t *testing.T) {
+	if got := percentileDuration(nil, 50); got != 0 {
+		t.Errorf("empty percentile: got %v, want 0", got)
+	}
+	single := []time.Duration{2 * time.Hour}
+	if got := percentileDuration(single, 99); got != 2*time.Hour {
+		t.Errorf("single value: got %v, want 2h", got)
+	}
+	// Linear interpolation between the two closest ranks.
+	even := []time.Duration{time.Hour, 3 * time.Hour}
+	if got := percentileDuration(even, 50); got != 2*time.Hour {
+		t.Errorf("p50 of two values: got %v, want 2h", got)
+	}
+	odd := []time.Duration{time.Hour, 2 * time.Hour, 4 * time.Hour, 8 * time.Hour, 16 * time.Hour}
+	if got := percentileDuration(odd, 50); got != 4*time.Hour {
+		t.Errorf("p50 odd: got %v, want 4h", got)
+	}
+	if got := percentileDuration(odd, 100); got != 16*time.Hour {
+		t.Errorf("p100: got %v, want 16h", got)
+	}
+}
+
+func TestBuildReport_MergeSpeed(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	mkMerged := func(number int, mergeAfter time.Duration) *github.PullRequest {
+		pr := statsTestPR(number, "alice", base, "MERGED", nil)
+		mergedAt := base.Add(mergeAfter)
+		pr.MergedAt = &mergedAt
+		return pr
+	}
+
+	prs := []*repoPR{
+		{Repo: "org/repo1", PR: mkMerged(1, time.Hour)},    // within 1h/1d/1w
+		{Repo: "org/repo1", PR: mkMerged(2, 24*time.Hour)}, // within 1d/1w
+		{Repo: "org/repo1", PR: mkMerged(3, 48*time.Hour)}, // within 1w
+		{Repo: "org/repo1", PR: mkMerged(4, 96*time.Hour)}, // over 1w
+		// Open and closed PRs never enter merge-speed stats.
+		{Repo: "org/repo1", PR: statsTestPR(5, "alice", base, "OPEN", nil)},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all"},
+	)
+
+	wantCounts := [3]int{1, 2, 4}
+	wantPcts := [3]string{"25%", "50%", "100%"}
+	if len(report.MergeSpeedRows) != 3 {
+		t.Fatalf("MergeSpeedRows: got %d rows, want 3", len(report.MergeSpeedRows))
+	}
+	for i, row := range report.MergeSpeedRows {
+		if row.Count != wantCounts[i] || row.Pct != wantPcts[i] {
+			t.Errorf("merge speed row %d: got %d/%s, want %d/%s", i, row.Count, row.Pct, wantCounts[i], wantPcts[i])
+		}
+	}
+
+	// Sorted durations: 1h, 1d, 2d, 4d.
+	// p50 = (1d+2d)/2 = 1d 12h; p90 = 2d + 0.7*2d = 3d 9.6h; p99 = 2d + 0.97*2d.
+	wantPercentiles := map[string]string{"p50": "1d 12h", "p90": "3d 9h", "p99": "3d 22h"}
+	if len(report.MergePercentileRows) != 3 {
+		t.Fatalf("MergePercentileRows: got %d rows, want 3", len(report.MergePercentileRows))
+	}
+	for _, row := range report.MergePercentileRows {
+		if want := wantPercentiles[row.Label]; row.Value != want {
+			t.Errorf("percentile %s: got %q, want %q", row.Label, row.Value, want)
+		}
+	}
+
+	// Per-author merge speed: alice merged 4 PRs, carol none.
+	if len(report.AuthorMergeSpeed) != 1 {
+		t.Fatalf("AuthorMergeSpeed: got %d rows, want 1", len(report.AuthorMergeSpeed))
+	}
+	authorRow := report.AuthorMergeSpeed[0]
+	if authorRow.Login != "alice" || authorRow.MergedCount != 4 {
+		t.Errorf("author merge speed: got %+v", authorRow)
+	}
+	if authorRow.Within1h != "1 (25%)" || authorRow.Within1d != "2 (50%)" || authorRow.Within1w != "4 (100%)" {
+		t.Errorf("author windows: got %q %q %q", authorRow.Within1h, authorRow.Within1d, authorRow.Within1w)
+	}
+	if authorRow.P50 != "1d 12h" || authorRow.P90 != "3d 9h" || authorRow.P99 != "3d 22h" {
+		t.Errorf("author percentiles: got %q %q %q", authorRow.P50, authorRow.P90, authorRow.P99)
+	}
+
+	// Trend samples: one per merged PR, [merge unix, duration minutes].
+	if len(report.MergeTrendSamples) != 4 {
+		t.Fatalf("MergeTrendSamples: got %d, want 4", len(report.MergeTrendSamples))
+	}
+	if got := report.MergeTrendSamples[0]; got[0] != float64(base.Add(time.Hour).Unix()) || got[1] != 60 {
+		t.Errorf("first sample: got %v, want [merge at +1h, 60m]", got)
+	}
+
+	// Without merged PRs the section is omitted entirely.
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: statsTestPR(6, "alice", base, "OPEN", nil)}},
+		statsFilters{State: "all"},
+	)
+	if report.MergeSpeedRows != nil || report.MergePercentileRows != nil {
+		t.Errorf("merge speed should be empty without merged PRs: %+v %+v", report.MergeSpeedRows, report.MergePercentileRows)
+	}
+	if report.AuthorMergeSpeed != nil {
+		t.Errorf("author merge speed should be empty without merged PRs: %+v", report.AuthorMergeSpeed)
+	}
+}
+
 func TestFormatStatDuration(t *testing.T) {
 	cases := []struct {
 		d    time.Duration
@@ -720,6 +826,9 @@ func TestRenderReport(t *testing.T) {
 
 	for _, want := range []string{
 		`id="theme-toggle"`,
+		`id="toc-toggle-bar"`,
+		"icon-sun",
+		"icon-moon",
 		"localStorage.getItem",
 		"localStorage.setItem",
 		"prefers-color-scheme: dark",
@@ -745,6 +854,12 @@ func TestRenderReport(t *testing.T) {
 	}
 
 	for _, want := range []string{
+		"Merge speed",
+		"Within 1 hour",
+		"Within 1 day",
+		"Within 1 week",
+		"Merge speed by author",
+		"Merge speed over time",
 		"Lead time",
 		"Contribution",
 		"Reviewer engagement",
@@ -759,6 +874,49 @@ func TestRenderReport(t *testing.T) {
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing analytics marker %q", want)
+		}
+	}
+
+	for _, want := range []string{
+		`id="toc"`,
+		`href="#summary"`,
+		`href="#monthly-trend"`,
+		`href="#merge-speed"`,
+		`href="#merge-speed-by-author"`,
+		`href="#matrix"`,
+		`href="#lead-time"`,
+		`href="#contribution"`,
+		`href="#engagement"`,
+		`href="#size-vs-merge"`,
+		`href="#peak-activity"`,
+		`href="#notable"`,
+		`href="#pr-list"`,
+		`id="summary"`,
+		`id="monthly-trend"`,
+		`id="merge-speed"`,
+		`id="merge-speed-by-author"`,
+		`id="matrix"`,
+		`id="pr-list"`,
+		`<nav id="toc"`,
+		`id="toc-toggle-bar"`,
+		`id="toc-drawer"`,
+		"showModal",
+		"toc-drawer-in",
+		`id="merge-speed-trend-chart"`,
+		`id="merge-percentile-trend-chart"`,
+		`data-gran="day"`,
+		`data-gran="week"`,
+		`data-gran="month"`,
+		`id="merge-trend-cumulative"`,
+		`id="merge-trend-from"`,
+		`id="merge-trend-to"`,
+		`id="merge-trend-window"`,
+		`value="28d"`,
+		`"mergeSamples"`,
+		"IntersectionObserver",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("rendered HTML missing sidebar marker %q", want)
 		}
 	}
 }
@@ -825,5 +983,8 @@ func TestRenderReport_PRsOmittedByDefault(t *testing.T) {
 	}
 	if strings.Contains(omittedHTML, "Pull requests in period") {
 		t.Error("PR list section rendered without --list-prs")
+	}
+	if strings.Contains(omittedHTML, `href="#pr-list"`) {
+		t.Error("sidebar link to PR list rendered without --list-prs")
 	}
 }
