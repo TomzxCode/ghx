@@ -151,12 +151,18 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 	if cell.Bg == "" {
 		t.Error("alice/bob cell: want heat background")
 	}
+	if cell.Pct != "100%" {
+		t.Errorf("alice/bob pct: got %q, want %q", cell.Pct, "100%")
+	}
 
 	// alice x carol: 1 PR, duration 24h.
 	carolIdx := 2
 	cell = aliceRow.Cells[carolIdx]
 	if cell.Count != 1 || cell.Median != "1d 0h" {
 		t.Errorf("alice/carol: got count=%d median=%q, want 1/1d 0h", cell.Count, cell.Median)
+	}
+	if cell.Pct != "100%" {
+		t.Errorf("alice/carol pct: got %q, want %q", cell.Pct, "100%")
 	}
 
 	// bob has one PR without reviewer comments.
@@ -171,6 +177,25 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 	}
 	if bobRow.Cells[0].Count != 1 {
 		t.Errorf("bob no-comment count: got %d, want 1", bobRow.Cells[0].Count)
+	}
+}
+
+func TestFormatReviewPct(t *testing.T) {
+	tests := []struct {
+		count, total int
+		want         string
+	}{
+		{0, 5, ""},
+		{3, 0, ""},
+		{1, 3, "33%"},
+		{1, 2, "50%"},
+		{2, 2, "100%"},
+		{1, 250, "<1%"},
+	}
+	for _, tt := range tests {
+		if got := formatReviewPct(tt.count, tt.total); got != tt.want {
+			t.Errorf("formatReviewPct(%d, %d): got %q, want %q", tt.count, tt.total, got, tt.want)
+		}
 	}
 }
 
@@ -649,6 +674,53 @@ func TestBuildReport_ReviewerEngagement(t *testing.T) {
 	if report.LeadRows[0].MedianApprove != "8h 0m" {
 		t.Errorf("median approve: got %q, want 8h 0m", report.LeadRows[0].MedianApprove)
 	}
+	// First approval at +8h, merged at +72h: 64h from approval to merge.
+	if report.LeadRows[0].MedianApproveMerge != "2d 16h" {
+		t.Errorf("median approve to merge: got %q, want 2d 16h", report.LeadRows[0].MedianApproveMerge)
+	}
+}
+
+func TestBuildReport_ApproveToMerge(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+	mkMerged := func(number int, approveAt, mergedAt time.Time) *github.PullRequest {
+		pr := statsTestPR(number, "alice", base, "MERGED", nil)
+		pr.MergedAt = &mergedAt
+		if !approveAt.IsZero() {
+			pr.Reviews = []github.PRReview{{
+				Author:      github.Actor{Login: "bob"},
+				State:       "APPROVED",
+				SubmittedAt: approveAt,
+			}}
+		}
+		return pr
+	}
+
+	prs := []*repoPR{
+		// Approved at +10h, merged at +34h: 24h from approval to merge.
+		{Repo: "org/repo1", PR: mkMerged(1, base.Add(10*time.Hour), base.Add(34*time.Hour))},
+		// Approved at +40h, merged at +36h: post-merge approval, excluded.
+		{Repo: "org/repo1", PR: mkMerged(2, base.Add(40*time.Hour), base.Add(36*time.Hour))},
+		// Merged without any approval.
+		{Repo: "org/repo1", PR: mkMerged(3, time.Time{}, base.Add(12*time.Hour))},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all"},
+	)
+
+	if len(report.LeadRows) != 1 || report.LeadRows[0].Login != "alice" {
+		t.Fatalf("LeadRows: got %+v, want only alice", report.LeadRows)
+	}
+	// Only the first PR contributes an approval-to-merge sample.
+	if report.LeadRows[0].MedianApproveMerge != "1d 0h" {
+		t.Errorf("median approve to merge: got %q, want 1d 0h", report.LeadRows[0].MedianApproveMerge)
+	}
+	if report.LeadRows[0].MergedCount != 3 {
+		t.Errorf("merged count: got %d, want 3", report.LeadRows[0].MergedCount)
+	}
 }
 
 func TestBuildReport_DraftTime(t *testing.T) {
@@ -847,6 +919,7 @@ func TestRenderReport(t *testing.T) {
 		`data-author="alice"`,
 		`data-reviewer="bob"`,
 		`data-role="nocomments"`,
+		"reviewed 100%",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing matrix filter marker %q", want)
@@ -871,6 +944,7 @@ func TestRenderReport(t *testing.T) {
 		`id="size-chart"`,
 		"cdn.jsdelivr.net/npm/chart.js",
 		"Median time to merge",
+		"Median approval to merge",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing analytics marker %q", want)

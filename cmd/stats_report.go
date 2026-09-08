@@ -39,6 +39,7 @@ type MatrixCell struct {
 	Count  int
 	Avg    string
 	Median string
+	Pct    string       // share of the reviewer's total reviewed PRs
 	Bg     template.CSS // generated heat colour, safe for style attributes
 }
 
@@ -141,13 +142,14 @@ type AuthorMergeSpeedRow struct {
 
 // LeadTimeRow aggregates merged-PR lead times for one author.
 type LeadTimeRow struct {
-	Login             string
-	MergedCount       int
-	MedianMerge       string
-	AvgMerge          string
-	MedianDraft       string
-	MedianFirstReview string
-	MedianApprove     string
+	Login              string
+	MergedCount        int
+	MedianMerge        string
+	AvgMerge           string
+	MedianDraft        string
+	MedianFirstReview  string
+	MedianApprove      string
+	MedianApproveMerge string
 }
 
 // sizeBucketCount is the number of PR size buckets (xs, s, m, l, xl).
@@ -585,6 +587,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 				cell.Count = c.count
 				cell.Avg = formatStatDuration(avgDuration(c.durations))
 				cell.Median = formatStatDuration(medianDuration(c.durations))
+				cell.Pct = formatReviewPct(c.count, reviewerTotals[reviewer])
 				cell.Bg = heatColor(c.count, maxCount)
 			}
 			row.Cells = append(row.Cells, cell)
@@ -660,6 +663,9 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		draftDurs   []time.Duration
 		firstRev    []time.Duration
 		approveDurs []time.Duration
+		// approveMergeDurs measures from the first approving review to the
+		// merge, for PRs approved before they were merged.
+		approveMergeDurs []time.Duration
 	}
 	authorAggs := map[string]*authorAgg{}
 
@@ -742,6 +748,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			}
 			if !e.firstApproveAt.IsZero() {
 				agg.approveDurs = append(agg.approveDurs, durationSince(pr.CreatedAt, e.firstApproveAt))
+				// Approval-to-merge is only defined when the approval
+				// preceded the merge (a post-merge approval is not part of
+				// the lead time).
+				if e.firstApproveAt.Before(*pr.MergedAt) {
+					agg.approveMergeDurs = append(agg.approveMergeDurs, durationSince(e.firstApproveAt, *pr.MergedAt))
+				}
 			}
 		} else if strings.EqualFold(pr.State, "CLOSED") {
 			agg.closed++
@@ -840,6 +852,9 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		}
 		if len(agg.approveDurs) > 0 {
 			row.MedianApprove = formatStatDuration(medianDuration(agg.approveDurs))
+		}
+		if len(agg.approveMergeDurs) > 0 {
+			row.MedianApproveMerge = formatStatDuration(medianDuration(agg.approveMergeDurs))
 		}
 		r.LeadRows = append(r.LeadRows, row)
 	}
@@ -1224,6 +1239,19 @@ func formatStatDuration(d time.Duration) string {
 	}
 }
 
+// formatReviewPct renders a cell's share of a reviewer's total reviewed PRs
+// as a percentage (e.g. "33%"), or "<1%" for small non-zero shares.
+func formatReviewPct(count, total int) string {
+	if total <= 0 || count <= 0 {
+		return ""
+	}
+	pct := float64(count) / float64(total) * 100
+	if pct < 1 {
+		return "<1%"
+	}
+	return fmt.Sprintf("%.0f%%", pct)
+}
+
 // ---------------------------------------------------------------------------
 // HTML rendering
 // ---------------------------------------------------------------------------
@@ -1605,7 +1633,8 @@ the window of being opened; percentiles describe the author's time-to-merge dist
 
 <h2 id="matrix">Author × reviewer matrix</h2>
 <p class="meta">Each cell counts the PRs authored by the row author that the column reviewer commented on,
-with the average and median time from PR creation to that reviewer's first comment.
+with the share of that reviewer's total reviewed PRs, and the average and median time from PR creation
+to that reviewer's first comment.
 Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.</p>
 {{if .Matrix.Rows}}
 <div class="matrix-filters">
@@ -1623,7 +1652,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
   <thead>
     <tr>
       <th class="author">Author</th>
-      {{range .Matrix.Cols}}{{if .NoComments}}<th class="num" data-role="nocomments">{{.Reviewer}}</th>{{else}}<th class="num" data-reviewer="{{.Reviewer}}">{{.Reviewer}}</th>{{end}}{{end}}
+      {{range .Matrix.Cols}}{{if .NoComments}}<th class="num" data-role="nocomments">{{.Reviewer}}</th>{{else}}<th class="num" data-reviewer="{{.Reviewer}}">{{.Reviewer}} ({{.Total}})</th>{{end}}{{end}}
       <th class="num">Total</th>
     </tr>
   </thead>
@@ -1635,6 +1664,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
       <td class="cell"{{if .Bg}} style="background: {{.Bg}}"{{end}}>
         {{if .Count}}
           <span class="count">{{.Count}}</span>
+          {{if .Pct}}<span class="dur">reviewed {{.Pct}}</span>{{end}}
           <span class="dur">avg {{.Avg}}</span>
           <span class="dur">med {{.Median}}</span>
         {{else}}
@@ -1677,7 +1707,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 <h2 id="lead-time">Lead time <span class="section-hint">merged PRs only</span></h2>
 <table>
   <thead>
-    <tr><th>Author</th><th class="num">Merged PRs</th><th class="num">Median time to merge</th><th class="num">Average time to merge</th><th class="num">Median time in draft</th><th class="num">Median time to first review</th><th class="num">Median time to approve</th></tr>
+    <tr><th>Author</th><th class="num">Merged PRs</th><th class="num">Median time to merge</th><th class="num">Average time to merge</th><th class="num">Median time in draft</th><th class="num">Median time to first review</th><th class="num">Median time to approve</th><th class="num">Median approval to merge</th></tr>
   </thead>
   <tbody>
     {{range .LeadRows}}
@@ -1689,12 +1719,15 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
       <td class="num">{{if .MedianDraft}}{{.MedianDraft}}{{else}}<span class="empty">-</span>{{end}}</td>
       <td class="num">{{if .MedianFirstReview}}{{.MedianFirstReview}}{{else}}<span class="empty">-</span>{{end}}</td>
       <td class="num">{{if .MedianApprove}}{{.MedianApprove}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianApproveMerge}}{{.MedianApproveMerge}}{{else}}<span class="empty">-</span>{{end}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
 <p class="meta">Draft time is reconstructed from ready-for-review and convert-to-draft timeline events;
-review and approve times come from submitted reviews. A dash means the underlying events were not recorded.</p>
+review and approve times come from submitted reviews. Approval to merge measures from the PR's first
+approving review to the merge, counting only PRs approved before they were merged.
+A dash means the underlying events were not recorded.</p>
 {{end}}
 
 {{if .ContributionRows}}
@@ -1799,7 +1832,7 @@ Request columns need review-request events in the cached data.</p>
 <h2 id="peak-activity">Peak activity <span class="section-hint">PR opens by hour of day</span></h2>
 <div class="chart-box">
   <div class="chart-wrap"><canvas id="activity-chart"></canvas></div>
-  <div class="chart-note">Hours use the timezone recorded on each pull request's creation timestamp.</div>
+  <div class="chart-note">Hours are in UTC as returned by the GitHub API.</div>
 </div>
 {{end}}
 

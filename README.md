@@ -283,7 +283,8 @@ ghx stats acme/widget acme/gadget --from 2026-05-01 --to 2026-05-31 \
 
 The report includes summary cards, a monthly trend chart, an author × reviewer
 matrix, per-author lead times (time to merge, time in draft, time to first
-review, time to approve), contribution and PR size breakdowns, reviewer
+review, time to approve, time from approval to merge), contribution and PR size
+breakdowns, reviewer
 engagement with review-request response times, a PR size versus merge time
 table, peak-activity and size-distribution charts, notable PR lists, and an
 optional appendix of individual PRs (`--list-prs`).
