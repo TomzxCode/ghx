@@ -28,7 +28,7 @@ Order rows by priority: Must first, then Should, then May.
 | ID | Priority | Requirement |
 |---|---|---|
 | FR-01 | Must | The system shall cache per-PR additions, deletions, submitted reviews (author, state, submitted time), and timeline events (ready for review, convert to draft, review requested; re-requests arrive as additional review-requested events) |
-| FR-02 | Must | The report shall show per-author lead times for merged PRs: median and average time to merge, median time in draft, median time to first review, and median time to approve |
+| FR-02 | Must | The report shall show per-author lead times for merged PRs: median and average time to merge, median time in draft, median time to first review, median time to approve, and median time from approval to merge (first approving review to the merge; PRs approved after the merge are excluded) |
 | FR-03 | Must | The report shall show a per-author contribution table: opened, merged, closed counts, merge rate, PRs without review activity, comments received, additions/deletions, and PR size distribution |
 | FR-04 | Must | The report shall show a per-reviewer engagement table: comments conducted, reviews submitted, approvals, changes requested, comment-only reviews, median time from opening to review, and median time from review request to review |
 | FR-05 | Must | The report shall show notable PR lists: longest awaiting first review, longest time to merge, and most discussed |

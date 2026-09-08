@@ -59,8 +59,10 @@ nothing is cached.
   empty for all past), and From/To date fields limiting the displayed period
   (Chart.js, loaded from the jsDelivr CDN).
 - **Author × reviewer matrix**: authors as rows, reviewers as columns. Each
-  cell shows how many PRs the combination appears in, plus the average and
-  median time from PR creation to that reviewer's first comment. Cells are
+  cell shows how many PRs the combination appears in, the share of that
+  reviewer's total reviewed PRs (column headers show the reviewer total in
+  parentheses), plus the average and median time from PR creation to that
+  reviewer's first comment. Cells are
   shaded by count, and a `(no comments)` column tracks PRs that nobody
   reviewed. Two dropdown filters above the table (Tom Select, loaded from the
   jsDelivr CDN) narrow the matrix to a subset of authors (rows) and reviewers
@@ -71,7 +73,9 @@ nothing is cached.
   comment received.
 - **Lead time** (merged PRs only): per author, the median and average time
   from opening to merge, plus median time in draft, median time to first
-  review, and median time to approve.
+  review, median time to approve, and median time from approval to merge
+  (first approving review to the merge, counting only PRs approved before
+  they were merged).
 - **Contribution**: per author, opened/merged/closed counts, merge rate, PRs
   without any review activity, comments received, total additions/deletions,
   and the distribution of PR sizes (xs/s/m/l/xl by changed lines: xs <100,
