@@ -2,7 +2,7 @@
 issue: "#1"
 title: "SQLite backend for issue/PR storage"
 status: approved
-revision: 1
+revision: 2
 ---
 
 # Specification: SQLite backend for issue/PR storage
