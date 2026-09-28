@@ -291,6 +291,12 @@ func (s *fileStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, nil
 }
 
+// Kind reports the backend name.
+func (s *fileStore) Kind() string { return "file" }
+
+// Location reports the cache root directory.
+func (s *fileStore) Location() string { return s.baseDir }
+
 // Close is a no-op for the file backend.
 func (s *fileStore) Close() error { return nil }
 

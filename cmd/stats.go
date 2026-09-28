@@ -70,7 +70,11 @@ func runStats(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 	var allPRs []*repoPR
 	for _, repo := range repos {
 		prs, err := loadStatsPRs(store, repo, from)

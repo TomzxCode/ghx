@@ -92,7 +92,11 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 
 	// Serve from cache when it is fresh.
 	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
@@ -156,7 +160,11 @@ func runPRView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 
 	if !prViewRefresh {
 		// When a full cache is fresh, treat it as authoritative.

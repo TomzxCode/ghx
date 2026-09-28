@@ -42,7 +42,20 @@ Use --type issues or --type prs to refresh only one of the two; --type both
 	RunE: runCache,
 }
 
+var cacheMigrateCmd = &cobra.Command{
+	Use:   "migrate",
+	Short: "Migrate cached repositories from the file backend to the SQLite backend",
+	Long: `Copies cached issues, pull requests, and cache metadata from the file-based
+cache into the SQLite cache. The source file cache is left intact, so the
+migration is non-destructive and can be re-run (it is idempotent).
+
+By default every cached repository is migrated; pass --repo [HOST/]OWNER/REPO
+to migrate a single repository.`,
+	RunE: runCacheMigrate,
+}
+
 func init() {
+	cacheCmd.AddCommand(cacheMigrateCmd)
 	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", 60, "Cache duration in minutes")
 	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Re-fetch even if the cache is still fresh")
 	cacheCmd.Flags().StringVar(&cacheSince, "since", "", "Only refresh entries created or updated since this date (YYYY-MM-DD or RFC3339)")
@@ -109,7 +122,14 @@ func runCache(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	if store.Kind() == "sqlite" {
+		fmt.Printf("Using sqlite cache backend at %s\n", store.Location())
+	}
 	client, err := newClient(repo.Host)
 	if err != nil {
 		return err
@@ -269,6 +289,54 @@ func runCache(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Cache updated. Valid for %d minute(s).\n", cacheDuration)
+	return nil
+}
+
+// runCacheMigrate copies the file-based cache into the SQLite cache for one or
+// all cached repositories. The file cache is left in place.
+func runCacheMigrate(cmd *cobra.Command, args []string) error {
+	base := cacheDir
+	if base == "" {
+		base = cache.DefaultDir()
+	}
+	src := cache.NewStoreWithPath(base)
+	defer src.Close()
+	dst, err := cache.NewSQLiteStore(base)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	var repos []cache.CachedRepo
+	if repoFlag != "" {
+		repo, err := getRepo()
+		if err != nil {
+			return err
+		}
+		repos = []cache.CachedRepo{{Host: repo.Host, Owner: repo.Owner, Repo: repo.Name}}
+	} else {
+		repos, err = src.ListCachedRepos()
+		if err != nil {
+			return err
+		}
+	}
+	if len(repos) == 0 {
+		fmt.Println("No cached repositories to migrate.")
+		return nil
+	}
+
+	fmt.Printf("Migrating %d repository(ies) from file cache to %s\n", len(repos), dst.Location())
+	var totalIssues, totalPRs int
+	for _, r := range repos {
+		res, err := cache.Migrate(src, dst, r.Host, r.Owner, r.Repo)
+		if err != nil {
+			return fmt.Errorf("migrating %s/%s: %w", r.Owner, r.Repo, err)
+		}
+		totalIssues += res.Issues
+		totalPRs += res.PRs
+		fmt.Printf("  %s/%s: %d issue(s), %d pull request(s)\n", r.Owner, r.Repo, res.Issues, res.PRs)
+	}
+	fmt.Printf("Migration complete: %d issue(s), %d pull request(s).\n", totalIssues, totalPRs)
 	return nil
 }
 

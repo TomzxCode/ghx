@@ -79,6 +79,11 @@ type Store interface {
 	// QueryPRs is the pull-request equivalent of QueryIssues.
 	QueryPRs(host, owner, repo string, q PRQuery) ([]*github.PullRequest, error)
 
+	// Kind reports the backend name ("file" or "sqlite").
+	Kind() string
+	// Location reports where the backend stores its data (file: cache root;
+	// sqlite: database path).
+	Location() string
 	Close() error
 }
 

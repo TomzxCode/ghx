@@ -92,7 +92,11 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 
 	// Serve from cache when it is fresh.
 	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
@@ -153,7 +157,11 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 
 	if !issueViewRefresh {
 		// When a full cache is fresh, treat it as authoritative: don't hit the API

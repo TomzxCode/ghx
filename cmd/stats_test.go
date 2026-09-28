@@ -495,7 +495,12 @@ func TestLoadStatsPRs_FallbackFetchesComments(t *testing.T) {
 	defer func() { apiURLFlag, cacheDir = savedURL, savedDir }()
 
 	repo := &gitremote.Repo{Host: "mock", Owner: "acme", Name: "widget"}
-	prs, err := loadStatsPRs(newStore(), repo, time.Time{})
+	store, err := newStore()
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer store.Close()
+	prs, err := loadStatsPRs(store, repo, time.Time{})
 	if err != nil {
 		t.Fatalf("loadStatsPRs: %v", err)
 	}
@@ -842,7 +847,12 @@ func TestLoadStatsPRs_FetchesReviewData(t *testing.T) {
 	defer func() { apiURLFlag, cacheDir = savedURL, savedDir }()
 
 	repo := &gitremote.Repo{Host: "mock", Owner: "acme", Name: "widget"}
-	prs, err := loadStatsPRs(newStore(), repo, time.Time{})
+	store, err := newStore()
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer store.Close()
+	prs, err := loadStatsPRs(store, repo, time.Time{})
 	if err != nil {
 		t.Fatalf("loadStatsPRs: %v", err)
 	}

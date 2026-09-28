@@ -24,7 +24,11 @@ func init() {
 }
 
 func runRepoList(cmd *cobra.Command, args []string) error {
-	store := newStore()
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
 	repos, err := store.ListCachedRepos()
 	if err != nil {
 		return err

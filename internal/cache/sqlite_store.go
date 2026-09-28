@@ -67,6 +67,12 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 	return &sqliteStore{db: db, path: path}, nil
 }
 
+// Kind reports the backend name.
+func (s *sqliteStore) Kind() string { return "sqlite" }
+
+// Location reports the database path.
+func (s *sqliteStore) Location() string { return s.path }
+
 // Close closes the database connection.
 func (s *sqliteStore) Close() error { return s.db.Close() }
 
