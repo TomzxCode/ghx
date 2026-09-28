@@ -23,7 +23,7 @@ cmd/* ──newStore()──► cache.Store (interface)
                               ▼
                         <cache-dir>/cache.db  (single file, rows keyed by host/owner/repo)
 
-cache migrate ── fileStore.ListCachedRepos/LoadAll* ──► sqliteStore (transactional)
+cache migrate ── fileStore.ListCachedRepos/LoadAll* ──► sqliteStore (idempotent upserts)
 ```
 
 - A new `cache.Store` interface is extracted from the current concrete struct's method set; `fileStore` is the renamed existing implementation, `sqliteStore` is the new implementation.
@@ -177,10 +177,10 @@ Flag overrides env; env overrides default. DB location: a single `<cache-dir>/ca
 
 | Aspect | Detail |
 |---|---|
-| Flags | `--repo` (existing), `--storage` (target, defaults `sqlite`), `--force` (overwrite existing rows) |
-| Behavior | Iterates `LoadAllIssues`/`LoadAllPRs`, writes rows via `INSERT OR REPLACE` in a single transaction per repo; copies `CacheInfo` to `cache_meta` |
-| Idempotency | Re-running upserts by PK; with `--force` it overwrites, without `--force` it skips rows whose `updated_at` is unchanged |
-| Errors | Any error rolls back the transaction, leaving a valid DB (NFR-02) |
+| Flags | `--repo` (existing, optional: migrates all cached repos when omitted) |
+| Behavior | Iterates `LoadAllIssues`/`LoadAllPRs`, writes rows via `INSERT OR REPLACE` (per-row upsert, no whole-repo transaction); copies `CacheInfo` to `cache_meta` |
+| Idempotency | Always upserts by primary key, so re-running is idempotent and produces the same result |
+| Errors | A failed run leaves the database valid and re-runnable: rows written so far are committed and the migration can be resumed by re-running (NFR-02) |
 
 ## Sequences
 
