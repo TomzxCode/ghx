@@ -1,0 +1,5 @@
+# Local-only workflow state — do not commit
+# Orchestrator run state
+state.yml
+# Per-feature progress tracking and session logs
+features/*/progress.md
