@@ -17,7 +17,7 @@ Unit tests live in `internal/cache/`; the end-to-end path was verified manually 
 |---|---|
 | `internal/cache/file_store_test.go` (`store_test.go`) | File backend CRUD, freshness, cursors |
 | `internal/cache/filter_test.go` | Filter semantics (state, author, assignee, labels, milestone, base/head, draft, search) |
-| `internal/cache/sqlite_store_test.go` | SQLite round-trip vs file backend; persistence across reopen |
+| `internal/cache/sqlite_store_test.go` | SQLite round-trip vs file backend; persistence across reopen; repository listing |
 | `internal/cache/query_equiv_test.go` | SQLite vs file query equivalence matrix; indexed-query plan |
 | `internal/cache/migrate_test.go` | Lossless migration; idempotent re-run; re-runnable partial migration |
 | `cmd/bench_test.go` | File vs SQLite benchmarks (NFR-01) |

@@ -272,3 +272,63 @@ func TestSQLitePersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("LoadAllPRs after reopen: n=%d err=%v", len(prs), err)
 	}
 }
+
+// TestSQLiteListCachedRepos covers the repo-listing path (which previously
+// deadlocked by issuing a metadata query while the result set was open).
+func TestSQLiteListCachedRepos(t *testing.T) {
+	sq, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer sq.Close()
+
+	// Repo A: issues + PRs + cache metadata.
+	if err := sq.SaveIssue(qHost, "acme", "alpha", richIssue(1)); err != nil {
+		t.Fatalf("SaveIssue alpha: %v", err)
+	}
+	if err := sq.SaveIssue(qHost, "acme", "alpha", richOpenIssue(2)); err != nil {
+		t.Fatalf("SaveIssue alpha: %v", err)
+	}
+	if err := sq.SavePR(qHost, "acme", "alpha", richPR(10)); err != nil {
+		t.Fatalf("SavePR alpha: %v", err)
+	}
+	if err := sq.SaveCacheInfo(qHost, "acme", "alpha", 60); err != nil {
+		t.Fatalf("SaveCacheInfo alpha: %v", err)
+	}
+	// Repo B: rows only, no cache metadata.
+	if err := sq.SaveIssue(qHost, "acme", "beta", richIssue(3)); err != nil {
+		t.Fatalf("SaveIssue beta: %v", err)
+	}
+
+	repos, err := sq.ListCachedRepos()
+	if err != nil {
+		t.Fatalf("ListCachedRepos: %v", err)
+	}
+	if len(repos) != 2 {
+		t.Fatalf("got %d repos, want 2", len(repos))
+	}
+	byRepo := map[string]CachedRepo{}
+	for _, r := range repos {
+		byRepo[r.Repo] = r
+	}
+	alpha, ok := byRepo["alpha"]
+	if !ok {
+		t.Fatal("alpha not listed")
+	}
+	if alpha.IssueCount != 2 || alpha.PRCount != 1 {
+		t.Errorf("alpha counts = %d issues / %d PRs, want 2 / 1", alpha.IssueCount, alpha.PRCount)
+	}
+	if alpha.Info == nil || !alpha.Info.Complete {
+		t.Errorf("alpha info = %+v, want complete", alpha.Info)
+	}
+	beta, ok := byRepo["beta"]
+	if !ok {
+		t.Fatal("beta not listed")
+	}
+	if beta.IssueCount != 1 || beta.PRCount != 0 {
+		t.Errorf("beta counts = %d issues / %d PRs, want 1 / 0", beta.IssueCount, beta.PRCount)
+	}
+	if beta.Info != nil {
+		t.Errorf("beta info = %+v, want nil (no cache metadata)", beta.Info)
+	}
+}

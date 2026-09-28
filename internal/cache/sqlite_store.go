@@ -548,9 +548,14 @@ func (s *sqliteStore) IsCacheFreshWithDuration(host, owner, repo string, duratio
 }
 
 // ListCachedRepos returns every repository present in the database.
+//
+// The cache metadata is joined in a single query rather than loaded per row:
+// with a single pooled connection (SetMaxOpenConns(1)), issuing a second query
+// while the result set is still open would deadlock.
 func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	rows, err := s.db.Query(`
 		SELECT u.host, u.owner, u.repo,
+		       m.cached_at, m.duration, m.complete, m.issue_cursor, m.pr_cursor,
 		       (SELECT COUNT(*) FROM issues i WHERE i.host=u.host AND i.owner=u.owner AND i.repo=u.repo),
 		       (SELECT COUNT(*) FROM pull_requests p WHERE p.host=u.host AND p.owner=u.owner AND p.repo=u.repo)
 		FROM (
@@ -558,6 +563,8 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 			UNION SELECT host, owner, repo FROM issues
 			UNION SELECT host, owner, repo FROM pull_requests
 		) u
+		LEFT JOIN cache_meta m
+		       ON m.host=u.host AND m.owner=u.owner AND m.repo=u.repo
 		ORDER BY u.host, u.owner, u.repo`)
 	if err != nil {
 		return nil, err
@@ -566,11 +573,33 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 
 	var repos []CachedRepo
 	for rows.Next() {
-		var cr CachedRepo
-		if err := rows.Scan(&cr.Host, &cr.Owner, &cr.Repo, &cr.IssueCount, &cr.PRCount); err != nil {
+		var (
+			cr                    CachedRepo
+			cachedAt              sql.NullString
+			duration, complete    sql.NullInt64
+			issueCursor, prCursor sql.NullString
+		)
+		if err := rows.Scan(&cr.Host, &cr.Owner, &cr.Repo,
+			&cachedAt, &duration, &complete, &issueCursor, &prCursor,
+			&cr.IssueCount, &cr.PRCount); err != nil {
 			return nil, err
 		}
-		cr.Info, _ = s.LoadCacheInfo(cr.Host, cr.Owner, cr.Repo)
+		if cachedAt.Valid {
+			info := &CacheInfo{
+				CachedAt: parseTime(cachedAt.String),
+				Duration: int(duration.Int64),
+				Complete: complete.Int64 != 0,
+			}
+			if issueCursor.Valid && issueCursor.String != "" {
+				t := parseTime(issueCursor.String)
+				info.IssueCursor = &t
+			}
+			if prCursor.Valid && prCursor.String != "" {
+				t := parseTime(prCursor.String)
+				info.PRCursor = &t
+			}
+			cr.Info = info
+		}
 		repos = append(repos, cr)
 	}
 	return repos, rows.Err()
