@@ -8,6 +8,7 @@ These flags apply to all commands.
 |---|---|
 | `--repo [HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory. |
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
+| `--storage string` | Cache storage backend: `file` (default) or `sqlite`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
 | `--version`, `-v` | Print version. |
 | `--help`, `-h` | Show help. |
@@ -21,6 +22,10 @@ These flags apply to all commands.
 | `--since string` | | Only refresh entries created or updated since this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
 | `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
 | `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |
+
+### cache migrate
+
+Copies cached repositories from the file backend into the SQLite backend (`cache.db` under the cache directory). The file cache is left in place and the migration is idempotent. Uses only the global `--repo` (to limit to one repository) and `--cache-dir`.
 
 ## issue list
 

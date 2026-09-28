@@ -64,6 +64,18 @@ Cache updated. Valid for 60 minute(s).
 
 List and view commands serve from the cache when it is fresh, and fall back to the GitHub API otherwise.
 
+#### Storage backends
+
+The cache defaults to the file backend (one JSON file per issue/PR). An opt-in SQLite backend stores everything in a single indexed `cache.db`, which is several times faster for listing, filtering, and searching on large repositories:
+
+```bash
+ghx --storage sqlite cache --repo cli/cli      # or set GHX_STORAGE=sqlite
+ghx --storage sqlite issue list --state all
+ghx cache migrate                              # copy an existing file cache into SQLite
+```
+
+`cache migrate` is non-destructive (the file cache is kept) and idempotent. See the [cache guide](docs/user-guide/cache.md) for details.
+
 ### Issues
 
 ```bash
