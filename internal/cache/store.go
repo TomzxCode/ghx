@@ -15,6 +15,30 @@ type CacheInfo struct {
 	Complete    bool       `json:"complete,omitempty"`    // last full fetch reached the newest item
 	IssueCursor *time.Time `json:"issueCursor,omitempty"` // max updatedAt written for issues (resume point)
 	PRCursor    *time.Time `json:"prCursor,omitempty"`    // max updatedAt written for PRs (resume point)
+
+	// IssuesCachedAt and PRsCachedAt record when each data type was last
+	// refreshed. A partial run (--type issues|prs) updates only the type it
+	// fetched, so reads can be served from the cache for that type without
+	// pretending the other type is fresh. When zero they fall back to
+	// CachedAt, preserving the legacy on-disk format and full-run behavior.
+	IssuesCachedAt time.Time `json:"issuesCachedAt,omitempty"`
+	PRsCachedAt    time.Time `json:"prsCachedAt,omitempty"`
+}
+
+// IssuesUpdatedAt returns the timestamp used to judge issue freshness.
+func (i *CacheInfo) IssuesUpdatedAt() time.Time {
+	if !i.IssuesCachedAt.IsZero() {
+		return i.IssuesCachedAt
+	}
+	return i.CachedAt
+}
+
+// PRsUpdatedAt returns the timestamp used to judge pull request freshness.
+func (i *CacheInfo) PRsUpdatedAt() time.Time {
+	if !i.PRsCachedAt.IsZero() {
+		return i.PRsCachedAt
+	}
+	return i.CachedAt
 }
 
 // CachedRepo describes a repository found in the local cache.
@@ -70,6 +94,10 @@ type Store interface {
 	LoadCacheInfo(host, owner, repo string) (*CacheInfo, error)
 	IsCacheFresh(host, owner, repo string) (bool, error)
 	IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
+	IsIssuesCacheFresh(host, owner, repo string) (bool, error)
+	IsPRsCacheFresh(host, owner, repo string) (bool, error)
+	IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
+	IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	ListCachedRepos() ([]CachedRepo, error)
 
 	// QueryIssues returns the cached issues matching q. Backends may push the

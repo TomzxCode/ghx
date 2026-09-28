@@ -38,7 +38,9 @@ Use --since to refresh only entries created or updated on or after a given
 date, instead of the default last-cache-write delta.
 
 Use --type issues or --type prs to refresh only one of the two; --type both
-(the default) refreshes both.`,
+(the default) refreshes both. A partial refresh only resets the freshness
+window of the type it fetched, so a fresh issues cache still serves issue
+reads while pull requests are re-fetched.`,
 	RunE: runCache,
 }
 
@@ -282,7 +284,21 @@ func runCache(cmd *cobra.Command, args []string) error {
 	if fetchIssues && fetchPRs {
 		info.Complete = true
 	}
-	info.CachedAt = time.Now()
+	// Record freshness per data type. A partial run (--type issues|prs) only
+	// resets the window of the portion it fetched, so the other portion keeps
+	// its own age instead of being treated as fresh. CachedAt is advanced only
+	// when both portions were fetched; the per-type timestamps fall back to it
+	// for full runs and the legacy on-disk format.
+	now := time.Now()
+	if fetchIssues {
+		info.IssuesCachedAt = now
+	}
+	if fetchPRs {
+		info.PRsCachedAt = now
+	}
+	if fetchIssues && fetchPRs {
+		info.CachedAt = now
+	}
 	info.Duration = cacheDuration
 	if err := saveInfo(); err != nil {
 		return fmt.Errorf("saving cache info: %w", err)

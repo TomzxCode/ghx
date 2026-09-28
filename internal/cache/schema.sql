@@ -62,13 +62,15 @@ CREATE INDEX IF NOT EXISTS idx_prs_author  ON pull_requests(host, owner, repo, a
 CREATE INDEX IF NOT EXISTS idx_prs_updated ON pull_requests(host, owner, repo, updated_at);
 
 CREATE TABLE IF NOT EXISTS cache_meta (
-    host         TEXT    NOT NULL,
-    owner        TEXT    NOT NULL,
-    repo         TEXT    NOT NULL,
-    cached_at    TEXT    NOT NULL,
-    duration     INTEGER NOT NULL,
-    complete     INTEGER NOT NULL,
-    issue_cursor TEXT,
-    pr_cursor    TEXT,
+    host             TEXT    NOT NULL,
+    owner            TEXT    NOT NULL,
+    repo             TEXT    NOT NULL,
+    cached_at        TEXT    NOT NULL,
+    duration         INTEGER NOT NULL,
+    complete         INTEGER NOT NULL,
+    issue_cursor     TEXT,
+    pr_cursor        TEXT,
+    issues_cached_at TEXT,
+    prs_cached_at    TEXT,
     PRIMARY KEY (host, owner, repo)
 );

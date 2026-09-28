@@ -468,10 +468,13 @@ func (s *sqliteStore) QueryPRs(host, owner, repo string, q PRQuery) ([]*github.P
 
 // SaveCacheInfo marks the cache complete at the current time with the given duration.
 func (s *sqliteStore) SaveCacheInfo(host, owner, repo string, duration int) error {
+	now := time.Now()
 	return s.SaveCacheInfoFull(host, owner, repo, &CacheInfo{
-		CachedAt: time.Now(),
-		Duration: duration,
-		Complete: true,
+		CachedAt:       now,
+		Duration:       duration,
+		Complete:       true,
+		IssuesCachedAt: now,
+		PRsCachedAt:    now,
 	})
 }
 
@@ -482,10 +485,11 @@ func (s *sqliteStore) SaveCacheInfoFull(host, owner, repo string, info *CacheInf
 		complete = 1
 	}
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO cache_meta
-		(host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor)
-		VALUES (?,?,?,?,?,?,?,?)`,
+		(host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor, issues_cached_at, prs_cached_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, tstr(info.CachedAt), info.Duration, complete,
 		nullTime(info.IssueCursor), nullTime(info.PRCursor),
+		nullTime(&info.IssuesCachedAt), nullTime(&info.PRsCachedAt),
 	)
 	if err != nil {
 		return fmt.Errorf("saving cache info: %w", err)
@@ -496,13 +500,14 @@ func (s *sqliteStore) SaveCacheInfoFull(host, owner, repo string, info *CacheInf
 // LoadCacheInfo reads the cache metadata row.
 func (s *sqliteStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error) {
 	var (
-		cachedAtS               string
-		duration, complete      int
-		issueCursorS, prCursorS sql.NullString
+		cachedAtS                     string
+		duration, complete            int
+		issueCursorS, prCursorS       sql.NullString
+		issuesCachedAtS, prsCachedAtS sql.NullString
 	)
-	row := s.db.QueryRow(`SELECT cached_at, duration, complete, issue_cursor, pr_cursor
+	row := s.db.QueryRow(`SELECT cached_at, duration, complete, issue_cursor, pr_cursor, issues_cached_at, prs_cached_at
 		FROM cache_meta WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
-	if err := row.Scan(&cachedAtS, &duration, &complete, &issueCursorS, &prCursorS); err != nil {
+	if err := row.Scan(&cachedAtS, &duration, &complete, &issueCursorS, &prCursorS, &issuesCachedAtS, &prsCachedAtS); err != nil {
 		return nil, err
 	}
 	info := &CacheInfo{
@@ -518,11 +523,17 @@ func (s *sqliteStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error
 		t := parseTime(prCursorS.String)
 		info.PRCursor = &t
 	}
+	if issuesCachedAtS.Valid && issuesCachedAtS.String != "" {
+		info.IssuesCachedAt = parseTime(issuesCachedAtS.String)
+	}
+	if prsCachedAtS.Valid && prsCachedAtS.String != "" {
+		info.PRsCachedAt = parseTime(prsCachedAtS.String)
+	}
 	return info, nil
 }
 
-// IsCacheFresh reports whether the cache is complete and was populated within
-// its stored duration.
+// IsCacheFresh reports whether the cache is complete and both issues and PRs
+// were populated within the stored duration.
 func (s *sqliteStore) IsCacheFresh(host, owner, repo string) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -531,11 +542,30 @@ func (s *sqliteStore) IsCacheFresh(host, owner, repo string) (bool, error) {
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(info.Duration)*time.Minute, nil
+	d := time.Duration(info.Duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
 }
 
-// IsCacheFreshWithDuration reports whether the cache is complete and was
-// populated within the given duration.
+// IsIssuesCacheFresh reports whether issues were cached within the stored duration.
+func (s *sqliteStore) IsIssuesCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.IssuesUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
+func (s *sqliteStore) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.PRsUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsCacheFreshWithDuration reports whether the cache is complete and both
+// issues and PRs were populated within the given duration.
 func (s *sqliteStore) IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -544,7 +574,26 @@ func (s *sqliteStore) IsCacheFreshWithDuration(host, owner, repo string, duratio
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(duration)*time.Minute, nil
+	d := time.Duration(duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
+}
+
+// IsIssuesCacheFreshWithDuration reports whether issues were cached within the given duration (minutes).
+func (s *sqliteStore) IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.IssuesUpdatedAt()) < time.Duration(duration)*time.Minute, nil
+}
+
+// IsPRsCacheFreshWithDuration reports whether PRs were cached within the given duration (minutes).
+func (s *sqliteStore) IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.PRsUpdatedAt()) < time.Duration(duration)*time.Minute, nil
 }
 
 // ListCachedRepos returns every repository present in the database.
@@ -556,6 +605,7 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	rows, err := s.db.Query(`
 		SELECT u.host, u.owner, u.repo,
 		       m.cached_at, m.duration, m.complete, m.issue_cursor, m.pr_cursor,
+		       m.issues_cached_at, m.prs_cached_at,
 		       (SELECT COUNT(*) FROM issues i WHERE i.host=u.host AND i.owner=u.owner AND i.repo=u.repo),
 		       (SELECT COUNT(*) FROM pull_requests p WHERE p.host=u.host AND p.owner=u.owner AND p.repo=u.repo)
 		FROM (
@@ -574,13 +624,15 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	var repos []CachedRepo
 	for rows.Next() {
 		var (
-			cr                    CachedRepo
-			cachedAt              sql.NullString
-			duration, complete    sql.NullInt64
-			issueCursor, prCursor sql.NullString
+			cr                          CachedRepo
+			cachedAt                    sql.NullString
+			duration, complete          sql.NullInt64
+			issueCursor, prCursor       sql.NullString
+			issuesCachedAt, prsCachedAt sql.NullString
 		)
 		if err := rows.Scan(&cr.Host, &cr.Owner, &cr.Repo,
 			&cachedAt, &duration, &complete, &issueCursor, &prCursor,
+			&issuesCachedAt, &prsCachedAt,
 			&cr.IssueCount, &cr.PRCount); err != nil {
 			return nil, err
 		}
@@ -597,6 +649,12 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 			if prCursor.Valid && prCursor.String != "" {
 				t := parseTime(prCursor.String)
 				info.PRCursor = &t
+			}
+			if issuesCachedAt.Valid && issuesCachedAt.String != "" {
+				info.IssuesCachedAt = parseTime(issuesCachedAt.String)
+			}
+			if prsCachedAt.Valid && prsCachedAt.String != "" {
+				info.PRsCachedAt = parseTime(prsCachedAt.String)
 			}
 			cr.Info = info
 		}

@@ -172,10 +172,13 @@ func (s *fileStore) QueryPRs(host, owner, repo string, q PRQuery) ([]*github.Pul
 // SaveCacheInfo writes the cache metadata file, marking the cache as complete
 // at the current time with the given duration.
 func (s *fileStore) SaveCacheInfo(host, owner, repo string, duration int) error {
+	now := time.Now()
 	info := &CacheInfo{
-		CachedAt: time.Now(),
-		Duration: duration,
-		Complete: true,
+		CachedAt:       now,
+		Duration:       duration,
+		Complete:       true,
+		IssuesCachedAt: now,
+		PRsCachedAt:    now,
 	}
 	return s.SaveCacheInfoFull(host, owner, repo, info)
 }
@@ -208,8 +211,9 @@ func (s *fileStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error) 
 	return &info, nil
 }
 
-// IsCacheFresh reports whether the cache is complete and was populated within
-// its stored duration. An interrupted (incomplete) fetch is never fresh.
+// IsCacheFresh reports whether the cache is complete and both issues and PRs
+// were populated within the stored duration. An interrupted (incomplete) fetch
+// is never fresh.
 func (s *fileStore) IsCacheFresh(host, owner, repo string) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -218,11 +222,30 @@ func (s *fileStore) IsCacheFresh(host, owner, repo string) (bool, error) {
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(info.Duration)*time.Minute, nil
+	d := time.Duration(info.Duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
 }
 
-// IsCacheFreshWithDuration reports whether the cache is complete and was
-// populated within the given duration.
+// IsIssuesCacheFresh reports whether issues were cached within the stored duration.
+func (s *fileStore) IsIssuesCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.IssuesUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
+func (s *fileStore) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.PRsUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsCacheFreshWithDuration reports whether the cache is complete and both
+// issues and PRs were populated within the given duration.
 func (s *fileStore) IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -231,7 +254,26 @@ func (s *fileStore) IsCacheFreshWithDuration(host, owner, repo string, duration 
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(duration)*time.Minute, nil
+	d := time.Duration(duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
+}
+
+// IsIssuesCacheFreshWithDuration reports whether issues were cached within the given duration (minutes).
+func (s *fileStore) IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.IssuesUpdatedAt()) < time.Duration(duration)*time.Minute, nil
+}
+
+// IsPRsCacheFreshWithDuration reports whether PRs were cached within the given duration (minutes).
+func (s *fileStore) IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.PRsUpdatedAt()) < time.Duration(duration)*time.Minute, nil
 }
 
 // ListCachedRepos walks the cache directory and returns all cached repositories.
