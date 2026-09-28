@@ -1,7 +1,7 @@
 ghx
 stats-report.html
-benchmark-report.html
-benchmark-report.json
+benchmark-report*.html
+benchmark-report*.json
 !.agents/skills/ghx/
 site/
 .venv/
