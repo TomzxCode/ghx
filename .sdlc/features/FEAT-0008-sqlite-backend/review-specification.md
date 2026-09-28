@@ -12,7 +12,7 @@ The label/milestone filtering approach was hand-waved ("JSON LIKE/EXTRACT as nee
 ## Inconsistencies
 
 No issues found.
-Default backend (`file`) is consistent across the selection table, technical decisions, and out-of-scope; the `Store` interface signatures match the existing method set and the codebase analysis.
+Default backend (`sqlite`) is consistent across the selection table, technical decisions, and out-of-scope; the `Store` interface signatures match the implemented interface.
 
 ## Gaps
 
@@ -24,3 +24,9 @@ Telemetry and observability are handled in their own downstream phases (the proj
 
 No issues found.
 The design is additive and reversible: interface extraction with two implementations, an embedded schema, predicate query methods that degrade to the existing filter for the file backend, and a transactional migration. All chosen libraries are pure-Go and within the stated constraints; the two feasibility conditions (benchmark, CGO-free build) remain as validation gates rather than design blockers.
+
+## Propagation re-review: 2026-07-04
+
+Re-validated after the code entered the propagation graph.
+The `Store` interface snippet was aligned to the implemented, tested interface: the `ctx context.Context` parameter on `QueryIssues`/`QueryPRs` was removed (the implementation takes none), and `Kind()`/`Location()` were added (FR-07 realization).
+Default backend corrected to `sqlite`. Verdict remains approved.

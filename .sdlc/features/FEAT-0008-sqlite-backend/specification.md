@@ -2,6 +2,7 @@
 issue: "#1"
 title: "SQLite backend for issue/PR storage"
 status: approved
+revision: 1
 ---
 
 # Specification: SQLite backend for issue/PR storage
@@ -126,14 +127,19 @@ type Store interface {
     ListCachedRepos() ([]CachedRepo, error)
 
     // New
-    QueryIssues(ctx context.Context, host, owner, repo string, q IssueQuery) ([]*github.Issue, error)
-    QueryPRs(ctx context.Context, host, owner, repo string, q PRQuery) ([]*github.PullRequest, error)
+    QueryIssues(host, owner, repo string, q IssueQuery) ([]*github.Issue, error)
+    QueryPRs(host, owner, repo string, q PRQuery) ([]*github.PullRequest, error)
+
+    // Backend identity (FR-07)
+    Kind() string
+    Location() string
     Close() error
 }
 ```
 
 `fileStore.QueryIssues` = `LoadAllIssues` + `filterIssues`; `sqliteStore.QueryIssues` pushes the scalar, indexed predicates (repo, state, author) into the SQL `WHERE` to produce a candidate set, then applies label/milestone/search matching in Go by reusing the same predicate helpers (`hasAllLabels`, milestone title-or-number) to guarantee exact equivalence with the in-memory filter.
 (Equivalently, label matching may use SQLite JSON1 `json_each` over the `labels` column; the candidate-set approach is the fallback that keeps semantics provably identical.)
+`Kind()` reports `file` or `sqlite`; `Location()` reports the cache root (file) or database path (sqlite), surfaced per FR-07.
 `Close()` is a no-op for `fileStore` and closes the DB connection for `sqliteStore`.
 
 ### Query structs
@@ -184,7 +190,7 @@ Flag overrides env; env overrides default. DB location: a single `<cache-dir>/ca
 issue list --storage sqlite
    │
    ├── newStore() ── opens <repo>/cache.db (WAL)
-   ├── QueryIssues(ctx, host, owner, repo, IssueQuery{State:"open",...})
+   ├── QueryIssues(host, owner, repo, IssueQuery{State:"open",...})
    │       └── SELECT ... WHERE host=? AND owner=? AND repo=? AND state=?
    │             (indexed; no full scan)
    └── render results ── Close()
