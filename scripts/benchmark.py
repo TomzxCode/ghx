@@ -7,6 +7,12 @@ few cache scenarios (warm cache, cold cache, and a forced API refresh) and then
 writes a single-file HTML report that answers the question "is ghx faster or
 slower than gh?".
 
+ghx caches to SQLite by default; pass --storage file (or sqlite) to benchmark a
+specific backend. Run the script once per backend to compare them:
+
+    python3 scripts/benchmark.py --repo cli/cli --storage sqlite -o sqlite.html
+    python3 scripts/benchmark.py --repo cli/cli --storage file   -o file.html
+
 Only read-only commands are executed. ghx is always pointed at a throwaway
 cache directory so the user's real cache at ~/.cache/ghx is never touched.
 
@@ -14,6 +20,7 @@ Typical usage::
 
     python3 scripts/benchmark.py --repo TomzxCode/gh-cached
     python3 scripts/benchmark.py --repo cli/cli --runs 7 -o cli.html
+    python3 scripts/benchmark.py --repo cli/cli --storage file   # benchmark file backend
     python3 scripts/benchmark.py --demo          # render a sample report, no network
 
 The report is written to benchmark-report.html by default.
@@ -123,6 +130,7 @@ class Config:
     repo: str
     ghx_bin: Path
     gh_bin: Path
+    storage: str  # "file" | "sqlite" - the ghx cache backend under test
     runs: int
     warmup: int
     timeout: float
@@ -160,7 +168,14 @@ def build_cmd(
     """Build the argv for one tool/case/scenario combination."""
     if tool == "ghx":
         cache_dir = cfg.cache_dir_for(case, phase, run_index)
-        return [str(cfg.ghx_bin), "--cache-dir", str(cache_dir), *case.ghx_args]
+        return [
+            str(cfg.ghx_bin),
+            "--cache-dir",
+            str(cache_dir),
+            "--storage",
+            cfg.storage,
+            *case.ghx_args,
+        ]
     return [str(cfg.gh_bin), *case.gh_args]
 
 
@@ -425,6 +440,8 @@ def populate_warm_cache(cfg: Config) -> tuple[bool, str]:
         str(cfg.ghx_bin),
         "--cache-dir",
         str(cfg.warm_dir),
+        "--storage",
+        cfg.storage,
         "cache",
         "--repo",
         cfg.repo,
@@ -950,6 +967,7 @@ def build_context(
 
     return {
         "repo": cfg.repo,
+        "storage": cfg.storage,
         "runs": cfg.runs,
         "warmup": cfg.warmup,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
@@ -965,6 +983,7 @@ def build_context(
                     "case": c["key"],
                     "label": c["label"],
                     "status": c["status"],
+                    "ghx_storage_backend": cfg.storage,
                     "speedup_gh_over_ghx": round(c["speedup"], 4),
                     "ghx_median_seconds": round(c["ghx"]["median"], 6),
                     "gh_median_seconds": round(c["gh"]["median"], 6),
@@ -1100,6 +1119,7 @@ def render_report(ctx: dict) -> str:
     <p>Wall-clock comparison of equivalent read commands across warm-cache, cold-cache and forced-refresh scenarios.</p>
     <div class="hero-meta">
       <span class="pill">repository <strong>{esc(ctx["repo"])}</strong></span>
+      <span class="pill">ghx backend <strong>{esc(ctx["storage"])}</strong></span>
       <span class="pill">{ctx["runs"]} runs + {ctx["warmup"]} warmup</span>
       <span class="pill">generated {esc(ctx["generated_at"])}</span>
     </div>
@@ -1212,6 +1232,7 @@ def collect_env(cfg: Config) -> dict[str, str]:
         "Repository": cfg.repo,
         "ghx": tool_version(cfg.ghx_bin, ["--version"]),
         "gh": tool_version(cfg.gh_bin, ["--version"]),
+        "ghx storage backend": cfg.storage,
         "ghx path": str(cfg.ghx_bin),
         "gh path": str(cfg.gh_bin),
         "OS": platform.platform(),
@@ -1315,6 +1336,7 @@ def pick_numbers(
 
 def print_summary(ctx: dict, output: Path) -> None:
     print()
+    print(f"ghx backend: {ctx['storage']}")
     print(f"{'scenario':<42} {'ghx median':>12} {'gh median':>12} {'speedup':>16}")
     print("-" * 86)
     for case in ctx["cases"]:
@@ -1455,6 +1477,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--gh", help="Path to the gh binary (default: on PATH)")
     parser.add_argument(
+        "--storage",
+        choices=("file", "sqlite"),
+        default="sqlite",
+        help="ghx cache backend to benchmark (passed to ghx as --storage)",
+    )
+    parser.add_argument(
         "--build",
         action="store_true",
         help="Build ghx from this repository before running",
@@ -1509,6 +1537,7 @@ def main(argv: list[str] | None = None) -> int:
             repo="octocat/hello-world",
             ghx_bin=Path("ghx"),
             gh_bin=Path("gh"),
+            storage=args.storage,
             runs=5,
             warmup=1,
             timeout=args.timeout,
@@ -1522,6 +1551,7 @@ def main(argv: list[str] | None = None) -> int:
             "Repository": cfg.repo,
             "ghx": "ghx version 0.0.0-demo",
             "gh": "gh version 2.101.0 (demo)",
+            "ghx storage backend": cfg.storage,
             "OS": platform.platform(),
             "Architecture": platform.machine(),
             "CPU cores": str(os.cpu_count() or "unknown"),
@@ -1555,6 +1585,7 @@ def main(argv: list[str] | None = None) -> int:
         repo=repo,
         ghx_bin=ghx_bin,
         gh_bin=gh_bin,
+        storage=args.storage,
         runs=args.runs,
         warmup=args.warmup,
         timeout=args.timeout,
@@ -1570,6 +1601,7 @@ def main(argv: list[str] | None = None) -> int:
     env = collect_env(cfg)
     print(f"Repository: {repo}")
     print(f"ghx:        {env['ghx']} ({ghx_bin})")
+    print(f"ghx backend: {args.storage}")
     print(f"gh:         {env['gh']} ({gh_bin})")
     print(f"Runs:       {args.runs} timed + {args.warmup} warmup per tool per scenario")
 

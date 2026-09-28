@@ -314,6 +314,14 @@ python3 scripts/benchmark.py --runs 7 -o report.html   # more samples, custom ou
 python3 scripts/benchmark.py --demo                    # preview the report offline
 ```
 
+The ghx side runs against the backend selected by `--storage` (`sqlite`, the
+default, or `file`). Run the script once per backend to compare them:
+
+```bash
+python3 scripts/benchmark.py --repo cli/cli --storage sqlite -o sqlite.html
+python3 scripts/benchmark.py --repo cli/cli --storage file   -o file.html
+```
+
 It is standard-library-only, and ghx runs against a throwaway `--cache-dir`, so
 the real `~/.cache/ghx` cache is never touched. The report lands in
 `benchmark-report.html` by default.
