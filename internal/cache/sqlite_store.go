@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -244,6 +245,41 @@ func (s *sqliteStore) LoadAllIssues(host, owner, repo string) ([]*github.Issue, 
 	return issues, rows.Err()
 }
 
+// QueryIssues pushes the scalar predicates to indexed SQL columns to obtain a
+// candidate set, then applies the canonical in-memory filter so the result set
+// matches the file backend exactly. Label/milestone/search predicates are not
+// pushed down (they involve JSON collections or substring matching).
+func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*github.Issue, error) {
+	where := []string{"host = ?", "owner = ?", "repo = ?"}
+	args := []any{host, owner, repo}
+	if q.State != "" && !strings.EqualFold(q.State, "all") {
+		where = append(where, "state = ? COLLATE NOCASE")
+		args = append(args, q.State)
+	}
+	if q.Author != "" {
+		where = append(where, "author_login = ? COLLATE NOCASE")
+		args = append(args, q.Author)
+	}
+	rows, err := s.db.Query(`SELECT `+issueCols+` FROM issues WHERE `+strings.Join(where, " AND "), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var issues []*github.Issue
+	for rows.Next() {
+		issue, _, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
+		}
+		issues = append(issues, issue)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return filterIssues(issues, q), nil
+}
+
 // ---------------------------------------------------------------------------
 // Pull requests
 // ---------------------------------------------------------------------------
@@ -373,6 +409,51 @@ func (s *sqliteStore) LoadAllPRs(host, owner, repo string) ([]*github.PullReques
 		prs = append(prs, pr)
 	}
 	return prs, rows.Err()
+}
+
+// QueryPRs pushes the scalar predicates (repo, state, author, base, head, draft)
+// to indexed SQL columns, then applies the canonical in-memory filter for exact
+// equivalence with the file backend.
+func (s *sqliteStore) QueryPRs(host, owner, repo string, q PRQuery) ([]*github.PullRequest, error) {
+	where := []string{"host = ?", "owner = ?", "repo = ?"}
+	args := []any{host, owner, repo}
+	if q.State != "" && !strings.EqualFold(q.State, "all") {
+		where = append(where, "state = ? COLLATE NOCASE")
+		args = append(args, q.State)
+	}
+	if q.Author != "" {
+		where = append(where, "author_login = ? COLLATE NOCASE")
+		args = append(args, q.Author)
+	}
+	if q.BaseRef != "" {
+		where = append(where, "base_ref_name = ? COLLATE NOCASE")
+		args = append(args, q.BaseRef)
+	}
+	if q.HeadRef != "" {
+		where = append(where, "head_ref_name = ? COLLATE NOCASE")
+		args = append(args, q.HeadRef)
+	}
+	if q.Draft {
+		where = append(where, "is_draft = 1")
+	}
+	rows, err := s.db.Query(`SELECT `+prCols+` FROM pull_requests WHERE `+strings.Join(where, " AND "), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var prs []*github.PullRequest
+	for rows.Next() {
+		pr, _, err := scanPR(rows)
+		if err != nil {
+			return nil, err
+		}
+		prs = append(prs, pr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return filterPRs(prs, q), nil
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 )
 
@@ -95,17 +96,25 @@ func runPRList(cmd *cobra.Command, args []string) error {
 
 	// Serve from cache when it is fresh.
 	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-		if prs, err := store.LoadAllPRs(repo.Host, repo.Owner, repo.Name); err == nil {
-			filtered := filterPRs(prs, prListState, prListAssignee, prListAuthor,
-				prListLabels, prListBase, prListHead, prListApp, prListSearch, prListDraft)
-			sort.Slice(filtered, func(i, j int) bool {
-				return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
+		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
+			State:    prListState,
+			Assignee: prListAssignee,
+			Author:   prListAuthor,
+			Labels:   prListLabels,
+			BaseRef:  prListBase,
+			HeadRef:  prListHead,
+			Draft:    prListDraft,
+			Search:   prListSearch,
+		})
+		if err == nil {
+			sort.Slice(prs, func(i, j int) bool {
+				return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
 			})
-			total := len(filtered)
-			if prListLimit > 0 && len(filtered) > prListLimit {
-				filtered = filtered[:prListLimit]
+			total := len(prs)
+			if prListLimit > 0 && len(prs) > prListLimit {
+				prs = prs[:prListLimit]
 			}
-			return printPRList(filtered, total, prListJSON, prListNoTruncate)
+			return printPRList(prs, total, prListJSON, prListNoTruncate)
 		}
 	}
 
@@ -181,62 +190,6 @@ func runPRView(cmd *cobra.Command, args []string) error {
 	return printPRView(pr, prViewComments, prViewJSON)
 }
 
-// ---------------------------------------------------------------------------
-// Filtering
-// ---------------------------------------------------------------------------
-
-func filterPRs(prs []*github.PullRequest, state, assignee, author string,
-	labels []string, base, head, app, search string, draft bool) []*github.PullRequest {
-
-	var result []*github.PullRequest
-	for _, pr := range prs {
-		if state != "all" && state != "" {
-			if !strings.EqualFold(pr.State, state) {
-				continue
-			}
-		}
-		if assignee != "" {
-			found := false
-			for _, a := range pr.Assignees {
-				if strings.EqualFold(a.Login, assignee) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		if author != "" && !strings.EqualFold(pr.Author.Login, author) {
-			continue
-		}
-		if len(labels) > 0 {
-			if !hasAllLabelsPR(pr.Labels, labels) {
-				continue
-			}
-		}
-		if base != "" && !strings.EqualFold(pr.BaseRefName, base) {
-			continue
-		}
-		if head != "" && !strings.EqualFold(pr.HeadRefName, head) {
-			continue
-		}
-		if draft && !pr.IsDraft {
-			continue
-		}
-		// app cannot be verified from cached data; skip.
-		if search != "" {
-			q := strings.ToLower(search)
-			if !strings.Contains(strings.ToLower(pr.Title), q) &&
-				!strings.Contains(strings.ToLower(pr.Body), q) {
-				continue
-			}
-		}
-		result = append(result, pr)
-	}
-	return result
-}
-
 func formatReviewDecision(d string) string {
 	switch d {
 	case "APPROVED":
@@ -248,22 +201,6 @@ func formatReviewDecision(d string) string {
 	default:
 		return d
 	}
-}
-
-func hasAllLabelsPR(prLabels []github.Label, wantLabels []string) bool {
-	for _, want := range wantLabels {
-		found := false
-		for _, l := range prLabels {
-			if strings.EqualFold(l.Name, want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // ---------------------------------------------------------------------------

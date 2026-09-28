@@ -27,6 +27,30 @@ type CachedRepo struct {
 	PRCount    int
 }
 
+// IssueQuery describes the filters applied when reading cached issues. An empty
+// field means "no filter"; State "all" or "" disables the state filter.
+type IssueQuery struct {
+	State     string
+	Assignee  string
+	Author    string
+	Labels    []string
+	Milestone string
+	Search    string
+}
+
+// PRQuery describes the filters applied when reading cached pull requests. An
+// empty field means "no filter"; State "all" or "" disables the state filter.
+type PRQuery struct {
+	State    string
+	Assignee string
+	Author   string
+	Labels   []string
+	BaseRef  string
+	HeadRef  string
+	Draft    bool
+	Search   string
+}
+
 // Store is the cache storage backend. All methods are keyed by the repository
 // coordinates (host, owner, repo) so a single backend can hold many
 // repositories.
@@ -47,6 +71,14 @@ type Store interface {
 	IsCacheFresh(host, owner, repo string) (bool, error)
 	IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	ListCachedRepos() ([]CachedRepo, error)
+
+	// QueryIssues returns the cached issues matching q. Backends may push the
+	// scalar predicates to indexed storage, but the returned set is identical
+	// to filtering LoadAllIssues with q.
+	QueryIssues(host, owner, repo string, q IssueQuery) ([]*github.Issue, error)
+	// QueryPRs is the pull-request equivalent of QueryIssues.
+	QueryPRs(host, owner, repo string, q PRQuery) ([]*github.PullRequest, error)
+
 	Close() error
 }
 

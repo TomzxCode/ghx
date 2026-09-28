@@ -34,36 +34,33 @@ func benchFixture(b *testing.B, n int) cache.Store {
 
 func BenchmarkFileBackendListState(b *testing.B) {
 	store := benchFixture(b, 500)
+	q := cache.IssueQuery{State: "open"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		all, err := store.LoadAllIssues("github.com", "acme", "big")
-		if err != nil {
+		if _, err := store.QueryIssues("github.com", "acme", "big", q); err != nil {
 			b.Fatal(err)
 		}
-		_ = filterIssues(all, "open", "", "", nil, "", "", "", "")
 	}
 }
 
 func BenchmarkFileBackendListAuthor(b *testing.B) {
 	store := benchFixture(b, 500)
+	q := cache.IssueQuery{State: "all", Author: "user3"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		all, err := store.LoadAllIssues("github.com", "acme", "big")
-		if err != nil {
+		if _, err := store.QueryIssues("github.com", "acme", "big", q); err != nil {
 			b.Fatal(err)
 		}
-		_ = filterIssues(all, "all", "", "user3", nil, "", "", "", "")
 	}
 }
 
 func BenchmarkFileBackendSearch(b *testing.B) {
 	store := benchFixture(b, 500)
+	q := cache.IssueQuery{State: "all", Search: "widget"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		all, err := store.LoadAllIssues("github.com", "acme", "big")
-		if err != nil {
+		if _, err := store.QueryIssues("github.com", "acme", "big", q); err != nil {
 			b.Fatal(err)
 		}
-		_ = filterIssues(all, "all", "", "", nil, "", "", "", "widget")
 	}
 }

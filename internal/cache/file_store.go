@@ -150,6 +150,25 @@ func (s *fileStore) LoadAllPRs(host, owner, repo string) ([]*github.PullRequest,
 	return prs, nil
 }
 
+// QueryIssues loads every cached issue and filters it in memory. This is the
+// reference implementation whose result set the SQLite backend must match.
+func (s *fileStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*github.Issue, error) {
+	issues, err := s.LoadAllIssues(host, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return filterIssues(issues, q), nil
+}
+
+// QueryPRs is the pull-request equivalent of QueryIssues.
+func (s *fileStore) QueryPRs(host, owner, repo string, q PRQuery) ([]*github.PullRequest, error) {
+	prs, err := s.LoadAllPRs(host, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return filterPRs(prs, q), nil
+}
+
 // SaveCacheInfo writes the cache metadata file, marking the cache as complete
 // at the current time with the given duration.
 func (s *fileStore) SaveCacheInfo(host, owner, repo string, duration int) error {

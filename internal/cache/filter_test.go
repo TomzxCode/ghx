@@ -1,4 +1,4 @@
-package cmd
+package cache
 
 import (
 	"testing"
@@ -42,17 +42,17 @@ func makeIssues() []*github.Issue {
 func TestFilterIssues_State(t *testing.T) {
 	issues := makeIssues()
 
-	open := filterIssues(issues, "open", "", "", nil, "", "", "", "")
+	open := filterIssues(issues, IssueQuery{State: "open"})
 	if len(open) != 2 {
 		t.Errorf("open: got %d, want 2", len(open))
 	}
 
-	closed := filterIssues(issues, "closed", "", "", nil, "", "", "", "")
+	closed := filterIssues(issues, IssueQuery{State: "closed"})
 	if len(closed) != 1 {
 		t.Errorf("closed: got %d, want 1", len(closed))
 	}
 
-	all := filterIssues(issues, "all", "", "", nil, "", "", "", "")
+	all := filterIssues(issues, IssueQuery{State: "all"})
 	if len(all) != 3 {
 		t.Errorf("all: got %d, want 3", len(all))
 	}
@@ -60,7 +60,7 @@ func TestFilterIssues_State(t *testing.T) {
 
 func TestFilterIssues_Author(t *testing.T) {
 	issues := makeIssues()
-	got := filterIssues(issues, "all", "", "alice", nil, "", "", "", "")
+	got := filterIssues(issues, IssueQuery{State: "all", Author: "alice"})
 	if len(got) != 2 {
 		t.Errorf("author=alice: got %d, want 2", len(got))
 	}
@@ -68,7 +68,7 @@ func TestFilterIssues_Author(t *testing.T) {
 
 func TestFilterIssues_Assignee(t *testing.T) {
 	issues := makeIssues()
-	got := filterIssues(issues, "all", "bob", "", nil, "", "", "", "")
+	got := filterIssues(issues, IssueQuery{State: "all", Assignee: "bob"})
 	if len(got) != 1 || got[0].Number != 1 {
 		t.Errorf("assignee=bob: got %v", got)
 	}
@@ -77,13 +77,13 @@ func TestFilterIssues_Assignee(t *testing.T) {
 func TestFilterIssues_Labels(t *testing.T) {
 	issues := makeIssues()
 
-	bugOnly := filterIssues(issues, "all", "", "", []string{"bug"}, "", "", "", "")
+	bugOnly := filterIssues(issues, IssueQuery{State: "all", Labels: []string{"bug"}})
 	if len(bugOnly) != 2 {
 		t.Errorf("label=bug: got %d, want 2", len(bugOnly))
 	}
 
 	// must have BOTH labels
-	bugAndP1 := filterIssues(issues, "all", "", "", []string{"bug", "p1"}, "", "", "", "")
+	bugAndP1 := filterIssues(issues, IssueQuery{State: "all", Labels: []string{"bug", "p1"}})
 	if len(bugAndP1) != 1 || bugAndP1[0].Number != 1 {
 		t.Errorf("label=bug+p1: got %v", bugAndP1)
 	}
@@ -92,12 +92,12 @@ func TestFilterIssues_Labels(t *testing.T) {
 func TestFilterIssues_Milestone(t *testing.T) {
 	issues := makeIssues()
 
-	byTitle := filterIssues(issues, "all", "", "", nil, "v1.0", "", "", "")
+	byTitle := filterIssues(issues, IssueQuery{State: "all", Milestone: "v1.0"})
 	if len(byTitle) != 1 || byTitle[0].Number != 1 {
 		t.Errorf("milestone=v1.0 (title): got %v", byTitle)
 	}
 
-	byNumber := filterIssues(issues, "all", "", "", nil, "1", "", "", "")
+	byNumber := filterIssues(issues, IssueQuery{State: "all", Milestone: "1"})
 	if len(byNumber) != 1 || byNumber[0].Number != 1 {
 		t.Errorf("milestone=1 (number): got %v", byNumber)
 	}
@@ -106,7 +106,7 @@ func TestFilterIssues_Milestone(t *testing.T) {
 func TestFilterIssues_Search(t *testing.T) {
 	issues := makeIssues()
 
-	got := filterIssues(issues, "all", "", "", nil, "", "", "", "memory")
+	got := filterIssues(issues, IssueQuery{State: "all", Search: "memory"})
 	if len(got) != 2 {
 		t.Errorf("search=memory: got %d, want 2", len(got))
 	}
@@ -155,12 +155,12 @@ func makePRs() []*github.PullRequest {
 func TestFilterPRs_State(t *testing.T) {
 	prs := makePRs()
 
-	open := filterPRs(prs, "open", "", "", nil, "", "", "", "", false)
+	open := filterPRs(prs, PRQuery{State: "open"})
 	if len(open) != 2 {
 		t.Errorf("state=open: got %d, want 2", len(open))
 	}
 
-	merged := filterPRs(prs, "merged", "", "", nil, "", "", "", "", false)
+	merged := filterPRs(prs, PRQuery{State: "merged"})
 	if len(merged) != 1 || merged[0].Number != 11 {
 		t.Errorf("state=merged: got %v", merged)
 	}
@@ -168,7 +168,7 @@ func TestFilterPRs_State(t *testing.T) {
 
 func TestFilterPRs_Author(t *testing.T) {
 	prs := makePRs()
-	got := filterPRs(prs, "all", "", "alice", nil, "", "", "", "", false)
+	got := filterPRs(prs, PRQuery{State: "all", Author: "alice"})
 	if len(got) != 2 {
 		t.Errorf("author=alice: got %d, want 2", len(got))
 	}
@@ -176,7 +176,7 @@ func TestFilterPRs_Author(t *testing.T) {
 
 func TestFilterPRs_Draft(t *testing.T) {
 	prs := makePRs()
-	got := filterPRs(prs, "all", "", "", nil, "", "", "", "", true)
+	got := filterPRs(prs, PRQuery{State: "all", Draft: true})
 	if len(got) != 1 || got[0].Number != 12 {
 		t.Errorf("draft: got %v", got)
 	}
@@ -184,7 +184,7 @@ func TestFilterPRs_Draft(t *testing.T) {
 
 func TestFilterPRs_Base(t *testing.T) {
 	prs := makePRs()
-	got := filterPRs(prs, "all", "", "", nil, "main", "", "", "", false)
+	got := filterPRs(prs, PRQuery{State: "all", BaseRef: "main"})
 	if len(got) != 3 {
 		t.Errorf("base=main: got %d, want 3", len(got))
 	}
@@ -192,7 +192,7 @@ func TestFilterPRs_Base(t *testing.T) {
 
 func TestFilterPRs_Head(t *testing.T) {
 	prs := makePRs()
-	got := filterPRs(prs, "all", "", "", nil, "", "feat/login", "", "", false)
+	got := filterPRs(prs, PRQuery{State: "all", HeadRef: "feat/login"})
 	if len(got) != 1 || got[0].Number != 10 {
 		t.Errorf("head=feat/login: got %v", got)
 	}
@@ -200,7 +200,7 @@ func TestFilterPRs_Head(t *testing.T) {
 
 func TestFilterPRs_Search(t *testing.T) {
 	prs := makePRs()
-	got := filterPRs(prs, "all", "", "", nil, "", "", "", "crash", false)
+	got := filterPRs(prs, PRQuery{State: "all", Search: "crash"})
 	if len(got) != 1 || got[0].Number != 11 {
 		t.Errorf("search=crash: got %v", got)
 	}

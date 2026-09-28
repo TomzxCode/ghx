@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 )
 
@@ -95,17 +96,23 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 
 	// Serve from cache when it is fresh.
 	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-		if issues, err := store.LoadAllIssues(repo.Host, repo.Owner, repo.Name); err == nil {
-			filtered := filterIssues(issues, issueListState, issueListAssignee, issueListAuthor,
-				issueListLabels, issueListMilestone, issueListMention, issueListApp, issueListSearch)
-			sort.Slice(filtered, func(i, j int) bool {
-				return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
+		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
+			State:     issueListState,
+			Assignee:  issueListAssignee,
+			Author:    issueListAuthor,
+			Labels:    issueListLabels,
+			Milestone: issueListMilestone,
+			Search:    issueListSearch,
+		})
+		if err == nil {
+			sort.Slice(issues, func(i, j int) bool {
+				return issues[i].UpdatedAt.After(issues[j].UpdatedAt)
 			})
-			total := len(filtered)
-			if issueListLimit > 0 && len(filtered) > issueListLimit {
-				filtered = filtered[:issueListLimit]
+			total := len(issues)
+			if issueListLimit > 0 && len(issues) > issueListLimit {
+				issues = issues[:issueListLimit]
 			}
-			return printIssueList(filtered, total, issueListJSON, issueListNoTruncate)
+			return printIssueList(issues, total, issueListJSON, issueListNoTruncate)
 		}
 	}
 
@@ -179,78 +186,6 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 
 	_ = store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue)
 	return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
-}
-
-// ---------------------------------------------------------------------------
-// Filtering
-// ---------------------------------------------------------------------------
-
-func filterIssues(issues []*github.Issue, state, assignee, author string,
-	labels []string, milestone, mention, app, search string) []*github.Issue {
-
-	var result []*github.Issue
-	for _, issue := range issues {
-		if state != "all" && state != "" {
-			if !strings.EqualFold(issue.State, state) {
-				continue
-			}
-		}
-		if assignee != "" {
-			found := false
-			for _, a := range issue.Assignees {
-				if strings.EqualFold(a.Login, assignee) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		if author != "" && !strings.EqualFold(issue.Author.Login, author) {
-			continue
-		}
-		if len(labels) > 0 {
-			if !hasAllLabels(issue.Labels, labels) {
-				continue
-			}
-		}
-		if milestone != "" {
-			if issue.Milestone == nil {
-				continue
-			}
-			if !strings.EqualFold(issue.Milestone.Title, milestone) &&
-				strconv.Itoa(issue.Milestone.Number) != milestone {
-				continue
-			}
-		}
-		// mention and app cannot be verified from cached data; skip filtering on them.
-		if search != "" {
-			q := strings.ToLower(search)
-			if !strings.Contains(strings.ToLower(issue.Title), q) &&
-				!strings.Contains(strings.ToLower(issue.Body), q) {
-				continue
-			}
-		}
-		result = append(result, issue)
-	}
-	return result
-}
-
-func hasAllLabels(issueLabels []github.Label, wantLabels []string) bool {
-	for _, want := range wantLabels {
-		found := false
-		for _, l := range issueLabels {
-			if strings.EqualFold(l.Name, want) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
 }
 
 // ---------------------------------------------------------------------------
