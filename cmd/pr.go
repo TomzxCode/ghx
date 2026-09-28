@@ -94,7 +94,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	store := newStore()
 
 	// Serve from cache when it is fresh.
-	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		if prs, err := store.LoadAllPRs(repo.Host, repo.Owner, repo.Name); err == nil {
 			filtered := filterPRs(prs, prListState, prListAssignee, prListAuthor,
 				prListLabels, prListBase, prListHead, prListApp, prListSearch, prListDraft)
@@ -151,7 +151,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 
 	if !prViewRefresh {
 		// When a full cache is fresh, treat it as authoritative.
-		if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+		if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 			pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number)
 			if err != nil {
 				return fmt.Errorf("pull request #%d not found in cache; run `ghx cache --force` to refresh", number)

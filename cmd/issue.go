@@ -94,7 +94,7 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	store := newStore()
 
 	// Serve from cache when it is fresh.
-	if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		if issues, err := store.LoadAllIssues(repo.Host, repo.Owner, repo.Name); err == nil {
 			filtered := filterIssues(issues, issueListState, issueListAssignee, issueListAuthor,
 				issueListLabels, issueListMilestone, issueListMention, issueListApp, issueListSearch)
@@ -151,7 +151,7 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 	if !issueViewRefresh {
 		// When a full cache is fresh, treat it as authoritative: don't hit the API
 		// if the item isn't there — it simply doesn't exist (or wasn't cached).
-		if fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+		if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 			issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number)
 			if err != nil {
 				return fmt.Errorf("issue #%d not found in cache; run `ghx cache --force` to refresh", number)

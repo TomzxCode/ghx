@@ -18,6 +18,30 @@ type CacheInfo struct {
 	Complete    bool       `json:"complete,omitempty"`    // last full fetch reached the newest item
 	IssueCursor *time.Time `json:"issueCursor,omitempty"` // max updatedAt written for issues (resume point)
 	PRCursor    *time.Time `json:"prCursor,omitempty"`    // max updatedAt written for PRs (resume point)
+
+	// IssuesCachedAt and PRsCachedAt record when each data type was last
+	// refreshed. A partial run (--type issues|prs) updates only the type it
+	// fetched, so reads can be served from the cache for that type without
+	// pretending the other type is fresh. When zero they fall back to
+	// CachedAt, preserving the legacy on-disk format and full-run behavior.
+	IssuesCachedAt time.Time `json:"issuesCachedAt,omitempty"`
+	PRsCachedAt    time.Time `json:"prsCachedAt,omitempty"`
+}
+
+// IssuesUpdatedAt returns the timestamp used to judge issue freshness.
+func (i *CacheInfo) IssuesUpdatedAt() time.Time {
+	if !i.IssuesCachedAt.IsZero() {
+		return i.IssuesCachedAt
+	}
+	return i.CachedAt
+}
+
+// PRsUpdatedAt returns the timestamp used to judge pull request freshness.
+func (i *CacheInfo) PRsUpdatedAt() time.Time {
+	if !i.PRsCachedAt.IsZero() {
+		return i.PRsCachedAt
+	}
+	return i.CachedAt
 }
 
 // Store manages the on-disk cache at ~/.cache/ghx/cache.
@@ -174,10 +198,13 @@ func (s *Store) LoadAllPRs(host, owner, repo string) ([]*github.PullRequest, err
 // SaveCacheInfo writes the cache metadata file, marking the cache as complete
 // at the current time with the given duration.
 func (s *Store) SaveCacheInfo(host, owner, repo string, duration int) error {
+	now := time.Now()
 	info := &CacheInfo{
-		CachedAt: time.Now(),
-		Duration: duration,
-		Complete: true,
+		CachedAt:       now,
+		Duration:       duration,
+		Complete:       true,
+		IssuesCachedAt: now,
+		PRsCachedAt:    now,
 	}
 	return s.SaveCacheInfoFull(host, owner, repo, info)
 }
@@ -210,8 +237,9 @@ func (s *Store) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error) {
 	return &info, nil
 }
 
-// IsCacheFresh reports whether the cache is complete and was populated within
-// its stored duration. An interrupted (incomplete) fetch is never fresh.
+// IsCacheFresh reports whether the cache is complete and both issues and PRs
+// were populated within the stored duration. An interrupted (incomplete)
+// fetch is never fresh.
 func (s *Store) IsCacheFresh(host, owner, repo string) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -220,11 +248,30 @@ func (s *Store) IsCacheFresh(host, owner, repo string) (bool, error) {
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(info.Duration)*time.Minute, nil
+	d := time.Duration(info.Duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
 }
 
-// IsCacheFreshWithDuration reports whether the cache is complete and was
-// populated within the given duration.
+// IsIssuesCacheFresh reports whether issues were cached within the stored duration.
+func (s *Store) IsIssuesCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.IssuesUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
+func (s *Store) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	return time.Since(info.PRsUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+}
+
+// IsCacheFreshWithDuration reports whether the cache is complete and both
+// issues and PRs were populated within the given duration.
 func (s *Store) IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
 	info, err := s.LoadCacheInfo(host, owner, repo)
 	if err != nil {
@@ -233,7 +280,28 @@ func (s *Store) IsCacheFreshWithDuration(host, owner, repo string, duration int)
 	if !info.Complete {
 		return false, nil
 	}
-	return time.Since(info.CachedAt) < time.Duration(duration)*time.Minute, nil
+	d := time.Duration(duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
+}
+
+// IsIssuesCacheFreshWithDuration reports whether issues were cached within the given duration (minutes).
+func (s *Store) IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	d := time.Duration(duration) * time.Minute
+	return time.Since(info.IssuesUpdatedAt()) < d, nil
+}
+
+// IsPRsCacheFreshWithDuration reports whether PRs were cached within the given duration (minutes).
+func (s *Store) IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
+	info, err := s.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		return false, err
+	}
+	d := time.Duration(duration) * time.Minute
+	return time.Since(info.PRsUpdatedAt()) < d, nil
 }
 
 // CachedRepo describes a repository found in the local cache.
