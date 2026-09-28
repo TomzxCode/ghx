@@ -291,6 +291,27 @@ optional appendix of individual PRs (`--list-prs`).
 Run `ghx cache --force` once after upgrading so reports can use the review,
 timeline and size data collected during caching.
 
+### Benchmarking against gh
+
+`scripts/benchmark.py` times equivalent read commands from `ghx` and `gh`
+across warm-cache, cold-cache and forced-refresh scenarios, then writes a
+self-contained HTML report:
+
+```bash
+python3 scripts/benchmark.py --repo cli/cli            # benchmark a specific repo
+python3 scripts/benchmark.py --runs 7 -o report.html   # more samples, custom output
+python3 scripts/benchmark.py --demo                    # preview the report offline
+```
+
+It is standard-library-only, and ghx runs against a throwaway `--cache-dir`, so
+the real `~/.cache/ghx` cache is never touched. The report lands in
+`benchmark-report.html` by default.
+
+Because the tools do not always do the same work (ghx serves from cache; gh
+fetches project items and a richer field set), every scenario carries a
+fairness badge and note ("Different work", "ghx does more", "ghx does less") so
+a speedup is not read as a like-for-like win.
+
 ## How caching works
 
 | Command | Cache behaviour |
