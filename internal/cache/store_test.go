@@ -9,10 +9,10 @@ import (
 	"github.com/tomzxcode/ghx/internal/github"
 )
 
-func newTempStore(t *testing.T) *Store {
+func newTempStore(t *testing.T) *fileStore {
 	t.Helper()
 	dir := t.TempDir()
-	return &Store{baseDir: dir}
+	return &fileStore{baseDir: dir}
 }
 
 func sampleIssue(n int) *github.Issue {

@@ -77,7 +77,7 @@ func newClient(host string) (*github.Client, error) {
 }
 
 // newStore creates a cache store, using --cache-dir if provided.
-func newStore() *cache.Store {
+func newStore() cache.Store {
 	if cacheDir != "" {
 		return cache.NewStoreWithPath(cacheDir)
 	}

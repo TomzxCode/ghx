@@ -12,7 +12,7 @@ import (
 // benchFixture writes n issues for a single repository into a temp cache and
 // returns the store, mirroring the real list-read path (LoadAllIssues then
 // filterIssues). This is the Phase 0 baseline for NFR-01.
-func benchFixture(b *testing.B, n int) *cache.Store {
+func benchFixture(b *testing.B, n int) cache.Store {
 	b.Helper()
 	store := cache.NewStoreWithPath(b.TempDir())
 	for i := 1; i <= n; i++ {

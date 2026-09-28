@@ -144,7 +144,7 @@ func resolveStatsRepos(args []string) ([]*gitremote.Repo, error) {
 // time-to-first-comment metrics require comment authors and timestamps, which
 // the list connection does not return. The search API is day-granular and
 // capped at 1000 results.
-func loadStatsPRs(store *cache.Store, repo *gitremote.Repo, from time.Time) ([]*github.PullRequest, error) {
+func loadStatsPRs(store cache.Store, repo *gitremote.Repo, from time.Time) ([]*github.PullRequest, error) {
 	fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name)
 	if prs, err := store.LoadAllPRs(repo.Host, repo.Owner, repo.Name); err == nil && len(prs) > 0 {
 		if !fresh {
