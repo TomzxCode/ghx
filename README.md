@@ -322,6 +322,17 @@ python3 scripts/benchmark.py --repo cli/cli --storage sqlite -o sqlite.html
 python3 scripts/benchmark.py --repo cli/cli --storage file   -o file.html
 ```
 
+Or compare the two backends head-to-head in a single report with
+`--compare-backends`, which runs `ghx` with each backend and shows them side by
+side (it drops the `gh` comparison):
+
+```bash
+python3 scripts/benchmark.py --repo cli/cli --compare-backends -o backends.html
+```
+
+On small repositories the file backend can win warm-cache reads because there is
+little to index; SQLite's advantage grows with the number of cached items.
+
 It is standard-library-only, and ghx runs against a throwaway `--cache-dir`, so
 the real `~/.cache/ghx` cache is never touched. The report lands in
 `benchmark-report.html` by default.

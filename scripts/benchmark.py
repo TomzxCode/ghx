@@ -8,10 +8,10 @@ writes a single-file HTML report that answers the question "is ghx faster or
 slower than gh?".
 
 ghx caches to SQLite by default; pass --storage file (or sqlite) to benchmark a
-specific backend. Run the script once per backend to compare them:
+specific backend, or --compare-backends to run both side by side in one report:
 
-    python3 scripts/benchmark.py --repo cli/cli --storage sqlite -o sqlite.html
-    python3 scripts/benchmark.py --repo cli/cli --storage file   -o file.html
+    python3 scripts/benchmark.py --repo cli/cli --storage file -o file.html
+    python3 scripts/benchmark.py --repo cli/cli --compare-backends -o backends.html
 
 Only read-only commands are executed. ghx is always pointed at a throwaway
 cache directory so the user's real cache at ~/.cache/ghx is never touched.
@@ -139,8 +139,36 @@ class Config:
     warm_dir: Path
     cold_root: Path
     only: re.Pattern[str] | None
+    compare_backends: bool = False
 
-    def cache_dir_for(self, case: BenchCase, phase: str, run_index: int) -> Path:
+    @property
+    def a_label(self) -> str:
+        """Display label for the first series (the 'ghx' slot)."""
+        return "ghx (file backend)" if self.compare_backends else "ghx"
+
+    @property
+    def b_label(self) -> str:
+        """Display label for the second series (the 'gh' slot)."""
+        return "ghx (sqlite backend)" if self.compare_backends else "gh"
+
+    @property
+    def a_short(self) -> str:
+        return "file" if self.compare_backends else "ghx"
+
+    @property
+    def b_short(self) -> str:
+        return "sqlite" if self.compare_backends else "gh"
+
+    def cache_dir_for(
+        self, case: BenchCase, slot: str, phase: str, run_index: int
+    ) -> Path:
+        if self.compare_backends:
+            # The two slots are the file and SQLite backends; keep their caches
+            # separate so neither warms the other.
+            sub = "file" if slot == "ghx" else "sqlite"
+            if case.cache == "cold":
+                return self.cold_root / f"{case.key}-{sub}-{phase}-{run_index}"
+            return self.warm_dir / sub
         if case.cache == "cold":
             return self.cold_root / f"{case.key}-{phase}-{run_index}"
         return self.warm_dir
@@ -163,11 +191,26 @@ BASE_ENV = {
 
 
 def build_cmd(
-    case: BenchCase, tool: str, cfg: Config, phase: str, run_index: int
+    case: BenchCase, slot: str, cfg: Config, phase: str, run_index: int
 ) -> list[str]:
-    """Build the argv for one tool/case/scenario combination."""
-    if tool == "ghx":
-        cache_dir = cfg.cache_dir_for(case, phase, run_index)
+    """Build the argv for one series/case/scenario combination.
+
+    slot is "ghx" (first series) or "gh" (second series). In compare-backends
+    mode both slots are ghx, differing only in --storage.
+    """
+    if cfg.compare_backends:
+        backend = "file" if slot == "ghx" else "sqlite"
+        cache_dir = cfg.cache_dir_for(case, slot, phase, run_index)
+        return [
+            str(cfg.ghx_bin),
+            "--cache-dir",
+            str(cache_dir),
+            "--storage",
+            backend,
+            *case.ghx_args,
+        ]
+    if slot == "ghx":
+        cache_dir = cfg.cache_dir_for(case, slot, phase, run_index)
         return [
             str(cfg.ghx_bin),
             "--cache-dir",
@@ -184,8 +227,8 @@ def execute(
 ) -> Sample:
     """Run one command once and return a timed sample. Raises on failure."""
     cmd = build_cmd(case, tool, cfg, phase, run_index)
-    if case.cache == "cold" and tool == "ghx":
-        cache_dir = cfg.cache_dir_for(case, phase, run_index)
+    if case.cache == "cold" and (tool == "ghx" or cfg.compare_backends):
+        cache_dir = cfg.cache_dir_for(case, tool, phase, run_index)
         shutil.rmtree(cache_dir, ignore_errors=True)
         cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -435,32 +478,40 @@ def make_cases(
 
 
 def populate_warm_cache(cfg: Config) -> tuple[bool, str]:
-    """Fetch everything into the warm cache directory once."""
-    cmd = [
-        str(cfg.ghx_bin),
-        "--cache-dir",
-        str(cfg.warm_dir),
-        "--storage",
-        cfg.storage,
-        "cache",
-        "--repo",
-        cfg.repo,
-    ]
+    """Fetch everything into the warm cache directory once.
+
+    In compare-backends mode both backends are populated into separate
+    subdirectories so neither warms the other.
+    """
+    backends = ("file", "sqlite") if cfg.compare_backends else (cfg.storage,)
     env = {**os.environ, **BASE_ENV}
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            errors="replace",
-            timeout=cfg.cache_timeout,
-            env=env,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"timed out after {cfg.cache_timeout:.0f}s"
-    if proc.returncode != 0:
-        return False, (proc.stderr or proc.stdout or "").strip()[:300]
+    for backend in backends:
+        cache_dir = cfg.warm_dir / backend if cfg.compare_backends else cfg.warm_dir
+        cmd = [
+            str(cfg.ghx_bin),
+            "--cache-dir",
+            str(cache_dir),
+            "--storage",
+            backend,
+            "cache",
+            "--repo",
+            cfg.repo,
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=cfg.cache_timeout,
+                env=env,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"{backend}: timed out after {cfg.cache_timeout:.0f}s"
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip()[:300]
+            return False, f"{backend}: {detail}"
     return True, ""
 
 
@@ -898,6 +949,10 @@ def build_context(
                 "key": result.case.key,
                 "label": result.case.label,
                 "description": result.case.description,
+                "a_label": cfg.a_label,
+                "b_label": cfg.b_label,
+                "a_short": cfg.a_short,
+                "b_short": cfg.b_short,
                 "category": result.case.category,
                 "cache": result.case.cache,
                 "status": status,
@@ -968,6 +1023,11 @@ def build_context(
     return {
         "repo": cfg.repo,
         "storage": cfg.storage,
+        "compare": cfg.compare_backends,
+        "a_label": cfg.a_label,
+        "b_label": cfg.b_label,
+        "a_short": cfg.a_short,
+        "b_short": cfg.b_short,
         "runs": cfg.runs,
         "warmup": cfg.warmup,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC"),
@@ -984,6 +1044,8 @@ def build_context(
                     "label": c["label"],
                     "status": c["status"],
                     "ghx_storage_backend": cfg.storage,
+                    "a_label": cfg.a_label,
+                    "b_label": cfg.b_label,
                     "speedup_gh_over_ghx": round(c["speedup"], 4),
                     "ghx_median_seconds": round(c["ghx"]["median"], 6),
                     "gh_median_seconds": round(c["gh"]["median"], 6),
@@ -1001,9 +1063,9 @@ def render_case_card(case: dict) -> str:
     if case["status"] != "ok":
         error_bits = []
         if case["ghx_error"]:
-            error_bits.append(f"ghx: {esc(case['ghx_error'])}")
+            error_bits.append(f"{esc(case['a_short'])}: {esc(case['ghx_error'])}")
         if case["gh_error"]:
-            error_bits.append(f"gh: {esc(case['gh_error'])}")
+            error_bits.append(f"{esc(case['b_short'])}: {esc(case['gh_error'])}")
         reason = " &middot; ".join(error_bits) or "no successful runs"
         return f"""
         <div class="card fade">
@@ -1022,14 +1084,14 @@ def render_case_card(case: dict) -> str:
         <h3>{esc(case["label"])}</h3>
         <span class="badge-group">
           <span class="badge {case["parity_class"]}">{esc(case["parity_label"])}</span>
-          <span class="badge {badge_class}">ghx {esc(fmt_speedup(case["speedup"]))}</span>
+          <span class="badge {badge_class}">{esc(case["a_short"])} {esc(fmt_speedup(case["speedup"]))}</span>
         </span>
       </div>
       <div class="case-desc">{esc(case["description"])}</div>
       <div class="fairness {case["parity_class"]}">{esc(case["parity_note"])}</div>
       <div class="legend">
-        <span><i class="swatch ghx"></i>ghx median {esc(fmt_time(case["ghx"]["median"]))}</span>
-        <span><i class="swatch gh"></i>gh median {esc(fmt_time(case["gh"]["median"]))}</span>
+        <span><i class="swatch ghx"></i>{esc(case["a_label"])} median {esc(fmt_time(case["ghx"]["median"]))}</span>
+        <span><i class="swatch gh"></i>{esc(case["b_label"])} median {esc(fmt_time(case["gh"]["median"]))}</span>
       </div>
       <div class="charts-row">
         <div>{case["chart"]}</div>
@@ -1045,8 +1107,9 @@ def render_report(ctx: dict) -> str:
         word = "faster" if verdict["faster"] else "slower"
         headline = f"{verdict['pct']:.0f}%"
         caption = (
-            f"ghx is <strong>{word}</strong> than gh by this margin, weighted by the "
-            f"median runtime of each scenario (time-weighted speedup "
+            f"{esc(ctx['a_label'])} is <strong>{word}</strong> than "
+            f"{esc(ctx['b_label'])} by this margin, weighted by the median "
+            f"runtime of each scenario (time-weighted speedup "
             f"{verdict['weighted_speedup']:.2f}\u00d7)."
         )
         verdict_html = f"""
@@ -1059,8 +1122,8 @@ def render_report(ctx: dict) -> str:
             <div class="stat"><div class="k">Scenarios won</div><div class="v">{verdict["wins"]} / {verdict["scored"]}</div></div>
             <div class="stat"><div class="k">Mean speedup</div><div class="v">{verdict["mean_speedup"]:.2f}\u00d7</div></div>
             <div class="stat"><div class="k">Time-weighted speedup</div><div class="v">{verdict["weighted_speedup"]:.2f}\u00d7</div></div>
-            <div class="stat"><div class="k">ghx total (medians)</div><div class="v">{esc(fmt_time(verdict["total_ghx"]))}</div></div>
-            <div class="stat"><div class="k">gh total (medians)</div><div class="v">{esc(fmt_time(verdict["total_gh"]))}</div></div>
+            <div class="stat"><div class="k">{esc(ctx["a_label"])} total (medians)</div><div class="v">{esc(fmt_time(verdict["total_ghx"]))}</div></div>
+            <div class="stat"><div class="k">{esc(ctx["b_label"])} total (medians)</div><div class="v">{esc(fmt_time(verdict["total_gh"]))}</div></div>
             <div class="stat"><div class="k">{esc(verdict["gain_label"])}</div><div class="v">{esc(fmt_time(verdict["gain"]))}</div></div>
           </div>
         </div>"""
@@ -1104,22 +1167,68 @@ def render_report(ctx: dict) -> str:
         </tr>"""
             )
 
+    a_label = ctx["a_label"]
+    b_label = ctx["b_label"]
+    a_short = ctx["a_short"]
+    b_short = ctx["b_short"]
+
+    if ctx["compare"]:
+        backend_pill = '<span class="pill">comparing <strong>file vs sqlite</strong> backends</span>'
+        verdict_sub = (
+            f"Positive ratios mean {esc(a_label)} finished first. Time-weighted "
+            "figures are dominated by the scenarios that take the longest. Both "
+            "series run the same ghx command, so every scenario compares equal work."
+        )
+        speedup_sub = (
+            "Ratios come from median runtimes on a log scale. Green bars sit right of "
+            f"parity ({esc(a_short)} faster); red bars sit left of it ({esc(b_short)} faster)."
+        )
+        methodology = """        <li>Both series run the same ghx command; the only difference is the cache backend (<code>--storage file</code> vs <code>--storage sqlite</code>).</li>
+        <li>Workloads are equal in every scenario, so ratios are like-for-like: a bar right of parity means the file backend was faster, left means SQLite was faster.</li>
+        <li>ghx runs against a throwaway <code>--cache-dir</code>; the real <code>~/.cache/ghx</code> is never modified. The two backends use separate cache directories.</li>
+        <li>Warm scenarios use a cache populated once per backend with <code>ghx cache</code> before timing starts.</li>
+        <li>Cold scenarios start each run from an empty cache directory, so both backends fetch from the API.</li>
+        <li>Forced-refresh scenarios pass <code>--refresh</code> so both backends hit the API.</li>
+        <li>Runs are interleaved (file first on even iterations, sqlite first on odd) to reduce drift bias.</li>
+        <li>Warmup runs are discarded. Medians are reported because API latency is noisy and skewed.</li>
+        <li>SQLite's advantage grows with the number of cached items; on very small repositories the file backend can win because there is little to index.</li>"""
+    else:
+        backend_pill = f'<span class="pill">ghx backend <strong>{esc(ctx["storage"])}</strong></span>'
+        verdict_sub = (
+            "Positive ratios mean ghx finished first. Time-weighted figures are "
+            "dominated by the scenarios that take the longest. Not every scenario "
+            "compares equal work: each card states how the two workloads differ."
+        )
+        speedup_sub = (
+            "Ratios come from median runtimes on a log scale. Green bars sit right of "
+            "parity (ghx faster); red bars sit left of it (ghx slower)."
+        )
+        methodology = """        <li>ghx runs against a throwaway <code>--cache-dir</code>; the real <code>~/.cache/ghx</code> is never modified.</li>
+        <li>Warm scenarios use a cache populated once with <code>ghx cache</code> before timing starts.</li>
+        <li>Cold scenarios start each run from an empty cache directory, so ghx must fetch from the API like gh.</li>
+        <li>Forced-refresh scenarios pass <code>--refresh</code> so both tools hit the API and only per-tool overhead differs.</li>
+        <li>Runs are interleaved (ghx first on even iterations, gh first on odd) to reduce network drift bias.</li>
+        <li>Warmup runs are discarded. Medians are reported because API latency is noisy and skewed.</li>
+        <li>Output formats differ between the tools, so only runtime and success are compared, not byte-identical output.</li>
+        <li>Every scenario carries a fairness badge. "Different work" means ghx serves from a local cache while gh calls the API. "ghx does more" means ghx builds a full local cache while gh fetches a single page. "ghx does less" means both call the API but ghx requests fewer fields or skips data gh fetches.</li>
+        <li>In the forced-refresh view scenarios ghx does less work: gh issues a second query for project items and requests a richer field set (reactions, sub-issues, blocking relations, status-check rollup), none of which ghx fetches. Those timings show the cost of that extra work, not a like-for-like win.</li>"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ghx vs gh benchmark</title>
+<title>{esc(a_label)} vs {esc(b_label)} benchmark</title>
 <style>{CSS}</style>
 </head>
 <body>
 <div class="wrap">
   <header class="hero fade">
-    <h1>ghx vs gh \u2014 benchmark report</h1>
+    <h1>{esc(a_label)} vs {esc(b_label)} \u2014 benchmark report</h1>
     <p>Wall-clock comparison of equivalent read commands across warm-cache, cold-cache and forced-refresh scenarios.</p>
     <div class="hero-meta">
       <span class="pill">repository <strong>{esc(ctx["repo"])}</strong></span>
-      <span class="pill">ghx backend <strong>{esc(ctx["storage"])}</strong></span>
+      {backend_pill}
       <span class="pill">{ctx["runs"]} runs + {ctx["warmup"]} warmup</span>
       <span class="pill">generated {esc(ctx["generated_at"])}</span>
     </div>
@@ -1129,13 +1238,13 @@ def render_report(ctx: dict) -> str:
 
   <section class="section">
     <h2>Verdict</h2>
-    <div class="sub">Positive ratios mean ghx finished first. Time-weighted figures are dominated by the scenarios that take the longest. Not every scenario compares equal work: each card states how the two workloads differ.</div>
+    <div class="sub">{verdict_sub}</div>
     <div class="verdict">{verdict_html}</div>
   </section>
 
   <section class="section">
     <h2>Speedup by scenario</h2>
-    <div class="sub">Ratios come from median runtimes on a log scale. Green bars sit right of parity (ghx faster); red bars sit left of it (ghx slower).</div>
+    <div class="sub">{speedup_sub}</div>
     <div class="card fade">{ctx["speedup_chart"] or '<div class="note">No successful scenarios to chart.</div>'}</div>
     {'<div class="note" style="margin-top:12px;">' + esc(ctx["chart_caveat"]) + "</div>" if ctx["chart_caveat"] else ""}
   </section>
@@ -1156,12 +1265,12 @@ def render_report(ctx: dict) -> str:
             <th data-sort="text">Scenario</th>
             <th data-sort="text">Cache</th>
             <th data-sort="text">Work</th>
-            <th class="num" data-sort="num">ghx median</th>
-            <th class="num" data-sort="num">gh median</th>
+            <th class="num" data-sort="num">{esc(a_label)} median</th>
+            <th class="num" data-sort="num">{esc(b_label)} median</th>
             <th class="num" data-sort="num">Speedup</th>
-            <th class="num" data-sort="num">ghx\u2212gh</th>
-            <th class="num" data-sort="num">ghx stdev</th>
-            <th class="num" data-sort="num">gh stdev</th>
+            <th class="num" data-sort="num">{esc(a_short)}\u2212{esc(b_short)}</th>
+            <th class="num" data-sort="num">{esc(a_label)} stdev</th>
+            <th class="num" data-sort="num">{esc(b_label)} stdev</th>
           </tr>
         </thead>
         <tbody>{"".join(table_rows)}</tbody>
@@ -1179,15 +1288,7 @@ def render_report(ctx: dict) -> str:
     <h2>Methodology</h2>
     <div class="card fade">
       <ul style="margin: 0; padding-left: 18px; font-size: 0.88rem;">
-        <li>ghx runs against a throwaway <code>--cache-dir</code>; the real <code>~/.cache/ghx</code> is never modified.</li>
-        <li>Warm scenarios use a cache populated once with <code>ghx cache</code> before timing starts.</li>
-        <li>Cold scenarios start each run from an empty cache directory, so ghx must fetch from the API like gh.</li>
-        <li>Forced-refresh scenarios pass <code>--refresh</code> so both tools hit the API and only per-tool overhead differs.</li>
-        <li>Runs are interleaved (ghx first on even iterations, gh first on odd) to reduce network drift bias.</li>
-        <li>Warmup runs are discarded. Medians are reported because API latency is noisy and skewed.</li>
-        <li>Output formats differ between the tools, so only runtime and success are compared, not byte-identical output.</li>
-        <li>Every scenario carries a fairness badge. "Different work" means ghx serves from a local cache while gh calls the API. "ghx does more" means ghx builds a full local cache while gh fetches a single page. "ghx does less" means both call the API but ghx requests fewer fields or skips data gh fetches.</li>
-        <li>In the forced-refresh view scenarios ghx does less work: gh issues a second query for project items and requests a richer field set (reactions, sub-issues, blocking relations, status-check rollup), none of which ghx fetches. Those timings show the cost of that extra work, not a like-for-like win.</li>
+{methodology}
       </ul>
       <details>
         <summary>Raw results (JSON)</summary>
@@ -1230,6 +1331,7 @@ def tool_version(binary: Path, args: list[str]) -> str:
 def collect_env(cfg: Config) -> dict[str, str]:
     return {
         "Repository": cfg.repo,
+        "Comparison": "ghx file vs ghx sqlite" if cfg.compare_backends else "ghx vs gh",
         "ghx": tool_version(cfg.ghx_bin, ["--version"]),
         "gh": tool_version(cfg.gh_bin, ["--version"]),
         "ghx storage backend": cfg.storage,
@@ -1336,24 +1438,30 @@ def pick_numbers(
 
 def print_summary(ctx: dict, output: Path) -> None:
     print()
-    print(f"ghx backend: {ctx['storage']}")
-    print(f"{'scenario':<42} {'ghx median':>12} {'gh median':>12} {'speedup':>16}")
-    print("-" * 86)
+    if ctx["compare"]:
+        print("comparing: ghx file backend vs ghx sqlite backend")
+    else:
+        print(f"ghx backend: {ctx['storage']}")
+    print(
+        f"{'scenario':<42} {ctx['a_short'] + ' median':>14} "
+        f"{ctx['b_short'] + ' median':>14} {'speedup':>16}"
+    )
+    print("-" * 90)
     for case in ctx["cases"]:
         if case["status"] != "ok":
-            print(f"{case['label']:<42} {'skipped':>12}")
+            print(f"{case['label']:<42} {'skipped':>14}")
             continue
         print(
-            f"{case['label']:<42} {fmt_time(case['ghx']['median']):>12} "
-            f"{fmt_time(case['gh']['median']):>12} {fmt_speedup(case['speedup']):>16}"
+            f"{case['label']:<42} {fmt_time(case['ghx']['median']):>14} "
+            f"{fmt_time(case['gh']['median']):>14} {fmt_speedup(case['speedup']):>16}"
         )
     verdict = ctx["verdict"]
     print()
     if verdict.get("available"):
         word = "faster" if verdict["faster"] else "slower"
         print(
-            f"Overall: ghx is {verdict['pct']:.0f}% {word} "
-            f"(time-weighted {verdict['weighted_speedup']:.2f}x, "
+            f"Overall: {ctx['a_label']} is {verdict['pct']:.0f}% {word} than "
+            f"{ctx['b_label']} (time-weighted {verdict['weighted_speedup']:.2f}x, "
             f"{verdict['wins']}/{verdict['scored']} scenarios won)."
         )
     else:
@@ -1483,6 +1591,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="ghx cache backend to benchmark (passed to ghx as --storage)",
     )
     parser.add_argument(
+        "--compare-backends",
+        action="store_true",
+        help="Compare the ghx file and SQLite backends against each other "
+        "(ignores --storage) instead of comparing ghx against gh",
+    )
+    parser.add_argument(
         "--build",
         action="store_true",
         help="Build ghx from this repository before running",
@@ -1594,6 +1708,7 @@ def main(argv: list[str] | None = None) -> int:
         warm_dir=work_dir / "warm",
         cold_root=work_dir / "cold",
         only=re.compile(args.only) if args.only else None,
+        compare_backends=args.compare_backends,
     )
     cfg.warm_dir.mkdir(parents=True, exist_ok=True)
     cfg.cold_root.mkdir(parents=True, exist_ok=True)
@@ -1601,9 +1716,12 @@ def main(argv: list[str] | None = None) -> int:
     env = collect_env(cfg)
     print(f"Repository: {repo}")
     print(f"ghx:        {env['ghx']} ({ghx_bin})")
-    print(f"ghx backend: {args.storage}")
-    print(f"gh:         {env['gh']} ({gh_bin})")
-    print(f"Runs:       {args.runs} timed + {args.warmup} warmup per tool per scenario")
+    if args.compare_backends:
+        print("comparing:  ghx file backend vs ghx sqlite backend")
+    else:
+        print(f"ghx backend: {args.storage}")
+        print(f"gh:         {env['gh']} ({gh_bin})")
+    print(f"Runs:       {args.runs} timed + {args.warmup} warmup per series per scenario")
 
     issue_number, pr_number = pick_numbers(gh_bin, repo, args.timeout)
     if issue_number is None:
@@ -1618,13 +1736,21 @@ def main(argv: list[str] | None = None) -> int:
         cases = [c for c in cases if c.cache != "refresh"]
     if cfg.only:
         cases = [c for c in cases if cfg.only.search(c.label)]
+    if args.compare_backends:
+        # Both series run the same ghx command; only the storage backend differs.
+        for c in cases:
+            c.parity = "equal"
+            c.parity_note = (
+                "Both series run the same ghx command; the only difference is the "
+                "storage backend, so the workloads are equal."
+            )
 
     if args.dry_run:
         print("\nPlanned scenarios:")
         for case in cases:
             print(f"\n  {case.label}  [{case.cache}]")
-            print(f"    ghx: {' '.join(build_cmd(case, 'ghx', cfg, 'timed', 0))}")
-            print(f"    gh:  {' '.join(build_cmd(case, 'gh', cfg, 'timed', 0))}")
+            print(f"    {cfg.a_label}: {' '.join(build_cmd(case, 'ghx', cfg, 'timed', 0))}")
+            print(f"    {cfg.b_label}: {' '.join(build_cmd(case, 'gh', cfg, 'timed', 0))}")
         shutil.rmtree(work_dir, ignore_errors=True)
         return 0
 
@@ -1668,7 +1794,7 @@ def main(argv: list[str] | None = None) -> int:
             gh_med = summarize(result.gh.durations)["median"]
             ratio = gh_med / ghx_med if ghx_med > 0 else 0.0
             print(
-                f"ghx {fmt_time(ghx_med)} vs gh {fmt_time(gh_med)} ({fmt_speedup(ratio)})"
+                f"{cfg.a_short} {fmt_time(ghx_med)} vs {cfg.b_short} {fmt_time(gh_med)} ({fmt_speedup(ratio)})"
             )
         else:
             detail = result.ghx.error or result.gh.error or "incomplete"
