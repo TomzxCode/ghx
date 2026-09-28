@@ -2,7 +2,7 @@
 
 A GitHub CLI that calls the GitHub GraphQL API to retrieve issues, pull requests, and comments, caching all results to disk to minimise API calls.
 
-Cache lives at `~/.cache/ghx/cache/<host>/<owner>/<repo>`.
+Cache lives at `~/.cache/ghx/cache/` (a single indexed `cache.db` by default; the file backend stores per-repository JSON under `<host>/<owner>/<repo>/`).
 
 ## Quick start
 

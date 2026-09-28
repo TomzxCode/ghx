@@ -1,8 +1,16 @@
 # Cache
 
-ghx caches GitHub data as individual JSON files on your local disk. After an initial fetch, subsequent commands serve results from cache without hitting the API.
+ghx caches GitHub data locally (by default in a single SQLite database) and serves results from cache without hitting the API after an initial fetch.
 
 ## Cache location
+
+The default SQLite backend stores everything in one database:
+
+```
+~/.cache/ghx/cache/cache.db
+```
+
+The legacy file backend stores one JSON file per item:
 
 ```
 ~/.cache/ghx/cache/<host>/<owner>/<repo>/
@@ -118,7 +126,7 @@ Cache updated. Valid for 60 minute(s).
 
 ## How freshness works
 
-The `.cache_info.json` file tracks when the cache was last written and the configured duration:
+The cache metadata (the `.cache_info.json` file for the file backend, the `cache_meta` table for SQLite) tracks when the cache was last written and the configured duration. The file-backend form:
 
 ```json
 {
@@ -129,19 +137,19 @@ The `.cache_info.json` file tracks when the cache was last written and the confi
 
 A cache is considered **fresh** when `time.Since(cachedAt) < duration × 1 minute`.
 
-When the cache is fresh, `list` and `view` commands serve entirely from disk with no API calls. When stale, they fall back to the GitHub API.
+When the cache is fresh, `list` and `view` commands serve entirely from the cache with no API calls. When stale, they fall back to the GitHub API.
 
 ## Cache behavior per command
 
 | Command | Behavior |
 |---|---|
 | `cache` | Fetches all issues and PRs (all states, with comments). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
-| `issue list` / `pr list` | Reads cached files and filters in memory when cache is fresh. Falls back to the GitHub API when stale. Does not write to cache. |
-| `issue view` / `pr view` | Serves the individual cached file if the full cache is fresh, or if the file is less than 60 minutes old. Otherwise fetches from the API and saves to cache. `--refresh` bypasses all checks. |
+| `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale. Does not write to cache. |
+| `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written less than 60 minutes ago. Otherwise fetches from the API and saves to cache. `--refresh` bypasses all checks. |
 
 ## Notes
 
-- Transient failures (rate limits and GitHub 5xx errors such as an HTML 502 from a proxy) are retried automatically with exponential backoff. Each fetched page is already on disk, so if a run still fails, re-running resumes from the last page written.
-- Cache files are never automatically cleaned up. Delete directories under `~/.cache/ghx/cache/` to free space.
+- Transient failures (rate limits and GitHub 5xx errors such as an HTML 502 from a proxy) are retried automatically with exponential backoff. Each fetched page is already persisted, so if a run still fails, re-running resumes from the last page written.
+- Cache data is never automatically cleaned up. Delete `~/.cache/ghx/cache/cache.db` (SQLite) or the per-repository directories under `~/.cache/ghx/cache/` (file) to free space.
 - The `--mention` and `--app` filters cannot be evaluated from cached data and are silently skipped when serving from cache.
 - Bulk cache operations fetch up to 100 comments per item.

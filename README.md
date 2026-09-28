@@ -2,7 +2,7 @@
 
 An extended GitHub CLI. It caches issues, pull requests, and comments to disk to minimise API calls, and provides PR/issue comment operations beyond the standard `gh` CLI: inline review comments, line-range comments, thread replies, pending reviews, and local comment stashes.
 
-Issue/PR cache lives at `~/.cache/ghx/cache/<host>/<owner>/<repo>`. Review-comment stashes live at `~/.cache/ghx/stash/<owner>/<repo>/<pr>`.
+Issue/PR cache lives at `~/.cache/ghx/cache/` (a single `cache.db` by default, or per-repository JSON with `--storage file`). Review-comment stashes live at `~/.cache/ghx/stash/<owner>/<repo>/<pr>`.
 
 ## Installation
 
@@ -327,9 +327,9 @@ a speedup is not read as a like-for-like win.
 
 | Command | Cache behaviour |
 |---|---|
-| `cache` | Fetches everything (all states, with comments) and writes one JSON file per issue/PR. Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
-| `issue list` / `pr list` | Reads all cached files and filters in-memory when cache is fresh; falls back to the GitHub API with server-side filters otherwise. |
-| `issue view` / `pr view` | Serves from the individual cached file when it is less than 60 minutes old; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
+| `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
+| `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. |
+| `issue view` / `pr view` | Serves the individual cached item when it is less than 60 minutes old, or the full cache is fresh; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
 
 ## Flag reference
 
