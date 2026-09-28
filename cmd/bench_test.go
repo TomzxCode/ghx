@@ -17,11 +17,11 @@ func benchFixture(b *testing.B, n int) cache.Store {
 	store := cache.NewStoreWithPath(b.TempDir())
 	for i := 1; i <= n; i++ {
 		issue := &github.Issue{
-			Number:  i,
-			Title:   fmt.Sprintf("issue %d: something about the widget", i),
-			State:   map[bool]string{true: "OPEN", false: "CLOSED"}[i%2 == 0],
-			Author:  github.Actor{Login: fmt.Sprintf("user%d", i%10)},
-			Labels:  []github.Label{{Name: "bug"}, {Name: fmt.Sprintf("area-%d", i%5)}},
+			Number:    i,
+			Title:     fmt.Sprintf("issue %d: something about the widget", i),
+			State:     map[bool]string{true: "OPEN", false: "CLOSED"}[i%2 == 0],
+			Author:    github.Actor{Login: fmt.Sprintf("user%d", i%10)},
+			Labels:    []github.Label{{Name: "bug"}, {Name: fmt.Sprintf("area-%d", i%5)}},
 			Body:      "body text for the issue, long enough to be realistic",
 			UpdatedAt: time.Now(),
 		}

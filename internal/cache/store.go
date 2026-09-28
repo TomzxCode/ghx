@@ -47,6 +47,7 @@ type Store interface {
 	IsCacheFresh(host, owner, repo string) (bool, error)
 	IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	ListCachedRepos() ([]CachedRepo, error)
+	Close() error
 }
 
 // DefaultDir returns the default cache directory (~/.cache/ghx/cache).

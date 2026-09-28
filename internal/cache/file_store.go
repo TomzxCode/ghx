@@ -272,6 +272,9 @@ func (s *fileStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, nil
 }
 
+// Close is a no-op for the file backend.
+func (s *fileStore) Close() error { return nil }
+
 // atomicWrite writes data to path via a temp file in the same directory followed
 // by a rename, so an interrupted write cannot leave a truncated cache metadata
 // file. Resume cursors are persisted frequently during a fetch, so atomicity
