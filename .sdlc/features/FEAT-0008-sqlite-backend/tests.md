@@ -29,7 +29,7 @@ Unit tests live in `internal/cache/`; the end-to-end path was verified manually 
 | FR-01 | SQLite backend persists issues/PRs | `sqlite_store.go`; `TestSQLiteRoundTripMatchesFile`, `TestSQLitePersistsAcrossReopen` |
 | FR-02 | Schema covers all file-backend fields | `schema.sql`; `TestSQLiteRoundTripMatchesFile` (comments, labels, assignees, milestone, nullable timestamps, review decision) |
 | FR-03 | Indexed SQL reads, not full scans | `sqliteStore.QueryIssues`/`QueryPRs`; `TestSQLiteQueryUsesIndex` (EXPLAIN QUERY PLAN), `TestQueryEquivalence` |
-| FR-04 | Selectable backend, file remains available | `cmd/root.go` `newStore`; `--storage`/`GHX_STORAGE`; e2e smoke |
+| FR-04 | Selectable backend, SQLite default, file available | `cmd/root.go` `newStore`; `--storage`/`GHX_STORAGE`; `cmd/storage_test.go` (default=sqlite, file selectable); e2e smoke |
 | FR-05 | Migration path, lossless | `migrate.go`, `cache migrate`; `TestMigrateLossless`, `TestMigrateIdempotent` |
 | FR-06 | Search titles/bodies | `filter.go` search; `TestFilterIssues_Search`, `TestFilterPRs_Search`, `TestQueryEquivalence` |
 | FR-07 | Backend type/path surfaced | `runCache` prints backend+path when sqlite; `cache migrate` prints destination; `Kind`/`Location` |

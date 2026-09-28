@@ -66,15 +66,14 @@ List and view commands serve from the cache when it is fresh, and fall back to t
 
 #### Storage backends
 
-The cache defaults to the file backend (one JSON file per issue/PR). An opt-in SQLite backend stores everything in a single indexed `cache.db`, which is several times faster for listing, filtering, and searching on large repositories:
+By default the cache uses an indexed SQLite database (`cache.db`), which is several times faster than the legacy file backend for listing, filtering, and searching on large repositories. The file backend (one JSON file per issue/PR) is still available:
 
 ```bash
-ghx --storage sqlite cache --repo cli/cli      # or set GHX_STORAGE=sqlite
-ghx --storage sqlite issue list --state all
-ghx cache migrate                              # copy an existing file cache into SQLite
+ghx --storage file cache --repo cli/cli   # or set GHX_STORAGE=file
+ghx cache migrate                         # copy an existing file cache into SQLite
 ```
 
-`cache migrate` is non-destructive (the file cache is kept) and idempotent. See the [cache guide](docs/user-guide/cache.md) for details.
+An existing file-based cache is not read by the default backend until it is migrated. `cache migrate` is non-destructive (the file cache is kept) and idempotent. See the [cache guide](docs/user-guide/cache.md) for details.
 
 ### Issues
 

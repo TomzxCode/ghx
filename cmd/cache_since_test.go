@@ -97,14 +97,19 @@ func TestParseSinceDate_TrimsWhitespace(t *testing.T) {
 func setCacheTestEnv(t *testing.T, apiURL, dir string) {
 	t.Helper()
 	oldRepo, oldAPI, oldDir := repoFlag, apiURLFlag, cacheDir
+	oldStorage := storageFlag
 	oldDur, oldForce, oldSince, oldType, oldRetries := cacheDuration, cacheForce, cacheSince, cacheType, cacheRetries
 	t.Cleanup(func() {
 		repoFlag, apiURLFlag, cacheDir = oldRepo, oldAPI, oldDir
+		storageFlag = oldStorage
 		cacheDuration, cacheForce, cacheSince, cacheType, cacheRetries = oldDur, oldForce, oldSince, oldType, oldRetries
 	})
 	repoFlag = "acme/myproject"
 	apiURLFlag = apiURL
 	cacheDir = dir
+	// These tests inspect the cache through a file store, so pin the file
+	// backend regardless of the (SQLite) default.
+	storageFlag = "file"
 	cacheDuration = 60
 	cacheForce = false
 	cacheSince = ""

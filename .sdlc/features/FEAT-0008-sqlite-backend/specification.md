@@ -20,13 +20,13 @@ cmd/* ──newStore()──► cache.Store (interface)
                         └── sqliteStore (new, modernc.org/sqlite)
                               │
                               ▼
-                        <repo>/cache.db  (per-repo single file)
+                        <cache-dir>/cache.db  (single file, rows keyed by host/owner/repo)
 
 cache migrate ── fileStore.ListCachedRepos/LoadAll* ──► sqliteStore (transactional)
 ```
 
 - A new `cache.Store` interface is extracted from the current concrete struct's method set; `fileStore` is the renamed existing implementation, `sqliteStore` is the new implementation.
-- `newStore()` (cmd/root.go) selects the implementation from `--storage`/`GHX_STORAGE` (default `file`) and still honors `--cache-dir`.
+- `newStore()` (cmd/root.go) selects the implementation from `--storage`/`GHX_STORAGE` (default `sqlite`) and still honors `--cache-dir`.
 - The fetch driver (`cmd/cache.go`) is unchanged: it calls the same `Save*`/`SaveCacheInfoFull` methods through the interface.
 - List commands call new `QueryIssues`/`QueryPRs` methods; `fileStore` implements them as `LoadAll*` + the existing `filterIssues`/`filterPRs`, `sqliteStore` translates them to indexed SQL.
 
@@ -160,10 +160,10 @@ Predicate semantics mirror `filterIssues`/`filterPRs` exactly (case-insensitive 
 
 | Source | Key | Values | Default |
 |---|---|---|---|
-| Flag | `--storage` | `file`, `sqlite` | `file` |
-| Env | `GHX_STORAGE` | `file`, `sqlite` | `file` |
+| Flag | `--storage` | `file`, `sqlite` | `sqlite` |
+| Env | `GHX_STORAGE` | `file`, `sqlite` | `sqlite` |
 
-Flag overrides env; env overrides default. DB location: `--cache-dir`/default root + `<host>/<owner>/<repo>/cache.db` (per-repo).
+Flag overrides env; env overrides default. DB location: a single `<cache-dir>/cache.db`, with rows keyed by `(host, owner, repo)`.
 
 ### New CLI command
 
@@ -222,10 +222,10 @@ cache migrate --repo owner/repo
 | Nested fields | JSON columns | Lossless round-trip of `github` types (NFR-03) without a large normalized schema; filter columns kept scalar and indexed for FR-03 |
 | Filter strategy | Predicate query methods now (`QueryIssues`/`QueryPRs`) | Satisfies FR-03 strictly; file backend reuses `filterIssues` so semantics stay canonical |
 | Search (FR-06) | `LIKE` on title/body for v1; FTS5 reserved as a future additive `user_version` bump | Keeps the initial schema simple; FTS5 deferred until search volume justifies it (open question) |
-| DB layout | Per-repo `<host>/<owner>/<repo>/cache.db` | Matches existing per-repo cache layout; isolates repos; easy per-repo deletion; no cross-repo contention |
+| DB layout | Single `<cache-dir>/cache.db`, rows keyed by `(host, owner, repo)` | Simpler than per-repo files; `ListCachedRepos` and migration are trivial; isolation is per-key, not per-file |
 | Concurrency | WAL mode + transactional writes | Readers do not block the writer; interrupted writes/migrations roll back (NFR-02) |
 | Schema evolution | `PRAGMA user_version` + embedded `schema.sql` | Lightweight; additive migrations advance the version without a migration framework |
-| Default backend | `file` (opt-in SQLite) | Preserves current behavior on upgrade; default-on is a separate decision (open question) |
+| Default backend | `sqlite` | Per maintainer decision: faster by default; the file backend remains selectable via `--storage file` |
 | Result-set equivalence | `filterIssues`/`filterPRs` kept as test oracle | Guarantees SQLite query results match the in-memory filter (FR-06, NFR-03) |
 
 ## Risks and Unknowns
@@ -233,12 +233,12 @@ cache migrate --repo owner/repo
 1. Binary-size increase from `modernc.org/sqlite` is unmeasured; must be accepted before release (feasibility condition).
 2. `LIKE`-based search performance on large bodies may be insufficient, requiring FTS5 sooner than expected.
 3. Label/milestone filtering correctness is the highest-risk predicate; the design mitigates it by reusing the canonical Go predicate helpers on the SQL candidate set and asserting equality against `filterIssues`/`filterPRs` in tests.
-4. Concurrent processes writing the same per-repo DB rely on SQLite file locking; acceptable for a single-user CLI but untested under parallel agent loads.
+4. Concurrent processes writing the same database rely on SQLite file locking; acceptable for a single-user CLI but untested under parallel agent loads.
 
 ## Out of Scope
 
 - Changing the in-memory `github.Issue`/`github.PullRequest` types.
-- Deprecating or removing the file-based backend (file backend remains the default).
+- Deprecating or removing the file-based backend (SQLite is the default; the file backend remains selectable).
 - Full-text search via FTS5 in v1 (reserved as a future additive change).
 - Automatic dual-write keeping both backends in sync (backend is a per-invocation choice).
 - Multi-process locking guarantees beyond SQLite defaults.

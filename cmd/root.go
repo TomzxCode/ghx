@@ -43,7 +43,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "", "Repository in [HOST/]OWNER/REPO format")
 	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL (for testing)")
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path")
-	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: file or sqlite (default file; env GHX_STORAGE)")
+	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
 
 	rootCmd.AddCommand(issueCmd)
 	rootCmd.AddCommand(prCmd)
@@ -80,7 +80,7 @@ func newClient(host string) (*github.Client, error) {
 }
 
 // newStore creates a cache store. The backend is selected from --storage or the
-// GHX_STORAGE environment variable (default: file). --cache-dir overrides the
+// GHX_STORAGE environment variable (default: sqlite). --cache-dir overrides the
 // cache root for both backends.
 func newStore() (cache.Store, error) {
 	backend := strings.ToLower(storageFlag)
@@ -88,18 +88,18 @@ func newStore() (cache.Store, error) {
 		backend = strings.ToLower(os.Getenv("GHX_STORAGE"))
 	}
 	switch backend {
-	case "", "file":
+	case "file":
 		if cacheDir != "" {
 			return cache.NewStoreWithPath(cacheDir), nil
 		}
 		return cache.NewStore(), nil
-	case "sqlite":
+	case "", "sqlite":
 		base := cacheDir
 		if base == "" {
 			base = cache.DefaultDir()
 		}
 		return cache.NewSQLiteStore(base)
 	default:
-		return nil, fmt.Errorf("invalid --storage %q: use file or sqlite", backend)
+		return nil, fmt.Errorf("invalid --storage %q: use sqlite or file", backend)
 	}
 }

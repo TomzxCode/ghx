@@ -65,7 +65,7 @@ This plan implements the approved specification and satisfies the two feasibilit
 **Depends on:** Phase 3
 
 **Deliverables:**
-- [ ] `--storage` flag and `GHX_STORAGE` env in `cmd/root.go`; `newStore()` selects backend (default `file`)
+- [ ] `--storage` flag and `GHX_STORAGE` env in `cmd/root.go`; `newStore()` selects backend (default `sqlite`)
 - [ ] `cache migrate` command: transactional, `INSERT OR REPLACE`, idempotent, copies `CacheInfo` to `cache_meta` (FR-05, NFR-02)
 - [ ] Backend type and DB path surfaced in cache info/status output (FR-07)
 - [ ] Migration tests: lossless round-trip, idempotent re-run, interrupted-migration leaves valid DB

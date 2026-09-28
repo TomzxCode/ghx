@@ -25,39 +25,32 @@ ghx --cache-dir /tmp/gh-cache cache --repo cli/cli
 
 ## Storage backends
 
-ghx supports two cache backends:
+ghx defaults to an indexed SQLite database and also supports the legacy file backend:
 
 | Backend | Layout | Select |
 |---|---|---|
-| `file` (default) | One JSON file per issue/PR under `<cache-dir>/<host>/<owner>/<repo>/` | `--storage file` or `GHX_STORAGE=file` |
-| `sqlite` | A single SQLite database at `<cache-dir>/cache.db` with indexed lookups | `--storage sqlite` or `GHX_STORAGE=sqlite` |
+| `sqlite` (default) | A single SQLite database at `<cache-dir>/cache.db` with indexed lookups | `--storage sqlite` or `GHX_STORAGE=sqlite` |
+| `file` | One JSON file per issue/PR under `<cache-dir>/<host>/<owner>/<repo>/` | `--storage file` or `GHX_STORAGE=file` |
 
-The file backend remains the default; SQLite is opt-in. Select it per invocation with `--storage`, or set `GHX_STORAGE` in your environment:
+Select the file backend per invocation with `--storage`, or set `GHX_STORAGE` in your environment:
 
 ```bash
-ghx --storage sqlite cache --repo cli/cli
-ghx --storage sqlite issue list --repo cli/cli --state all
-GHX_STORAGE=sqlite ghx pr list --repo cli/cli
+ghx --storage file issue list --repo cli/cli --state all
+GHX_STORAGE=file ghx pr list --repo cli/cli
 ```
 
 `--storage` takes precedence over `GHX_STORAGE`. Both backends are keyed by the same repository coordinates, so commands and filters behave identically; only the on-disk representation and query performance differ. On large repositories (hundreds to thousands of cached items), listing, filtering, and searching against SQLite is several times faster because it avoids reading and parsing every item file.
 
 ### Migrate an existing file cache to SQLite
 
-`cache migrate` copies cached repositories from the file cache into the SQLite database. The file cache is left in place (the migration is non-destructive), and re-running it is safe (idempotent):
+The default SQLite backend does not read the file cache. If you have an existing file cache, import it once:
 
 ```bash
 ghx cache migrate                 # migrate every cached repository
 ghx cache migrate --repo cli/cli  # migrate a single repository
 ```
 
-After migrating, select the SQLite backend for subsequent commands:
-
-```bash
-ghx --storage sqlite issue list --repo cli/cli
-```
-
-To revert, omit `--storage` (or pass `--storage file`); the original file cache is untouched.
+The file cache is left in place (the migration is non-destructive), and re-running it is safe (idempotent). To keep using the file cache without migrating, pass `--storage file`.
 
 ## Populate the cache
 

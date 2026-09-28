@@ -13,7 +13,7 @@ title: "Open questions"
 
 ## From requirements
 
-1. Should SQLite become the default backend on fresh installs, or require explicit opt-in for the first release?
+1. Resolved: SQLite is the default backend (maintainer decision); the file backend remains selectable via `--storage file`.
 2. Should the file-based and SQLite backends be kept in sync (dual-write), or is the backend a one-time choice per repository?
 3. Is full-text search (FTS5) desired over plain LIKE, given the added schema complexity?
 4. Where does the database file live relative to the existing per-repo cache directory, and is one DB per repo or one global DB preferred?

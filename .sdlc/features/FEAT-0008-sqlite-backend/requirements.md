@@ -28,7 +28,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-01 | Must | The system shall provide a SQLite storage backend that persists cached issues and pull requests |
 | FR-02 | Must | The SQLite schema shall cover every field persisted by the file-based backend (issue/PR metadata, body, labels, assignees, milestone, comments, review decision, and all timestamp fields) |
 | FR-03 | Must | The system shall serve list, filter, and search operations from indexed SQL queries rather than reading and parsing every item file |
-| FR-04 | Must | The storage backend shall be selectable via configuration so users can opt in to SQLite while the file-based backend remains available |
+| FR-04 | Must | The system shall default to the SQLite storage backend, with the file-based backend selectable as an alternative |
 | FR-05 | Must | The system shall provide a migration path from an existing file-based cache to SQLite, either as a one-shot import or lazy migration, with no field loss |
 | FR-06 | Should | The SQLite backend shall support searching across issue/PR titles and bodies via SQL (LIKE or full-text) |
 | FR-07 | Should | The system shall report storage backend type and database location to the user (e.g. via the existing cache info / status output) |
@@ -60,7 +60,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-01: A SQLite backend writes and reads back a cached issue and PR round-trip-correctly
 - [ ] FR-02 (fields): Migrating a file cache and reading back yields identical `github.Issue`/`github.PullRequest` values for all fields, including comments, labels, assignees, milestone, and nullable timestamps (`closedAt`, `mergedAt`)
 - [ ] FR-03 (indexed queries): `issue list` / `pr list` filtered by state, author, assignee, and label compile to indexed SQL queries (verified by query plan or behavior at scale), not a full table scan followed by in-memory filtering
-- [ ] FR-04 (selectable): With SQLite selected, data is read from and written to the database; with the file backend selected, behavior is identical to today; switching back reads the file cache
+- [ ] FR-04 (selectable, SQLite default): With no backend configured, data is read from and written to the SQLite database; with `--storage file`, behavior matches the file backend; switching back reads the file cache
 - [ ] FR-05 (migration): A one-shot `migrate` from a populated file cache produces a SQLite database whose contents equal the source, and re-running it is idempotent
 - [ ] FR-05 (error): An interrupted migration leaves the destination database valid and usable (no partial/corrupt rows) and can be re-run to completion
 - [ ] FR-06 (search): Searching titles/bodies returns the same result set as the current in-memory search on the same cached data
@@ -74,7 +74,7 @@ None identified yet.
 
 ## Open Questions
 
-1. Should SQLite become the default backend on fresh installs, or require explicit opt-in for the first release?
+1. Resolved: SQLite is the default backend (maintainer decision); the file backend remains selectable.
 2. Should the file-based and SQLite backends be kept in sync (dual-write), or is the backend a one-time choice per repository?
 3. Is full-text search (FTS5) desired over plain LIKE, given the added schema complexity?
 4. Where does the database file live relative to the existing per-repo cache directory, and is one DB per repo or one global DB preferred?
