@@ -33,7 +33,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-04 | Must | The report shall show a per-reviewer engagement table: comments conducted, reviews submitted, approvals, changes requested, comment-only reviews, median time from opening to review, and median time from review request to review |
 | FR-05 | Must | The report shall show notable PR lists: longest awaiting first review, longest time to merge, and most discussed |
 | FR-06 | Must | The report shall show a PR size versus merge time table with size buckets xs/s/m/l/xl based on changed lines (xs <100, s <500, m <1000, l <2000, xl >=2000) |
-| FR-07 | Must | The report shall render charts (monthly trend, PR size distribution, peak activity by hour) using Chart.js loaded from a CDN |
+| FR-07 | Must | The report shall render charts (monthly trend, per-author opened/merged/closed activity, PR size distribution, peak activity by hour) using Chart.js loaded from a CDN |
 | FR-08 | Must | The report shall degrade gracefully when Chart.js cannot load or when cached PRs lack the new data, showing a notice suggesting `ghx cache --force` |
 | FR-09 | Must | The `stats` command shall accept `--top` to control the number of entries per notable list (default 5) |
 | FR-10 | Should | Draft time shall be reconstructed from timeline events, including PRs created as draft (ready-for-review without a preceding convert-to-draft) and later convert-to-draft cycles |

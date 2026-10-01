@@ -180,6 +180,67 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 	}
 }
 
+func TestBuildReport_AuthorTrends(t *testing.T) {
+	jan := time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC)
+
+	// alice: PR1 opened Jan, merged Feb; PR2 opened Jan, closed Jan;
+	// PR3 opened Feb, merged Feb. bob: PR4 opened Feb, still open.
+	pr1 := statsTestPR(1, "alice", jan, "MERGED", nil)
+	mergedFeb := feb.Add(24 * time.Hour)
+	pr1.MergedAt = &mergedFeb
+	pr2 := statsTestPR(2, "alice", jan, "CLOSED", nil)
+	closedJan := jan.Add(48 * time.Hour)
+	pr2.ClosedAt = &closedJan
+	pr3 := statsTestPR(3, "alice", feb, "MERGED", nil)
+	mergedFeb2 := feb.Add(2 * time.Hour)
+	pr3.MergedAt = &mergedFeb2
+	pr4 := statsTestPR(4, "bob", feb, "OPEN", nil)
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{
+			{Repo: "org/repo1", PR: pr1},
+			{Repo: "org/repo1", PR: pr2},
+			{Repo: "org/repo1", PR: pr3},
+			{Repo: "org/repo1", PR: pr4},
+		},
+		statsFilters{State: "all"},
+	)
+
+	if len(report.AuthorTrends) != 2 {
+		t.Fatalf("AuthorTrends: got %d, want 2", len(report.AuthorTrends))
+	}
+	// Authors are ordered by PR count desc, so alice (3) precedes bob (1).
+	alice := report.AuthorTrends[0]
+	if alice.Login != "alice" {
+		t.Fatalf("first author trend: got %q, want alice", alice.Login)
+	}
+	want := []*AuthorMonthStat{
+		{Month: "2026-01", Opened: 2, Merged: 0, Closed: 1},
+		{Month: "2026-02", Opened: 1, Merged: 2, Closed: 0},
+	}
+	if len(alice.Months) != len(want) {
+		t.Fatalf("alice months: got %d, want %d", len(alice.Months), len(want))
+	}
+	for i, w := range want {
+		if got := alice.Months[i]; *got != *w {
+			t.Errorf("alice month %d: got %+v, want %+v", i, *got, *w)
+		}
+	}
+
+	bob := report.AuthorTrends[1]
+	if bob.Login != "bob" {
+		t.Fatalf("second author trend: got %q, want bob", bob.Login)
+	}
+	if len(bob.Months) != 1 {
+		t.Fatalf("bob months: got %d, want 1", len(bob.Months))
+	}
+	if got := bob.Months[0]; got.Month != "2026-02" || got.Opened != 1 || got.Merged != 0 || got.Closed != 0 {
+		t.Errorf("bob month: got %+v, want 2026-02 opened=1", *got)
+	}
+}
+
 func TestFormatReviewPct(t *testing.T) {
 	tests := []struct {
 		count, total int
@@ -943,6 +1004,10 @@ func TestRenderReport(t *testing.T) {
 		"Within 1 week",
 		"Merge speed by author",
 		"Merge speed over time",
+		"Activity by author",
+		`id="author-trends"`,
+		`class="author-trend-chart"`,
+		"authorTrends",
 		"Lead time",
 		"Contribution",
 		"Reviewer engagement",
@@ -965,6 +1030,7 @@ func TestRenderReport(t *testing.T) {
 		`id="toc"`,
 		`href="#summary"`,
 		`href="#monthly-trend"`,
+		`href="#author-trends"`,
 		`href="#merge-speed"`,
 		`href="#merge-speed-by-author"`,
 		`href="#matrix"`,
@@ -977,6 +1043,7 @@ func TestRenderReport(t *testing.T) {
 		`href="#pr-list"`,
 		`id="summary"`,
 		`id="monthly-trend"`,
+		`id="author-trends"`,
 		`id="merge-speed"`,
 		`id="merge-speed-by-author"`,
 		`id="matrix"`,

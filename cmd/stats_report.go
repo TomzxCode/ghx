@@ -104,6 +104,21 @@ type MonthTrend struct {
 	medianHrs float64
 }
 
+// AuthorMonthStat aggregates one author's PR activity for one calendar month.
+type AuthorMonthStat struct {
+	Month  string // "2026-03"
+	Opened int
+	Merged int
+	Closed int
+}
+
+// AuthorTrend holds one author's monthly opened/merged/closed series, rendered
+// as a per-author chart.
+type AuthorTrend struct {
+	Login  string
+	Months []*AuthorMonthStat
+}
+
 // SizeRow aggregates one PR size bucket for the size-versus-lead-time table.
 type SizeRow struct {
 	Bucket      string // xs, s, m, l, xl
@@ -254,6 +269,7 @@ type Report struct {
 	EngagementRows    []*ReviewerEngagementRow
 	SizeRows          []*SizeRow
 	Trends            []*MonthTrend
+	AuthorTrends      []*AuthorTrend
 	ActivityHours     []int
 	NotableAwaiting   []*NotablePR
 	NotableMerge      []*NotablePR
@@ -273,6 +289,18 @@ type chartsPayload struct {
 	// merge duration in minutes], so the client can re-bucket the merge
 	// speed and percentile trends by day, week or month.
 	MergeSamples [][2]float64 `json:"mergeSamples"`
+	// AuthorTrends holds one monthly series per author, feeding the
+	// per-author opened/merged/closed charts.
+	AuthorTrends []authorTrendPayload `json:"authorTrends"`
+}
+
+// authorTrendPayload is the JSON shape of one author's monthly trend series.
+type authorTrendPayload struct {
+	Login  string   `json:"login"`
+	Months []string `json:"months"`
+	Opened []int    `json:"opened"`
+	Merged []int    `json:"merged"`
+	Closed []int    `json:"closed"`
 }
 
 // reviewerComment is a comment left on a PR by someone other than its author.
@@ -666,6 +694,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		// approveMergeDurs measures from the first approving review to the
 		// merge, for PRs approved before they were merged.
 		approveMergeDurs []time.Duration
+		// monthOpened/monthMerged/monthClosed bucket the author's PRs by
+		// creation, merge and close month respectively, feeding the
+		// per-author trend charts.
+		monthOpened map[string]int
+		monthMerged map[string]int
+		monthClosed map[string]int
 	}
 	authorAggs := map[string]*authorAgg{}
 
@@ -727,9 +761,16 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.TotalDeletions += pr.Deletions
 
 		merged := pr.MergedAt != nil && strings.EqualFold(pr.State, "MERGED")
+		if agg.monthOpened == nil {
+			agg.monthOpened = map[string]int{}
+			agg.monthMerged = map[string]int{}
+			agg.monthClosed = map[string]int{}
+		}
+		agg.monthOpened[pr.CreatedAt.Format("2006-01")]++
 		if merged {
 			agg.merged++
 			agg.mergeDurs = append(agg.mergeDurs, e.mergeDuration)
+			agg.monthMerged[pr.MergedAt.Format("2006-01")]++
 			mergeAll = append(mergeAll, e.mergeDuration)
 			r.MergeTrendSamples = append(r.MergeTrendSamples, [2]float64{
 				float64(pr.MergedAt.Unix()),
@@ -757,6 +798,9 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			}
 		} else if strings.EqualFold(pr.State, "CLOSED") {
 			agg.closed++
+			if pr.ClosedAt != nil {
+				agg.monthClosed[pr.ClosedAt.Format("2006-01")]++
+			}
 		}
 
 		monthOpened[pr.CreatedAt.Format("2006-01")]++
@@ -972,6 +1016,43 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.Trends = append(r.Trends, row)
 	}
 	r.ActivityHours = activityHours
+
+	// Per-author monthly trends: one chart per author showing how many PRs
+	// they opened, merged and closed each month.
+	for _, author := range authors {
+		agg := authorAggs[author]
+		if agg == nil {
+			continue
+		}
+		monthSet := map[string]bool{}
+		for m := range agg.monthOpened {
+			monthSet[m] = true
+		}
+		for m := range agg.monthMerged {
+			monthSet[m] = true
+		}
+		for m := range agg.monthClosed {
+			monthSet[m] = true
+		}
+		if len(monthSet) == 0 {
+			continue
+		}
+		authorMonths := make([]string, 0, len(monthSet))
+		for m := range monthSet {
+			authorMonths = append(authorMonths, m)
+		}
+		sort.Strings(authorMonths)
+		trend := &AuthorTrend{Login: author}
+		for _, m := range authorMonths {
+			trend.Months = append(trend.Months, &AuthorMonthStat{
+				Month:  m,
+				Opened: agg.monthOpened[m],
+				Merged: agg.monthMerged[m],
+				Closed: agg.monthClosed[m],
+			})
+		}
+		r.AuthorTrends = append(r.AuthorTrends, trend)
+	}
 
 	// Notable PR lists: outstanding cases first, ranked by the list metric.
 	type notable struct {
@@ -1461,6 +1542,9 @@ const reportTemplate = `<!DOCTYPE html>
   .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; max-width: 900px; }
   .chart-wrap { position: relative; height: 340px; }
   .chart-note { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
+  .author-trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 0.75rem; }
+  .author-trends .chart-box { max-width: none; }
+  .author-trend-name { margin: 0 0 0.5rem; font-size: 0.95rem; }
   .trend-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
   .trend-controls button {
     background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
@@ -1490,6 +1574,7 @@ const reportTemplate = `<!DOCTYPE html>
   <div class="toc-title">Contents</div>
   <a href="#summary">Summary</a>
   {{if .Trends}}<a href="#monthly-trend">Monthly trend</a>{{end}}
+  {{if .AuthorTrends}}<a href="#author-trends">Activity by author</a>{{end}}
   {{if .MergeSpeedRows}}<a href="#merge-speed">Merge speed</a>{{end}}
   {{if .AuthorMergeSpeed}}<a href="#merge-speed-by-author">Merge speed by author</a>{{end}}
   {{if .MergeTrendSamples}}<a href="#merge-trend">Merge speed over time</a>{{end}}
@@ -1542,6 +1627,20 @@ Run <code>ghx cache --force</code> for these repositories to enable the full set
 <div class="chart-box">
   <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
   <div class="chart-note">Pull requests opened and merged per month, with the median time from opening to merge.</div>
+</div>
+{{end}}
+
+{{if .AuthorTrends}}
+<h2 id="author-trends">Activity by author <span class="section-hint">opened, merged and closed per month</span></h2>
+<p class="meta">One chart per PR author. Each bar group counts the PRs the author opened in that
+month (by creation date) and the PRs they had merged or closed that month.</p>
+<div class="author-trends">
+  {{range $i, $t := .AuthorTrends}}
+  <div class="chart-box">
+    <h3 class="author-trend-name">{{$t.Login}}</h3>
+    <div class="chart-wrap" style="height: 240px;"><canvas class="author-trend-chart" data-index="{{$i}}"></canvas></div>
+  </div>
+  {{end}}
 </div>
 {{end}}
 
@@ -2239,6 +2338,34 @@ Request columns need review-request events in the cached data.</p>
       }));
     }
 
+    var authorCanvases = document.querySelectorAll(".author-trend-chart");
+    if (authorCanvases.length && DATA.authorTrends && DATA.authorTrends.length) {
+      Array.prototype.forEach.call(authorCanvases, function(canvas) {
+        var idx = parseInt(canvas.getAttribute("data-index"), 10);
+        var at = DATA.authorTrends[idx];
+        if (!at) return;
+        charts.push(new Chart(canvas, {
+          type: "bar",
+          data: {
+            labels: at.months,
+            datasets: [
+              { label: "Opened", data: at.opened, backgroundColor: "rgba(76, 141, 255, 0.65)" },
+              { label: "Merged", data: at.merged, backgroundColor: "rgba(63, 185, 80, 0.65)" },
+              { label: "Closed", data: at.closed, backgroundColor: "rgba(207, 34, 46, 0.65)" }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { boxWidth: 12, font: { size: 10 } } } },
+            scales: {
+              y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: border } },
+              x: { grid: { display: false } }
+            }
+          }
+        }));
+      });
+    }
+
     var size = document.getElementById("size-chart");
     if (size && DATA.sizes && DATA.sizes.length) {
       charts.push(new Chart(size, {
@@ -2369,6 +2496,16 @@ func renderReport(r *Report) (string, error) {
 	}
 	for _, s := range r.SizeRows {
 		payload.Sizes = append(payload.Sizes, s.Count)
+	}
+	for _, t := range r.AuthorTrends {
+		at := authorTrendPayload{Login: t.Login}
+		for _, m := range t.Months {
+			at.Months = append(at.Months, m.Month)
+			at.Opened = append(at.Opened, m.Opened)
+			at.Merged = append(at.Merged, m.Merged)
+			at.Closed = append(at.Closed, m.Closed)
+		}
+		payload.AuthorTrends = append(payload.AuthorTrends, at)
 	}
 	if b, err := json.Marshal(payload); err == nil {
 		view.ChartsJSON = template.JS(b)

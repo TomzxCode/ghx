@@ -46,6 +46,9 @@ nothing is cached.
   total number of submitted reviews.
 - **Monthly trend chart**: PRs opened and merged per month plus the median
   time from opening to merge (Chart.js, loaded from the jsDelivr CDN).
+- **Activity by author**: one bar chart per PR author showing how many PRs they
+  opened each month (by creation date) alongside how many they had merged or
+  closed that month (Chart.js, loaded from the jsDelivr CDN).
 - **Merge speed** (merged PRs only): how many merged PRs landed within 1 hour,
   1 day, and 1 week of being opened, each with its share of merged PRs, plus
   the p50/p90/p99 percentiles of the time from opening to merge. The same

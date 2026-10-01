@@ -56,9 +56,10 @@ reviewer, bots are excluded unless `--include-bots` is set, and an explicit
 ## Report structure
 
 New sections, in render order: summary card additions (median time to merge,
-reviews submitted), monthly trend chart, lead time table, contribution table,
-reviewer engagement table, PR size versus merge time table with size chart,
-peak activity chart, notable PR lists, and a legacy-cache notice.
+reviews submitted), monthly trend chart, per-author activity charts (one per
+author, PRs opened/merged/closed per month), lead time table, contribution
+table, reviewer engagement table, PR size versus merge time table with size
+chart, peak activity chart, notable PR lists, and a legacy-cache notice.
 Sections render only when their data exists; unavailable values render as `-`.
 
 Charts share one JSON payload (`chartsPayload`) serialized into a
