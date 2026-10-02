@@ -76,7 +76,7 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 | `--app string` | | | Filter by GitHub App author |
 | `--search string` | `-S` | | Search query (case-insensitive substring match on title and body) |
 | `--limit int` | `-L` | `1000` | Maximum number of results |
-| `--json` | | `false` | Output as JSON |
+| `--json fields` | | | Output JSON with the specified fields (comma-separated; omit for all) |
 | `--no-truncate` | | `false` | Don't truncate long titles |
 
 ## pr view

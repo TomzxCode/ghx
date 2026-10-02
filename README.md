@@ -150,6 +150,10 @@ ghx pr list --app dependabot
 ghx pr list --search "fix crash"
 ghx pr list --limit 10
 
+# JSON output, gh-compatible field selection
+ghx pr list --state merged --head feat/dark-mode --json number,headRefOid,mergedAt
+ghx pr list --json          # every supported field
+
 # View a single PR
 ghx pr view 10
 ghx pr view 10 --comments
@@ -405,7 +409,7 @@ a speedup is not read as a like-for-like win.
 | `-B, --base string` | Filter by base branch |
 | `-d, --draft` | Show only draft PRs |
 | `-H, --head string` | Filter by head branch |
-| `--json` | Output as JSON |
+| `--json fields` | Output JSON with the specified fields (comma-separated; omit for all) |
 | `-l, --label strings` | Filter by label (repeat for AND logic) |
 | `-L, --limit int` | Maximum results (default 1000) |
 | `--no-truncate` | Don't truncate long titles |

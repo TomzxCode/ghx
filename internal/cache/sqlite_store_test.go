@@ -1,12 +1,43 @@
 package cache
 
 import (
+	"database/sql"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/tomzxcode/ghx/internal/github"
 )
+
+// legacyPRsDDL is the pull_requests table as it existed before head_ref_oid was
+// added, used to prove NewSQLiteStore migrates an existing database in place.
+const legacyPRsDDL = `CREATE TABLE pull_requests (
+    host            TEXT    NOT NULL,
+    owner           TEXT    NOT NULL,
+    repo            TEXT    NOT NULL,
+    number          INTEGER NOT NULL,
+    title           TEXT    NOT NULL,
+    state           TEXT    NOT NULL,
+    is_draft        INTEGER NOT NULL,
+    author_login    TEXT    NOT NULL,
+    assignees       TEXT    NOT NULL,
+    labels          TEXT    NOT NULL,
+    milestone       TEXT,
+    base_ref_name   TEXT    NOT NULL,
+    head_ref_name   TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL,
+    merged_at       TEXT,
+    closed_at       TEXT,
+    url             TEXT    NOT NULL,
+    body            TEXT    NOT NULL,
+    comment_count   INTEGER NOT NULL,
+    comments        TEXT    NOT NULL,
+    review_decision TEXT,
+    row_mtime       TEXT    NOT NULL,
+    PRIMARY KEY (host, owner, repo, number)
+)`
 
 func utc(y int, mo time.Month, d, h, mi int) time.Time {
 	return time.Date(y, mo, d, h, mi, 0, 0, time.UTC)
@@ -67,6 +98,7 @@ func richPR(n int) *github.PullRequest {
 		Milestone:      &github.Milestone{Number: 4, Title: "v2.0"},
 		BaseRefName:    "main",
 		HeadRefName:    "feat/login",
+		HeadRefOid:     "0123456789abcdef0123456789abcdef01234567",
 		CreatedAt:      utc(2024, 3, 1, 2, 3),
 		UpdatedAt:      utc(2024, 3, 2, 2, 3),
 		MergedAt:       &merged,
@@ -270,6 +302,42 @@ func TestSQLitePersistsAcrossReopen(t *testing.T) {
 	prs, err := reopened.LoadAllPRs(host, owner, repo)
 	if err != nil || len(prs) != 1 {
 		t.Fatalf("LoadAllPRs after reopen: n=%d err=%v", len(prs), err)
+	}
+}
+
+// TestSQLiteMigratesHeadRefOid opens a database created before the column
+// existed and verifies the migration adds it and that values round-trip.
+func TestSQLiteMigratesHeadRefOid(t *testing.T) {
+	dir := t.TempDir()
+
+	legacy, err := sql.Open("sqlite", filepath.Join(dir, DBFileName))
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if _, err := legacy.Exec(legacyPRsDDL); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatalf("close legacy db: %v", err)
+	}
+
+	sq, err := NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore (migrate): %v", err)
+	}
+	defer sq.Close()
+
+	const host, owner, repo = "github.com", "owner", "repo"
+	pr := richPR(10)
+	if err := sq.SavePR(host, owner, repo, pr); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	got, _, err := sq.LoadPR(host, owner, repo, pr.Number)
+	if err != nil {
+		t.Fatalf("LoadPR: %v", err)
+	}
+	if got.HeadRefOid != pr.HeadRefOid {
+		t.Errorf("HeadRefOid = %q, want %q", got.HeadRefOid, pr.HeadRefOid)
 	}
 }
 

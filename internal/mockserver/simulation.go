@@ -853,6 +853,7 @@ func Generate(cfg SimulationConfig) *Scenario {
 			Assignees:      sp.assignees,
 			BaseRefName:    sp.baseRefName,
 			HeadRefName:    sp.headRefName,
+			HeadRefOid:     fakeOID(sp.number),
 			CreatedAt:      sp.createdAt,
 			UpdatedAt:      sp.updatedAt,
 			MergedAt:       sp.mergedAt,

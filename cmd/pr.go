@@ -36,7 +36,7 @@ var (
 	prListLimit      int
 	prListSearch     string
 	prListState      string
-	prListJSON       bool
+	prListJSON       string
 	prListNoTruncate bool
 )
 
@@ -74,7 +74,8 @@ func init() {
 	prListCmd.Flags().IntVarP(&prListLimit, "limit", "L", 1000, "Maximum number of items to fetch")
 	prListCmd.Flags().StringVarP(&prListSearch, "search", "S", "", "Search pull requests with query")
 	prListCmd.Flags().StringVarP(&prListState, "state", "s", "open", "Filter by state: {open|closed|merged|all}")
-	prListCmd.Flags().BoolVar(&prListJSON, "json", false, "Output as JSON")
+	prListCmd.Flags().StringVar(&prListJSON, "json", "", "Output JSON with the specified fields (comma-separated; omit for all)")
+	prListCmd.Flags().Lookup("json").NoOptDefVal = prJSONAll
 	prListCmd.Flags().BoolVar(&prListNoTruncate, "no-truncate", false, "Don't truncate long titles")
 
 	prViewCmd.Flags().BoolVarP(&prViewComments, "comments", "c", false, "View pull request comments")
@@ -87,6 +88,11 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runPRList(cmd *cobra.Command, args []string) error {
+	jsonFields, err := resolvePRListJSONFields(args)
+	if err != nil {
+		return err
+	}
+
 	repo, err := getRepo()
 	if err != nil {
 		return err
@@ -118,7 +124,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 			if prListLimit > 0 && len(prs) > prListLimit {
 				prs = prs[:prListLimit]
 			}
-			return printPRList(prs, total, prListJSON, prListNoTruncate)
+			return printPRList(prs, total, jsonFields, prListNoTruncate)
 		}
 	}
 
@@ -146,7 +152,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	return printPRList(prs, len(prs), prListJSON, prListNoTruncate)
+	return printPRList(prs, len(prs), jsonFields, prListNoTruncate)
 }
 
 func runPRView(cmd *cobra.Command, args []string) error {
@@ -215,14 +221,9 @@ func formatReviewDecision(d string) string {
 // Display
 // ---------------------------------------------------------------------------
 
-func printPRList(prs []*github.PullRequest, total int, asJSON bool, noTruncate bool) error {
-	if asJSON {
-		if prs == nil {
-			prs = []*github.PullRequest{}
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(prs)
+func printPRList(prs []*github.PullRequest, total int, jsonFields []string, noTruncate bool) error {
+	if jsonFields != nil {
+		return printPRListJSON(prs, jsonFields)
 	}
 
 	if len(prs) == 0 {

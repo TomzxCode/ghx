@@ -60,11 +60,67 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA user_version = 1"); err != nil {
+	if err := migrateSQLiteSchema(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrating schema: %w", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("setting schema version: %w", err)
 	}
 	return &sqliteStore{db: db, path: path}, nil
+}
+
+// migrateSQLiteSchema applies additive column migrations to databases created
+// by an earlier schema revision. schema.sql runs CREATE TABLE IF NOT EXISTS, so
+// a column added to an existing table must be added here instead.
+func migrateSQLiteSchema(db *sql.DB) error {
+	for _, m := range []struct{ table, column, ddl string }{
+		{
+			table:  "pull_requests",
+			column: "head_ref_oid",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN head_ref_oid TEXT NOT NULL DEFAULT ''",
+		},
+	} {
+		has, err := columnExists(db, m.table, m.column)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(m.ddl); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", m.table, m.column, err)
+		}
+	}
+	return nil
+}
+
+// columnExists reports whether table already has the named column.
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			ctype     string
+			notnull   int
+			dfltValue sql.NullString
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Kind reports the backend name.
@@ -291,7 +347,7 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 // ---------------------------------------------------------------------------
 
 const prCols = `number, title, state, is_draft, author_login, assignees, labels, milestone,
-	base_ref_name, head_ref_name, created_at, updated_at, merged_at, closed_at,
+	base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 	url, body, comment_count, comments, review_decision, row_mtime`
 
 // SavePR writes a single pull request to the database.
@@ -310,12 +366,12 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 	}
 	_, err = s.db.Exec(`INSERT OR REPLACE INTO pull_requests
 		(host, owner, repo, number, title, state, is_draft, author_login, assignees, labels, milestone,
-		 base_ref_name, head_ref_name, created_at, updated_at, merged_at, closed_at,
+		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 		 url, body, comment_count, comments, review_decision, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
-		pr.BaseRefName, pr.HeadRefName, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
+		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
 		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), reviewDecision, tstr(time.Now()),
 	)
@@ -333,6 +389,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		assigneesJSON, labelsJSON string
 		milestoneJSON             sql.NullString
 		baseRef, headRef          string
+		headRefOid                string
 		createdAtS, updatedAtS    string
 		mergedAtS, closedAtS      sql.NullString
 		url, body, commentsJSON   string
@@ -341,7 +398,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		rowMtimeS                 string
 	)
 	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &assigneesJSON, &labelsJSON, &milestoneJSON,
-		&baseRef, &headRef, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
+		&baseRef, &headRef, &headRefOid, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
 		&url, &body, &commentCount, &commentsJSON, &reviewDecision, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -354,6 +411,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		Author:       github.Actor{Login: authorLogin},
 		BaseRefName:  baseRef,
 		HeadRefName:  headRef,
+		HeadRefOid:   headRefOid,
 		CreatedAt:    parseTime(createdAtS),
 		UpdatedAt:    parseTime(updatedAtS),
 		URL:          url,

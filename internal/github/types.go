@@ -32,6 +32,7 @@ type PullRequest struct {
 	Milestone      *Milestone      `json:"milestone,omitempty"`
 	BaseRefName    string          `json:"baseRefName"`
 	HeadRefName    string          `json:"headRefName"`
+	HeadRefOid     string          `json:"headRefOid"`
 	CreatedAt      time.Time       `json:"createdAt"`
 	UpdatedAt      time.Time       `json:"updatedAt"`
 	MergedAt       *time.Time      `json:"mergedAt,omitempty"`

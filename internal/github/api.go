@@ -110,6 +110,7 @@ type prNode struct {
 	Milestone      *milestoneNode                 `json:"milestone"`
 	BaseRefName    string                         `json:"baseRefName"`
 	HeadRefName    string                         `json:"headRefName"`
+	HeadRefOid     string                         `json:"headRefOid"`
 	CreatedAt      time.Time                      `json:"createdAt"`
 	UpdatedAt      time.Time                      `json:"updatedAt"`
 	MergedAt       *time.Time                     `json:"mergedAt"`
@@ -140,6 +141,7 @@ type searchNode struct {
 	Milestone      *milestoneNode                 `json:"milestone"`
 	BaseRefName    string                         `json:"baseRefName"`
 	HeadRefName    string                         `json:"headRefName"`
+	HeadRefOid     string                         `json:"headRefOid"`
 	CreatedAt      time.Time                      `json:"createdAt"`
 	UpdatedAt      time.Time                      `json:"updatedAt"`
 	MergedAt       *time.Time                     `json:"mergedAt"`
@@ -198,6 +200,7 @@ func nodeToPR(n *prNode) *PullRequest {
 		Author:         Actor{Login: n.Author.Login},
 		BaseRefName:    n.BaseRefName,
 		HeadRefName:    n.HeadRefName,
+		HeadRefOid:     n.HeadRefOid,
 		CreatedAt:      n.CreatedAt,
 		UpdatedAt:      n.UpdatedAt,
 		MergedAt:       n.MergedAt,
@@ -303,6 +306,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 		Author:         Actor{Login: n.Author.Login},
 		BaseRefName:    n.BaseRefName,
 		HeadRefName:    n.HeadRefName,
+		HeadRefOid:     n.HeadRefOid,
 		CreatedAt:      n.CreatedAt,
 		UpdatedAt:      n.UpdatedAt,
 		MergedAt:       n.MergedAt,
@@ -676,7 +680,7 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
-        baseRefName headRefName
+        baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
         comments { totalCount }
       }
@@ -707,7 +711,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
       assignees(first: 10) { nodes { login } }
       labels(first: 20) { nodes { name color } }
       milestone { number title }
-      baseRefName headRefName
+      baseRefName headRefName headRefOid
       createdAt updatedAt mergedAt closedAt url body
       additions deletions
       reviews(first: 100) {
@@ -733,7 +737,7 @@ query($query: String!, $first: Int!, $after: String) {
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
-        baseRefName headRefName
+        baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
         comments { totalCount }
       }
@@ -753,7 +757,7 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!) {
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
-        baseRefName headRefName
+        baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
         additions deletions
         reviews(first: 100) {

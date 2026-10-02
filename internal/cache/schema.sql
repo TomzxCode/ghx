@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     milestone       TEXT,
     base_ref_name   TEXT    NOT NULL,
     head_ref_name   TEXT    NOT NULL,
+    head_ref_oid    TEXT    NOT NULL DEFAULT '',
     created_at      TEXT    NOT NULL,
     updated_at      TEXT    NOT NULL,
     merged_at       TEXT,

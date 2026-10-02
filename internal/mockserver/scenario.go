@@ -150,20 +150,21 @@ func (b *ScenarioBuilder) AddPR(title, body, headBranch string, age time.Duratio
 	}
 
 	pr := github.PullRequest{
-		Number:          num,
-		Title:           title,
-		State:           "OPEN",
-		IsDraft:         false,
-		ReviewDecision:  "REVIEW_REQUIRED",
-		Author:          github.Actor{Login: b.randomUser()},
-		Labels:          labels,
-		Milestone:       b.randomMilestone(),
-		BaseRefName:     "main",
-		HeadRefName:     headBranch,
-		CreatedAt:       createdAt,
-		UpdatedAt:       updatedAt,
-		URL:             b.url("pull", num),
-		Body:            body,
+		Number:         num,
+		Title:          title,
+		State:          "OPEN",
+		IsDraft:        false,
+		ReviewDecision: "REVIEW_REQUIRED",
+		Author:         github.Actor{Login: b.randomUser()},
+		Labels:         labels,
+		Milestone:      b.randomMilestone(),
+		BaseRefName:    "main",
+		HeadRefName:    headBranch,
+		HeadRefOid:     fakeOID(num),
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		URL:            b.url("pull", num),
+		Body:           body,
 	}
 
 	for _, opt := range opts {
@@ -202,6 +203,12 @@ func (b *ScenarioBuilder) GenerateRealistic() *Scenario {
 		AddPR("WIP: Refactor authentication middleware", "Major refactor of auth middleware to support multiple providers.", "refactor/auth", 6*24*time.Hour, WithPRDraft(true), WithPRComment("alice", "Still a work in progress.", 6*24*time.Hour)).
 		AddPR("Fix race condition in cache writes", "Adds sync.RWMutex to cache write operations. Fixes #7.", "fix/cache-race", 2*24*time.Hour, WithPRLabels("bug"), WithPRReview("APPROVED"), WithPRComment("dave", "LGTM, but please add a benchmark.", 2*24*time.Hour), WithPRComment("alice", "Benchmark added.", 1*24*time.Hour)).
 		Build()
+}
+
+// fakeOID returns a deterministic 40-hex-character head commit id for a PR, so
+// cached fixtures look like real GitHub SHAs without shipping a commit graph.
+func fakeOID(seed int) string {
+	return fmt.Sprintf("%040x", uint64(seed)*0x9E3779B97F4A7C15)
 }
 
 // ---------------------------------------------------------------------------

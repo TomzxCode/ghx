@@ -68,11 +68,28 @@ Showing 10 of 30 pull requests
 
 ### JSON output
 
+`--json` takes a comma-separated list of fields and emits a compact JSON array
+containing only those fields, in the same spirit as `gh pr list --json`:
+
+```bash
+ghx pr list --state merged --head feat/dark-mode --json number,headRefOid,mergedAt
+```
+
+```json
+[{"headRefOid":"2c354efe48616041586de6d5f16bc15f94fc659a","mergedAt":"2026-09-29T10:34:00Z","number":42}]
+```
+
+Supported fields: `additions`, `assignees`, `author`, `baseRefName`, `body`,
+`closedAt`, `comments`, `createdAt`, `deletions`, `headRefName`, `headRefOid`,
+`isDraft`, `labels`, `mergedAt`, `milestone`, `number`, `reviewDecision`,
+`reviews`, `state`, `title`, `updatedAt`, `url`. An unknown field is rejected
+with the list of valid names.
+
+Omitting the field list (bare `--json`) outputs every supported field:
+
 ```bash
 ghx pr list --json
 ```
-
-Outputs a pretty-printed JSON array of pull request objects.
 
 ### Disable title truncation
 

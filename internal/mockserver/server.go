@@ -180,7 +180,7 @@ func (s *Server) listPRs(vars map[string]interface{}) (interface{}, []gqlError) 
 	first := intVar(vars, "first")
 	states := statesVar(vars, "states")
 
-	filtered := s.filterPRs(owner, repo, states)
+	filtered := s.filterPRs(owner, repo, states, vars)
 	return s.paginatePRs(filtered, first, vars), nil
 }
 
@@ -192,7 +192,7 @@ func (s *Server) fetchAllPRs(vars map[string]interface{}) (interface{}, []gqlErr
 		pageSize = 50
 	}
 
-	filtered := s.filterPRs(owner, repo, nil)
+	filtered := s.filterPRs(owner, repo, nil, vars)
 	key := func(i int) time.Time { return s.scenario.PRs[filtered[i]].PullRequest.UpdatedAt }
 	if strVar(vars, "dir") == "DESC" {
 		// Newest-first, as requested by the delta/resume fetch (FetchPRsUpdated).
@@ -272,7 +272,10 @@ func (s *Server) filterIssues(owner, repo string, states []string, vars map[stri
 	return indices
 }
 
-func (s *Server) filterPRs(owner, repo string, states []string) []int {
+func (s *Server) filterPRs(owner, repo string, states []string, vars map[string]interface{}) []int {
+	head := strVar(vars, "headRefName")
+	base := strVar(vars, "baseRefName")
+	labels := stringSliceVar(vars, "labels")
 	var indices []int
 	for i := range s.scenario.PRs {
 		sp := &s.scenario.PRs[i]
@@ -282,9 +285,36 @@ func (s *Server) filterPRs(owner, repo string, states []string) []int {
 		if !inStates(sp.State, states) {
 			continue
 		}
+		if head != "" && !strings.EqualFold(sp.HeadRefName, head) {
+			continue
+		}
+		if base != "" && !strings.EqualFold(sp.BaseRefName, base) {
+			continue
+		}
+		if len(labels) > 0 && !hasAllLabels(sp.Labels, labels) {
+			continue
+		}
 		indices = append(indices, i)
 	}
 	return indices
+}
+
+// hasAllLabels reports whether every wanted label is present on pr
+// (case-insensitive).
+func hasAllLabels(labels []github.Label, want []string) bool {
+	for _, w := range want {
+		found := false
+		for _, l := range labels {
+			if strings.EqualFold(l.Name, w) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) paginateNodes(indices []int, pageSize int, vars map[string]interface{}, toNode func(int) interface{}) interface{} {
@@ -487,6 +517,7 @@ func prToNodeSummary(pr *github.PullRequest) map[string]interface{} {
 		"milestone":      milestoneNode(pr.Milestone),
 		"baseRefName":    pr.BaseRefName,
 		"headRefName":    pr.HeadRefName,
+		"headRefOid":     pr.HeadRefOid,
 		"createdAt":      pr.CreatedAt,
 		"updatedAt":      pr.UpdatedAt,
 		"mergedAt":       pr.MergedAt,
@@ -510,6 +541,7 @@ func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 		"milestone":      milestoneNode(pr.Milestone),
 		"baseRefName":    pr.BaseRefName,
 		"headRefName":    pr.HeadRefName,
+		"headRefOid":     pr.HeadRefOid,
 		"createdAt":      pr.CreatedAt,
 		"updatedAt":      pr.UpdatedAt,
 		"mergedAt":       pr.MergedAt,
@@ -565,6 +597,7 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		"milestone":      milestoneNode(pr.Milestone),
 		"baseRefName":    pr.BaseRefName,
 		"headRefName":    pr.HeadRefName,
+		"headRefOid":     pr.HeadRefOid,
 		"createdAt":      pr.CreatedAt,
 		"updatedAt":      pr.UpdatedAt,
 		"mergedAt":       pr.MergedAt,
@@ -789,6 +822,24 @@ func statesVar(vars map[string]interface{}, key string) []string {
 		states[i] = fmt.Sprintf("%v", v)
 	}
 	return states
+}
+
+func stringSliceVar(vars map[string]interface{}, key string) []string {
+	raw, ok := vars[key]
+	if !ok || raw == nil {
+		return nil
+	}
+	arr, ok := raw.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func inStates(state string, states []string) bool {
