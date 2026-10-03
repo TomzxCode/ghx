@@ -6,7 +6,14 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
+
+// repoKey formats owner/repo for telemetry attribution.
+func repoKey(owner, repo string) string {
+	return owner + "/" + repo
+}
 
 // ---------------------------------------------------------------------------
 // Options
@@ -488,7 +495,13 @@ func (c *Client) listIssuesDirect(owner, repo string, opts IssueListOptions) ([]
 			} `json:"repository"`
 		}
 
-		if err := c.Query(listIssuesQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "list_issues",
+			Kind:      telemetry.KindIssueList,
+			Repo:      repoKey(owner, repo),
+			PageSize:  pageSize,
+			Cursor:    cursor != "",
+		}, listIssuesQuery, vars, &result); err != nil {
 			return nil, err
 		}
 
@@ -542,7 +555,13 @@ func (c *Client) searchIssues(owner, repo string, opts IssueListOptions) ([]*Iss
 			} `json:"search"`
 		}
 
-		if err := c.Query(searchIssuesQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "search_issues",
+			Kind:      telemetry.KindIssueSearch,
+			Repo:      repoKey(owner, repo),
+			PageSize:  pageSize,
+			Cursor:    cursor != "",
+		}, searchIssuesQuery, vars, &result); err != nil {
 			return nil, err
 		}
 
@@ -576,7 +595,11 @@ func (c *Client) GetIssue(owner, repo string, number int) (*Issue, error) {
 		} `json:"repository"`
 	}
 
-	if err := c.Query(getIssueQuery, vars, &result); err != nil {
+	if err := c.QueryCtx(CallContext{
+		Operation: "get_issue",
+		Kind:      telemetry.KindIssueGet,
+		Repo:      repoKey(owner, repo),
+	}, getIssueQuery, vars, &result); err != nil {
 		return nil, err
 	}
 	if result.Repository.Issue == nil {
@@ -620,7 +643,13 @@ func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch Is
 			} `json:"repository"`
 		}
 
-		if err := c.Query(fetchAllIssuesQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "fetch_all_issues",
+			Kind:      telemetry.KindIssueFull,
+			Repo:      repoKey(owner, repo),
+			PageSize:  100,
+			Cursor:    cursor != "",
+		}, fetchAllIssuesQuery, vars, &result); err != nil {
 			return issues, err
 		}
 
@@ -830,7 +859,13 @@ func (c *Client) listPRsDirect(owner, repo string, opts PRListOptions) ([]*PullR
 			} `json:"repository"`
 		}
 
-		if err := c.Query(listPRsQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "list_prs",
+			Kind:      telemetry.KindPRList,
+			Repo:      repoKey(owner, repo),
+			PageSize:  pageSize,
+			Cursor:    cursor != "",
+		}, listPRsQuery, vars, &result); err != nil {
 			return nil, err
 		}
 
@@ -884,7 +919,13 @@ func (c *Client) searchPRs(owner, repo string, opts PRListOptions) ([]*PullReque
 			} `json:"search"`
 		}
 
-		if err := c.Query(searchPRsQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "search_prs",
+			Kind:      telemetry.KindPRSearch,
+			Repo:      repoKey(owner, repo),
+			PageSize:  pageSize,
+			Cursor:    cursor != "",
+		}, searchPRsQuery, vars, &result); err != nil {
 			return nil, err
 		}
 
@@ -918,7 +959,11 @@ func (c *Client) GetPR(owner, repo string, number int) (*PullRequest, error) {
 		} `json:"repository"`
 	}
 
-	if err := c.Query(getPRQuery, vars, &result); err != nil {
+	if err := c.QueryCtx(CallContext{
+		Operation: "get_pr",
+		Kind:      telemetry.KindPRGet,
+		Repo:      repoKey(owner, repo),
+	}, getPRQuery, vars, &result); err != nil {
 		return nil, err
 	}
 	if result.Repository.PullRequest == nil {
@@ -962,7 +1007,13 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 			} `json:"repository"`
 		}
 
-		if err := c.Query(fetchAllPRsQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "fetch_all_prs",
+			Kind:      telemetry.KindPRFull,
+			Repo:      repoKey(owner, repo),
+			PageSize:  50,
+			Cursor:    cursor != "",
+		}, fetchAllPRsQuery, vars, &result); err != nil {
 			return prs, err
 		}
 
@@ -1062,7 +1113,13 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 			} `json:"repository"`
 		}
 
-		if err := c.Query(fetchPRsUpdatedLightQuery, vars, &result); err != nil {
+		if err := c.QueryCtx(CallContext{
+			Operation: "fetch_prs_updated_scan",
+			Kind:      telemetry.KindPRScan,
+			Repo:      repoKey(owner, repo),
+			PageSize:  prScanPageSize,
+			Cursor:    cursor != "",
+		}, fetchPRsUpdatedLightQuery, vars, &result); err != nil {
 			return nil, err
 		}
 
@@ -1239,7 +1296,13 @@ func (c *Client) fetchPRPage(owner, repo, after string, since time.Time) (prPage
 		} `json:"repository"`
 	}
 
-	if err := c.Query(fetchAllPRsQuery, vars, &result); err != nil {
+	if err := c.QueryCtx(CallContext{
+		Operation: "fetch_pr_full_page",
+		Kind:      telemetry.KindPRFullPage,
+		Repo:      repoKey(owner, repo),
+		PageSize:  prFullPageSize,
+		Cursor:    after != "",
+	}, fetchAllPRsQuery, vars, &result); err != nil {
 		return prPage{}, err
 	}
 

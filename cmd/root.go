@@ -13,10 +13,13 @@ import (
 )
 
 var (
-	repoFlag    string
-	apiURLFlag  string
-	cacheDir    string
-	storageFlag string
+	repoFlag           string
+	apiURLFlag         string
+	cacheDir           string
+	storageFlag        string
+	telemetryFlag      *bool
+	telemetryFlagValue bool
+	telemetryDBFlag    string
 )
 
 var rootCmd = &cobra.Command{
@@ -29,10 +32,20 @@ var rootCmd = &cobra.Command{
 comments locally to minimise API calls (cache at ~/.cache/ghx/cache/<host>/<owner>/<repo>),
 and provides PR/issue comment operations beyond the standard gh CLI: inline review
 comments, line-range comments, thread replies, pending reviews, and local stashes.`,
+	// PersistentPreRunE runs before every command's RunE, so the --telemetry
+	// flag's explicit-or-unset state is available to initTelemetry.
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if cmd.Flags().Changed("telemetry") {
+			v := telemetryFlagValue
+			telemetryFlag = &v
+		}
+		return nil
+	},
 }
 
 // Execute is the entry point called from main.
 func Execute() {
+	defer flushTelemetry()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
@@ -44,12 +57,15 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL (for testing)")
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path")
 	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
+	rootCmd.PersistentFlags().BoolVar(&telemetryFlagValue, "telemetry", false, "Record API and cache timings locally (default enabled; env GHX_TELEMETRY, use --telemetry=false to opt out)")
+	rootCmd.PersistentFlags().StringVar(&telemetryDBFlag, "telemetry-db", "", "Telemetry database path (env GHX_TELEMETRY_DB)")
 
 	rootCmd.AddCommand(issueCmd)
 	rootCmd.AddCommand(prCmd)
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(repoCmd)
 	rootCmd.AddCommand(statsCmd)
+	rootCmd.AddCommand(telemetryCmd)
 }
 
 // getRepo resolves the target repository from the --repo flag or the current
@@ -71,35 +87,63 @@ func resolveOwnerName() (owner, name string, err error) {
 	return repo.Owner, repo.Name, nil
 }
 
-// newClient creates a GitHub client, using --api-url if provided.
+// newClient creates a GitHub client, using --api-url if provided. When
+// telemetry is enabled, the client is instrumented so every GraphQL call is
+// recorded.
 func newClient(host string) (*github.Client, error) {
+	var (
+		client *github.Client
+		err    error
+	)
 	if apiURLFlag != "" {
-		return github.NewClientWithURL(apiURLFlag, "test-token", host)
+		client, err = github.NewClientWithURL(apiURLFlag, "test-token", host)
+	} else {
+		client, err = github.NewClient(host)
 	}
-	return github.NewClient(host)
+	if err != nil {
+		return nil, err
+	}
+	client.SetTelemetry(initTelemetry())
+	return client, nil
 }
 
 // newStore creates a cache store. The backend is selected from --storage or the
 // GHX_STORAGE environment variable (default: sqlite). --cache-dir overrides the
-// cache root for both backends.
+// cache root for both backends. When telemetry is enabled, the store is wrapped
+// so its operations are recorded.
 func newStore() (cache.Store, error) {
 	backend := strings.ToLower(storageFlag)
 	if backend == "" {
 		backend = strings.ToLower(os.Getenv("GHX_STORAGE"))
 	}
+	var (
+		store cache.Store
+		err   error
+	)
+	rec := initTelemetry()
 	switch backend {
 	case "file":
 		if cacheDir != "" {
-			return cache.NewStoreWithPath(cacheDir), nil
+			store = cache.NewStoreWithPath(cacheDir)
+		} else {
+			store = cache.NewStore()
 		}
-		return cache.NewStore(), nil
 	case "", "sqlite":
 		base := cacheDir
 		if base == "" {
 			base = cache.DefaultDir()
 		}
-		return cache.NewSQLiteStore(base)
+		store, err = cache.NewSQLiteStore(base)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, fmt.Errorf("invalid --storage %q: use sqlite or file", backend)
 	}
+	if telemetryEnabled() {
+		// The decorator labels events with the repository when known; the
+		// operations themselves pass their own coordinates.
+		store = cache.Instrument(store, rec, "", "", "")
+	}
+	return store, nil
 }

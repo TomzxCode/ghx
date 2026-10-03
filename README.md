@@ -306,6 +306,31 @@ optional appendix of individual PRs (`--list-prs`).
 Run `ghx cache --force` once after upgrading so reports can use the review,
 timeline and size data collected during caching.
 
+### Performance telemetry
+
+Record per-call API and cache timings locally, then inspect or export them:
+
+```bash
+ghx cache --repo cli/cli                  # recording is on by default
+ghx telemetry summary --repo cli/cli        # counts, p50/p95, retry rate by operation kind
+ghx telemetry export --kind pr_full_page -o pages.json
+ghx telemetry disable                       # turn recording off globally
+ghx telemetry enable                        # turn it back on
+ghx telemetry status                        # show the effective state
+ghx telemetry clear --before 2026-09-01     # delete old events
+```
+
+Records are local-only and never uploaded. Turn recording off globally with
+`ghx telemetry disable`, or for one run with `--telemetry=false`
+(`GHX_TELEMETRY=0`); `--telemetry-db` / `GHX_TELEMETRY_DB` override the database
+path. A failure to record never fails or slows a command. The mock server can
+inject latency fitted from recorded events, so generated scenarios reproduce
+measured cost:
+
+```bash
+ghx mock serve --preset default --latency-from ~/.local/share/ghx/telemetry.db
+```
+
 ### Benchmarking against gh
 
 `scripts/benchmark.py` times equivalent read commands from `ghx` and `gh`

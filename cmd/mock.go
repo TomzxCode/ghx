@@ -32,6 +32,7 @@ var (
 	mockServeBursts         int
 	mockServePreset         string
 	mockServeStats          bool
+	mockServeLatencyFrom    string
 )
 
 var mockCmd = &cobra.Command{
@@ -66,6 +67,7 @@ func init() {
 	mockServeCmd.Flags().IntVar(&mockServeBursts, "activity-bursts", -1, "Number of high-activity windows (-1 = use preset)")
 	mockServeCmd.Flags().StringVar(&mockServePreset, "preset", "default", "Config preset: default, small, or none (all flags required)")
 	mockServeCmd.Flags().BoolVar(&mockServeStats, "stats", false, "Print simulation stats and exit without starting server")
+	mockServeCmd.Flags().StringVar(&mockServeLatencyFrom, "latency-from", "", "Inject per-kind response latency fitted from a telemetry database or exported JSON file")
 
 	mockCmd.AddCommand(mockServeCmd)
 	rootCmd.AddCommand(mockCmd)
@@ -89,6 +91,16 @@ func runMockServe(cmd *cobra.Command, args []string) error {
 
 	srv := mockserver.NewServer(scenario)
 	defer srv.Close()
+
+	if mockServeLatencyFrom != "" {
+		model, err := loadLatencyModel(mockServeLatencyFrom)
+		if err != nil {
+			return err
+		}
+		srv.WithLatency(model)
+		fmt.Fprintf(os.Stderr, "Injecting latency for %d kind(s) from %s (%d sample(s)).\n\n",
+			model.Kinds(), mockServeLatencyFrom, model.TotalSamples())
+	}
 
 	fmt.Fprintf(os.Stderr, "Mock server ready.\n\n")
 	fmt.Fprintf(os.Stderr, "  URL: %s\n\n", srv.URL())

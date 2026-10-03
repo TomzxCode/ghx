@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 type gqlRequest struct {
@@ -38,6 +40,11 @@ type Server struct {
 	mu       sync.RWMutex
 	scenario *Scenario
 	server   *httptest.Server
+
+	// latency, when non-nil, injects a per-kind delay into each response so
+	// generated scenarios reproduce measured API cost.
+	latency *LatencyModel
+	rng     *rand.Rand
 }
 
 func NewServer(scenario *Scenario) *Server {
@@ -45,6 +52,18 @@ func NewServer(scenario *Scenario) *Server {
 		scenario: scenario,
 	}
 	s.server = httptest.NewServer(http.HandlerFunc(s.handleGraphQL))
+	return s
+}
+
+// WithLatency makes the server delay each response by a duration drawn from the
+// model's recorded distribution for the operation the query maps to.
+func (s *Server) WithLatency(model *LatencyModel) *Server {
+	s.latency = model
+	seed := int64(1)
+	if model != nil {
+		seed = model.Seed
+	}
+	s.rng = rand.New(rand.NewSource(seed))
 	return s
 }
 
@@ -84,10 +103,48 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.RLock()
+	kind := routeKind(req.Query)
 	data, errs := s.route(req.Query, req.Variables)
 	s.mu.RUnlock()
 
+	if s.latency != nil {
+		// Delay outside the read lock so concurrent requests are not serialized
+		// by the simulated latency.
+		if d := s.latency.Sample(kind, s.rng); d > 0 {
+			time.Sleep(d)
+		}
+	}
+
 	writeGQL(w, data, errs)
+}
+
+// routeKind maps a query to the operation kind recorded by github.Client, so a
+// latency model fitted from telemetry events lines up with what the mock server
+// serves.
+func routeKind(query string) string {
+	switch {
+	case strings.Contains(query, "issue(number:"):
+		return telemetry.KindIssueGet
+	case strings.Contains(query, "pullRequest(number:"):
+		return telemetry.KindPRGet
+	case strings.Contains(query, "search(query:"):
+		return telemetry.KindPRSearch
+	case strings.Contains(query, "issues(first:") && strings.Contains(query, "states: [OPEN, CLOSED]"):
+		return telemetry.KindIssueFull
+	case strings.Contains(query, "issues(first:"):
+		return telemetry.KindIssueList
+	case strings.Contains(query, "pullRequests(first:") && strings.Contains(query, "states: [OPEN, CLOSED, MERGED]"):
+		// Both the full fetch and the delta full-page use this shape; the page
+		// size distinguishes the cold full fetch from the windowed page.
+		if strings.Contains(query, "first: $first") {
+			return telemetry.KindPRFullPage
+		}
+		return telemetry.KindPRFull
+	case strings.Contains(query, "pullRequests(first:"):
+		return telemetry.KindPRList
+	default:
+		return telemetry.KindUnknown
+	}
 }
 
 func (s *Server) route(query string, vars map[string]interface{}) (interface{}, []gqlError) {

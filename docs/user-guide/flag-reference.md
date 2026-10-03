@@ -10,6 +10,8 @@ These flags apply to all commands.
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
+| `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
+| `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
 | `--version`, `-v` | Print version. |
 | `--help`, `-h` | Show help. |
 
@@ -175,3 +177,43 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 | `--activity-bursts int` | | Number of high-activity windows (-1 = use preset) |
 | `--seed int` | | RNG seed (0 = use preset) |
 | `--stats` | `false` | Print simulation stats and exit without serving |
+| `--latency-from string` | | Inject per-kind response latency fitted from a telemetry database or an exported JSON file |
+
+## telemetry
+
+### `telemetry enable` / `telemetry disable` / `telemetry status`
+
+Persist or inspect the global on/off setting (stored in `config.json` beside the
+telemetry database).
+
+| Command | Description |
+|---|---|
+| `telemetry enable` | Record by default in future runs |
+| `telemetry disable` | Stop recording by default; existing events are kept |
+| `telemetry status` | Show the effective state, database path, config path, and event count |
+
+### `telemetry summary`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--kind string` | | Restrict to one operation kind |
+| `--repo string` | | Restrict to one repository (owner/repo) |
+| `--since string` | | Only events at or after this date (YYYY-MM-DD or RFC3339) |
+| `--json` | `false` | Emit the summary as JSON |
+
+### `telemetry export`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--format string` | `json` | Output format (json) |
+| `--kind string` | | Restrict to one operation kind |
+| `--repo string` | | Restrict to one repository (owner/repo) |
+| `--since string` | | Only events at or after this date (YYYY-MM-DD or RFC3339) |
+| `--output string`, `-o` | | Write to a file instead of stdout |
+
+### `telemetry clear`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--before string` | | Delete only events strictly before this date |
+| `--yes`, `-y` | `false` | Skip the confirmation prompt |

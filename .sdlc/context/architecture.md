@@ -26,7 +26,8 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
 | `internal/cache/` | On-disk JSON cache read/write, freshness checks | Go standard library |
 | `internal/github/` | GitHub GraphQL API client, query building, response parsing | Go net/http |
 | `internal/gitremote/` | Git remote URL detection and parsing | Go os/exec |
-| `internal/mockserver/` | In-process mock GitHub GraphQL server, scenario builder, simulation generator | Go net/http/httptest |
+| `internal/mockserver/` | In-process mock GitHub GraphQL server, scenario builder, simulation generator, optional latency injection | Go net/http/httptest |
+| `internal/telemetry/` | Opt-in local SQLite recorder for API and cache timings, with a disabled no-op path | Go standard library + modernc.org/sqlite |
 | `internal/version/` | Build version resolution from ldflags or Go build info | Go runtime/debug |
 
 ## Data Flow
@@ -45,7 +46,7 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
   - On push to main: creates/updates a `latest` prerelease with all binaries
 - **Distribution:** `go install` from source, or pre-built binaries from GitHub Releases
 - **Testing:** Mock server (`internal/mockserver`) provides an `httptest.Server` that mirrors the GitHub GraphQL API contract for integration tests without network access
-- **No observability:** The tool is a CLI with no runtime metrics, logging, or tracing
+- **No observability:** The tool is a CLI with no runtime metrics, logging, or tracing; performance data is available only through the local-only telemetry recorder (`internal/telemetry/`), which is on by default, switchable with `ghx telemetry enable|disable`, and never transmits anything (see `.sdlc/knowledge/decisions/1-telemetry-default-on.md`)
 - **No hosting:** Fully client-side, no server component (mock server is for testing only)
 
 ## Architecture Decisions

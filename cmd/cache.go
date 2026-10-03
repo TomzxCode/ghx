@@ -305,7 +305,32 @@ func runCache(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Cache updated. Valid for %d minute(s).\n", cacheDuration)
+	printRunSummary()
 	return nil
+}
+
+// printRunSummary prints the per-run telemetry timing breakdown when telemetry
+// is enabled. It is a no-op otherwise (FR-6, FR-10).
+func printRunSummary() {
+	if telemetryAggregator == nil {
+		return
+	}
+	s := telemetryAggregator.Summary()
+	if s.Total == 0 {
+		return
+	}
+	var totalSent, totalRecv int64
+	for _, k := range s.KindSummaries {
+		totalSent += k.TotalSentBytes
+		totalRecv += k.TotalRecvBytes
+	}
+	fmt.Fprintf(os.Stderr, "Timings (%.1fs total, %d call(s), %d retried, sent %s, received %s):\n",
+		s.Elapsed.Seconds(), s.Total, s.Retried, humanBytes(totalSent), humanBytes(totalRecv))
+	for _, k := range s.KindSummaries {
+		fmt.Fprintf(os.Stderr, "  %-18s %5d call(s)  p50 %6dms  p95 %6dms  sent %8s  recv %8s  p50 %d items\n",
+			k.Kind, k.Count, k.P50Ms, k.P95Ms,
+			humanBytes(k.TotalSentBytes), humanBytes(k.TotalRecvBytes), k.P50Items)
+	}
 }
 
 // runCacheMigrate copies the file-based cache into the SQLite cache for one or

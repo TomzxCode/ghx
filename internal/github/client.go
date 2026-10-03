@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 // Retry behaviour used when a sane value is not explicitly configured.
@@ -35,6 +37,17 @@ type Client struct {
 	maxBackoff     time.Duration
 	sleep          func(time.Duration)
 	lastRemaining  atomic.Int64 // x-ratelimit-remaining of the last response, -1 = unknown
+
+	// recorder, when enabled, receives one event per Query call.
+	recorder telemetry.Recorder
+	// lastAttempts, lastStatus, lastErr, lastResponseBytes, and lastItems
+	// describe the most recent Query call so recordCall can label its event
+	// without threading state through Query.
+	lastAttempts      atomic.Int64
+	lastStatus        atomic.Int64
+	lastErr           atomic.Int64
+	lastResponseBytes atomic.Int64
+	lastItems         atomic.Int64
 }
 
 type gqlRequest struct {
@@ -156,6 +169,11 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 
 	maxAttempts := c.maxRetries + 1
 	var lastErr error
+	c.lastErr.Store(0)
+	c.lastStatus.Store(0)
+	c.lastAttempts.Store(int64(maxAttempts))
+	c.lastResponseBytes.Store(0)
+	c.lastItems.Store(0)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			wait := c.nextBackoff(lastErr, attempt-1)
@@ -165,13 +183,17 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 
 		lastErr = c.queryOnce(body, result)
 		if lastErr == nil {
+			c.lastAttempts.Store(int64(attempt + 1))
 			return nil
 		}
 
 		if !retryable(lastErr) {
+			c.lastAttempts.Store(int64(attempt + 1))
+			c.lastErr.Store(1)
 			return lastErr // not retryable
 		}
 	}
+	c.lastErr.Store(1)
 
 	var rle *RateLimitError
 	if errors.As(lastErr, &rle) {
@@ -219,6 +241,7 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 	}
 	defer resp.Body.Close()
 
+	c.lastStatus.Store(int64(resp.StatusCode))
 	if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.lastRemaining.Store(int64(n))
@@ -229,6 +252,7 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 	if err != nil {
 		return &TransientError{Message: "reading response body: " + err.Error()}
 	}
+	c.lastResponseBytes.Store(int64(len(respBody)))
 
 	if rle, ok := parseRateLimit(resp, respBody); ok {
 		return rle
@@ -271,7 +295,35 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 			return fmt.Errorf("parsing response data: %w", err)
 		}
 	}
+	c.lastItems.Store(int64(countNodes(gqlResp.Data)))
 	return nil
+}
+
+// countNodes counts the nodes in the first `nodes` array found in the response
+// data, walking the repository/search wrapper. It gives telemetry a concrete
+// "items returned" figure without changing every caller's parsing struct.
+func countNodes(data json.RawMessage) int {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		return 0
+	}
+	// Unwrap one level (repository / search) and look for a connection with
+	// a nodes array.
+	for _, wrapper := range top {
+		var inner map[string]json.RawMessage
+		if err := json.Unmarshal(wrapper, &inner); err != nil {
+			continue
+		}
+		for _, conn := range inner {
+			var c struct {
+				Nodes []json.RawMessage `json:"nodes"`
+			}
+			if err := json.Unmarshal(conn, &c); err == nil && c.Nodes != nil {
+				return len(c.Nodes)
+			}
+		}
+	}
+	return 0
 }
 
 // nextBackoff computes the wait before the next attempt. When the previous
