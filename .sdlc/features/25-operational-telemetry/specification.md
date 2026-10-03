@@ -1,7 +1,8 @@
 ---
 issue: "#25"
 title: "Operational telemetry for API and cache performance"
-status: draft
+status: in-review
+revision: 1
 session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 ---
 
@@ -12,8 +13,8 @@ session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 The feature adds an event recorder to two existing seams and a reader surface on top of it.
 GraphQL calls are instrumented inside `github.Client` (the single funnel at `internal/github/client.go:151`), cache operations are instrumented with a decorator over the `cache.Store` interface (`internal/cache/store.go:85`), and both emit `telemetry.Event` values to a SQLite sink that writes asynchronously.
 The `cache` command reads a per-run summary from the same recorder, and a new `telemetry` command reads the database back for analysis.
-The mock server's simulation generator gains an optional latency model whose parameters can be fitted from exported events, so generated scenarios reproduce measured per-kind latency instead of assumed latency.
-Telemetry is disabled unless opted in, and every write failure is swallowed so instrumentation can never affect command behavior.
+The mock server's simulation generator gains an optional latency model whose parameters can be fitted from exported events, so generated scenarios reproduce measured per-kind latency and payload size instead of assumed values.
+Telemetry is local-only and on by default, with a persisted global switch (`ghx telemetry enable|disable`) and per-run opt-outs (`--telemetry=false`, `GHX_TELEMETRY=0`); every write failure is swallowed so instrumentation can never affect command behavior.
 
 ## Architecture
 
@@ -106,10 +107,11 @@ Fitted from exported events; never persisted by ghx itself.
 | Field | Type | Constraints | Description |
 |---|---|---|---|
 | Kind | string | not null | Operation kind the samples belong to |
-| Samples | []time.Duration | not null | Observed durations, ascending after fitting |
+| Samples | []int64 | not null | Observed durations in milliseconds, ascending after fitting |
+| ResponseBytes | map[string][]int64 | not null | Observed response payload sizes in bytes, per kind, ascending after fitting |
 | Seed | int64 | not null | Deterministic RNG seed for sample selection |
 
-`LatencyModel.Sample(rng)` returns one duration by picking an index from the recorded distribution, so generated delays preserve the measured spread (including long 502/retry tails) rather than a fitted average.
+`LatencyModel.Sample(kind, rng)` returns one duration by picking an index from the recorded duration distribution, and `LatencyModel.SampleResponseBytes(kind, rng)` does the same for payload size, so generated delays and sizes preserve the measured spread (including long 502/retry tails) rather than a fitted average.
 
 ## API Contracts
 
@@ -160,7 +162,7 @@ sequenceDiagram
     participant GH as GitHub GraphQL
     participant W as sink writer
 
-    U->>CMD: ghx --telemetry cache
+    U->>CMD: ghx cache
     CMD->>REC: Open(path, enabled)
     REC->>W: start writer goroutine
     CMD->>C: FetchAllIssues

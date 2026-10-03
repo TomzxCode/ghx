@@ -1,7 +1,8 @@
 ---
 issue: "#25"
 title: "Operational telemetry for API and cache performance"
-status: draft
+status: in-review
+revision: 1
 session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 ---
 
@@ -9,7 +10,7 @@ session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 
 ## Overview
 
-This feature adds a local, opt-in recording layer rather than a hosted monitoring stack.
+This feature adds a local, default-on recording layer rather than a hosted monitoring stack.
 The goal is to make per-call latency and retry behavior inspectable after the fact through the `telemetry` read commands and the per-run summary, without adding a metrics endpoint, a tracing backend, or structured logging to the CLI.
 This is deliberately weaker than the logging and metrics described in a service-oriented observability plan: ghx has no server, no long-running process, and no collection pipeline, so the SQLite event table *is* the observability store.
 

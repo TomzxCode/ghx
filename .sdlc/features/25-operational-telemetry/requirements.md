@@ -1,7 +1,8 @@
 ---
 issue: "#25"
 title: "Operational telemetry for API and cache performance"
-status: draft
+status: in-review
+revision: 1
 session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 ---
 
@@ -11,7 +12,7 @@ session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 
 ghx performs every unit of work over an unnamed operation: a GraphQL page, a cache query, a save batch.
 Today nothing records how long any of them takes, so performance work and the mock server's simulation generator both rely on assumed costs rather than measured ones.
-This feature adds local, opt-in, failure-isolated telemetry that records per-call durations and call metadata for GraphQL operations and cache backend operations, reports a per-run summary, and makes the recorded distributions available to the simulation generator so generated scenarios can model real latency.
+This feature adds local, default-on, failure-isolated telemetry that records per-call durations and call metadata for GraphQL operations and cache backend operations, reports a per-run summary, and makes the recorded distributions available to the simulation generator so generated scenarios can model real latency.
 The immediate consumer is the question "what is the optimal algorithm to pull issues and PRs into cache", which cannot be answered without a per-call cost series; the same series tells us how long a REST page or a GraphQL query actually takes across many executions.
 
 ## Stakeholders
@@ -21,7 +22,7 @@ The immediate consumer is the question "what is the optimal algorithm to pull is
 | Developer / maintainer | Per-call latency data to choose a cache-population algorithm and detect regressions |
 | Simulation author | Real measured latency distributions to feed realistic `mockserver` scenarios |
 | CLI user | Visibility into where cache time goes, without any behavior or privacy change |
-| Security / privacy reviewer | Assurance the tool stays offline-first, opt-in, and never phones home |
+| Security / privacy reviewer | Assurance the tool stays offline-first, default-on but switchable, and never phones home |
 
 ## Functional Requirements
 
@@ -140,7 +141,7 @@ Multiple scenarios per requirement are allowed; tag each with the requirement ID
     @FR-5
     Scenario: The global switch disables recording
       Given the global preference was set with the telemetry disable command
-      When any command runs without an explicit opt-in
+      When any command runs without an explicit override
       Then no telemetry database is created or written to
     ```
 
@@ -318,7 +319,7 @@ None identified yet.
 
 ## Open Questions
 
-1. Should telemetry be enabled per project through a configuration file, or only through a flag and an environment variable?
+1. Resolved: telemetry is enabled by default, with a persisted global switch (`ghx telemetry disable`) and per-run opt-outs (`--telemetry=false`, `GHX_TELEMETRY=0`); see `.sdlc/knowledge/decisions/1-telemetry-default-on.md`.
 2. Should event retention be bounded (for example, events older than N days pruned on write), or is unbounded growth acceptable for a local developer tool?
 3. Should the simulation latency injection require an explicit exported distribution file, or read the telemetry database directly?
 4. Should the benchmark script (`scripts/benchmark.py`) consume the exported JSON in this feature, or in a follow-up?

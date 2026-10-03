@@ -1,7 +1,8 @@
 ---
 issue: "#25"
 title: "Operational telemetry for API and cache performance"
-status: draft
+status: in-review
+revision: 1
 session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 ---
 

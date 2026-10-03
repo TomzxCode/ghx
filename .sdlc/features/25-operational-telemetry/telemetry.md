@@ -1,7 +1,8 @@
 ---
 issue: "#25"
 title: "Operational telemetry for API and cache performance"
-status: draft
+status: in-review
+revision: 1
 session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 ---
 
@@ -30,7 +31,7 @@ The closest equivalent is the workflow the data enables, and it is rendered belo
 
 ```mermaid
 flowchart TD
-    S1["1. Opt in<br/>--telemetry or GHX_TELEMETRY=1"] --> S2["2. Run a command<br/>api_call_recorded / cache_op_recorded"]
+    S1["1. Recording on by default<br/>--telemetry (or GHX_TELEMETRY=0 to opt out)"] --> S2["2. Run a command<br/>api_call_recorded / cache_op_recorded"]
     S2 --> S3["3. Read the run summary<br/>run_summary_printed"]
     S3 --> S4["4. Inspect across runs<br/>telemetry_summary_rendered"]
     S4 --> S5["5. Feed a model<br/>telemetry_exported"]
