@@ -261,3 +261,28 @@ func TestNextBackoff_Exponential(t *testing.T) {
 		}
 	}
 }
+
+// TestNextBackoff_TransientUsesSeparateBase verifies transient errors back off
+// from transientBackoff while the rate-limit fallback keeps using the longer
+// initialBackoff, so lowering the transient wait does not shorten rate-limit
+// waits (and vice versa).
+func TestNextBackoff_TransientUsesSeparateBase(t *testing.T) {
+	c := &Client{
+		initialBackoff:   10 * time.Second,
+		transientBackoff: time.Second,
+		maxBackoff:       60 * time.Second,
+	}
+	transient := &TransientError{Status: 502}
+	if got := c.nextBackoff(transient, 0); got != time.Second {
+		t.Errorf("transient first backoff = %v, want 1s", got)
+	}
+	if got := c.nextBackoff(transient, 1); got != 2*time.Second {
+		t.Errorf("transient second backoff = %v, want 2s", got)
+	}
+
+	// A rate limit without Retry-After still backs off from initialBackoff.
+	rle := &RateLimitError{Status: 403}
+	if got := c.nextBackoff(rle, 0); got != 10*time.Second {
+		t.Errorf("rate-limit fallback first backoff = %v, want 10s", got)
+	}
+}

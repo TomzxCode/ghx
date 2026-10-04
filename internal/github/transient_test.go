@@ -282,13 +282,15 @@ func TestQuery_RetriesTransportError(t *testing.T) {
 }
 
 // TestQuery_TransientBackoffIsExponential verifies a 502 has no Retry-After,
-// so nextBackoff falls through to the exponential branch.
+// so nextBackoff falls through to the transient exponential branch (backing
+// off from transientBackoff, not initialBackoff).
 func TestQuery_TransientBackoffIsExponential(t *testing.T) {
 	var sleeps []time.Duration
 	c := &Client{
-		initialBackoff: time.Second,
-		maxBackoff:     60 * time.Second,
-		sleep:          func(d time.Duration) { sleeps = append(sleeps, d) },
+		initialBackoff:   10 * time.Second,
+		transientBackoff: time.Second,
+		maxBackoff:       60 * time.Second,
+		sleep:            func(d time.Duration) { sleeps = append(sleeps, d) },
 	}
 	err := &TransientError{Status: 502}
 	if got := c.nextBackoff(err, 0); got != time.Second {

@@ -19,11 +19,15 @@ import (
 
 // Retry behaviour used when a sane value is not explicitly configured.
 // defaultMaxRetries is the number of additional attempts after the first, so
-// the default is 3 total attempts.
+// the default is 3 total attempts. defaultTransientBackoff is deliberately
+// shorter than defaultInitialBackoff: transient failures (5xx, connection
+// resets, truncated bodies) usually clear within a second or two, whereas the
+// rate-limit fallback is worth waiting longer for.
 const (
-	defaultMaxRetries     = 2
-	defaultInitialBackoff = 10 * time.Second
-	defaultMaxBackoff     = 60 * time.Second
+	defaultMaxRetries       = 2
+	defaultInitialBackoff   = 10 * time.Second
+	defaultTransientBackoff = 1 * time.Second
+	defaultMaxBackoff       = 60 * time.Second
 )
 
 // Client is a minimal GitHub GraphQL client.
@@ -32,9 +36,10 @@ type Client struct {
 	host           string
 	endpointURL    string
 	httpClient     *http.Client
-	maxRetries     int
-	initialBackoff time.Duration
-	maxBackoff     time.Duration
+	maxRetries       int
+	initialBackoff   time.Duration
+	transientBackoff time.Duration
+	maxBackoff       time.Duration
 	sleep          func(time.Duration)
 	lastRemaining  atomic.Int64 // x-ratelimit-remaining of the last response, -1 = unknown
 
@@ -100,6 +105,9 @@ func (c *Client) withDefaults() *Client {
 	}
 	if c.initialBackoff == 0 {
 		c.initialBackoff = defaultInitialBackoff
+	}
+	if c.transientBackoff == 0 {
+		c.transientBackoff = defaultTransientBackoff
 	}
 	if c.maxBackoff == 0 {
 		c.maxBackoff = defaultMaxBackoff
@@ -327,8 +335,10 @@ func countNodes(data json.RawMessage) int {
 }
 
 // nextBackoff computes the wait before the next attempt. When the previous
-// error carried a Retry-After value, that is used (capped at maxBackoff);
-// otherwise exponential backoff is applied (initialBackoff * 2^attempt).
+// error carried a Retry-After value, that is used (capped at maxBackoff).
+// Transient errors back off from transientBackoff; everything else (notably
+// the rate-limit fallback) backs off from initialBackoff. In both cases the
+// wait grows exponentially (base * 2^attempt).
 func (c *Client) nextBackoff(err error, attempt int) time.Duration {
 	var rle *RateLimitError
 	if errors.As(err, &rle) && rle.RetryAfter > 0 {
@@ -337,7 +347,12 @@ func (c *Client) nextBackoff(err error, attempt int) time.Duration {
 		}
 		return rle.RetryAfter
 	}
-	wait := c.initialBackoff << attempt
+	base := c.initialBackoff
+	var te *TransientError
+	if errors.As(err, &te) && c.transientBackoff > 0 {
+		base = c.transientBackoff
+	}
+	wait := base << attempt
 	if wait <= 0 || wait > c.maxBackoff {
 		return c.maxBackoff
 	}
