@@ -207,6 +207,15 @@ octocat/hello-world       42      15   2h30m       fresh
 alice/another-repo        10      3    1d          stale
 ```
 
+### Web UI
+
+Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette):
+
+```bash
+ghx cache && ghx serve
+ghx serve --addr 127.0.0.1:9000 --open
+```
+
 ### PR comments (inline, replies, pending, stash)
 
 ```bash
@@ -388,6 +397,7 @@ a speedup is not read as a like-for-like win.
 | `-R, --repo [HOST/]OWNER/REPO` | Target repository (default: detected from `git remote origin`) |
 | `--api-url string` | Override the GitHub GraphQL API endpoint URL (for testing) |
 | `--cache-dir string` | Override the cache directory path |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error` (stderr) |
 
 ### `cache`
 
@@ -462,6 +472,13 @@ a speedup is not read as a like-for-like win.
 | `--include-bots` | `false` | Include bot accounts as reviewers |
 | `--top int` | `5` | Number of pull requests per notable-PRs list |
 | `--list-prs` | `false` | Include the table of individual pull requests (can be large) |
+
+### `serve`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--addr string` | `127.0.0.1:8080` | Address to listen on |
+| `--open` | `false` | Open the browser after starting the server |
 
 ## Related projects
 

@@ -9,6 +9,7 @@ import (
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/gitremote"
+	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/version"
 )
 
@@ -17,6 +18,7 @@ var (
 	apiURLFlag         string
 	cacheDir           string
 	storageFlag        string
+	logLevelFlag       string
 	telemetryFlag      *bool
 	telemetryFlagValue bool
 	telemetryDBFlag    string
@@ -32,9 +34,14 @@ var rootCmd = &cobra.Command{
 comments locally to minimise API calls (cache at ~/.cache/ghx/cache/<host>/<owner>/<repo>),
 and provides PR/issue comment operations beyond the standard gh CLI: inline review
 comments, line-range comments, thread replies, pending reviews, and local stashes.`,
-	// PersistentPreRunE runs before every command's RunE, so the --telemetry
-	// flag's explicit-or-unset state is available to initTelemetry.
-	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+	// PersistentPreRunE runs before every command's RunE: it configures logging
+	// and resolves the --telemetry flag's explicit-or-unset state for
+	// initTelemetry.
+	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		logging.SetOutput(osStderrLogWriter())
+		if err := logging.SetLevel(logLevelFlag); err != nil {
+			return err
+		}
 		if cmd.Flags().Changed("telemetry") {
 			v := telemetryFlagValue
 			telemetryFlag = &v
@@ -57,6 +64,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL (for testing)")
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path")
 	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
+	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "info", "Log verbosity: debug, info, warn, or error")
 	rootCmd.PersistentFlags().BoolVar(&telemetryFlagValue, "telemetry", false, "Record API and cache timings locally (default enabled; env GHX_TELEMETRY, use --telemetry=false to opt out)")
 	rootCmd.PersistentFlags().StringVar(&telemetryDBFlag, "telemetry-db", "", "Telemetry database path (env GHX_TELEMETRY_DB)")
 

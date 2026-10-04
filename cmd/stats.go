@@ -10,6 +10,7 @@ import (
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/gitremote"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 var (
@@ -84,7 +85,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 		for _, pr := range prs {
 			allPRs = append(allPRs, &repoPR{Repo: repo.Owner + "/" + repo.Name, PR: pr})
 		}
-		fmt.Fprintf(os.Stderr, "Loaded %d pull request(s) for %s/%s\n", len(prs), repo.Owner, repo.Name)
+		logging.Info("loaded pull requests", "count", len(prs), "repo", repo.Owner+"/"+repo.Name)
 	}
 
 	filters := statsFilters{
@@ -152,8 +153,9 @@ func loadStatsPRs(store cache.Store, repo *gitremote.Repo, from time.Time) ([]*g
 	fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name)
 	if prs, err := store.LoadAllPRs(repo.Host, repo.Owner, repo.Name); err == nil && len(prs) > 0 {
 		if !fresh {
-			fmt.Fprintf(os.Stderr, "warning: cache for %s/%s is stale; run `ghx cache -R %s/%s` for complete data\n",
-				repo.Owner, repo.Name, repo.Owner, repo.Name)
+			logging.Warn("cache is stale",
+				"repo", repo.Owner+"/"+repo.Name,
+				"hint", fmt.Sprintf("run `ghx cache -R %s/%s` for complete data", repo.Owner, repo.Name))
 		}
 		return prs, nil
 	}
@@ -166,8 +168,9 @@ func loadStatsPRs(store cache.Store, repo *gitremote.Repo, from time.Time) ([]*g
 	if since.IsZero() {
 		since = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 	}
-	fmt.Fprintf(os.Stderr, "No cached pull requests for %s/%s; fetching (with comments) from GitHub since %s...\n",
-		repo.Owner, repo.Name, since.Format("2006-01-02"))
+	logging.Info("no cached pull requests, fetching from GitHub",
+		"repo", repo.Owner+"/"+repo.Name,
+		"since", since.Format("2006-01-02"))
 	return client.FetchPRsUpdated(repo.Owner, repo.Name, since, nil, nil)
 }
 

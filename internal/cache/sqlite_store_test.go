@@ -400,3 +400,159 @@ func TestSQLiteListCachedRepos(t *testing.T) {
 		t.Errorf("beta info = %+v, want nil (no cache metadata)", beta.Info)
 	}
 }
+
+// TestSQLiteMigratesLegacySchemaWithoutFreshnessColumns reproduces the v1
+// cache.db drift: databases created before per-type freshness tracking lack
+// the cache_meta.issues_cached_at / prs_cached_at columns. Opening such a
+// database must add the missing columns instead of failing every metadata
+// query with "no such column".
+func TestSQLiteMigratesLegacySchemaWithoutFreshnessColumns(t *testing.T) {
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "cache.db"))
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	legacy := `-- Schema for the SQLite cache backend. Nested collections (comments, labels,
+-- assignees) and the optional milestone are stored as JSON text so every field
+-- of github.Issue / github.PullRequest round-trips losslessly; scalar fields
+-- used for filtering are stored as indexed columns.
+-- Times are RFC3339Nano strings; nullable times are SQL NULL.
+
+CREATE TABLE IF NOT EXISTS issues (
+    host          TEXT    NOT NULL,
+    owner         TEXT    NOT NULL,
+    repo          TEXT    NOT NULL,
+    number        INTEGER NOT NULL,
+    title         TEXT    NOT NULL,
+    state         TEXT    NOT NULL,
+    author_login  TEXT    NOT NULL,
+    assignees     TEXT    NOT NULL,
+    labels        TEXT    NOT NULL,
+    milestone     TEXT,
+    created_at    TEXT    NOT NULL,
+    updated_at    TEXT    NOT NULL,
+    closed_at     TEXT,
+    url           TEXT    NOT NULL,
+    body          TEXT    NOT NULL,
+    comment_count INTEGER NOT NULL,
+    comments      TEXT    NOT NULL,
+    row_mtime     TEXT    NOT NULL,
+    PRIMARY KEY (host, owner, repo, number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_issues_state   ON issues(host, owner, repo, state);
+CREATE INDEX IF NOT EXISTS idx_issues_author  ON issues(host, owner, repo, author_login);
+CREATE INDEX IF NOT EXISTS idx_issues_updated ON issues(host, owner, repo, updated_at);
+
+CREATE TABLE IF NOT EXISTS pull_requests (
+    host            TEXT    NOT NULL,
+    owner           TEXT    NOT NULL,
+    repo            TEXT    NOT NULL,
+    number          INTEGER NOT NULL,
+    title           TEXT    NOT NULL,
+    state           TEXT    NOT NULL,
+    is_draft        INTEGER NOT NULL,
+    author_login    TEXT    NOT NULL,
+    assignees       TEXT    NOT NULL,
+    labels          TEXT    NOT NULL,
+    milestone       TEXT,
+    base_ref_name   TEXT    NOT NULL,
+    head_ref_name   TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL,
+    merged_at       TEXT,
+    closed_at       TEXT,
+    url             TEXT    NOT NULL,
+    body            TEXT    NOT NULL,
+    comment_count   INTEGER NOT NULL,
+    comments        TEXT    NOT NULL,
+    review_decision TEXT,
+    row_mtime       TEXT    NOT NULL,
+    PRIMARY KEY (host, owner, repo, number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prs_state   ON pull_requests(host, owner, repo, state);
+CREATE INDEX IF NOT EXISTS idx_prs_author  ON pull_requests(host, owner, repo, author_login);
+CREATE INDEX IF NOT EXISTS idx_prs_updated ON pull_requests(host, owner, repo, updated_at);
+
+CREATE TABLE IF NOT EXISTS cache_meta (
+    host         TEXT    NOT NULL,
+    owner        TEXT    NOT NULL,
+    repo         TEXT    NOT NULL,
+    cached_at    TEXT    NOT NULL,
+    duration     INTEGER NOT NULL,
+    complete     INTEGER NOT NULL,
+    issue_cursor TEXT,
+    pr_cursor    TEXT,
+    PRIMARY KEY (host, owner, repo)
+);`
+	if _, err := db.Exec(legacy); err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	legacyAt := "2026-09-15T10:00:00Z"
+	if _, err := db.Exec(`INSERT INTO cache_meta (host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor) VALUES ('github.com', 'acme', 'old', ?, 30, 1, NULL, NULL)`, legacyAt); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO issues (host, owner, repo, number, title, state, author_login, assignees, labels, created_at, updated_at, url, body, comment_count, comments, row_mtime)
+		VALUES ('github.com', 'acme', 'old', 1, 'legacy issue', 'OPEN', 'alice', '[]', '[]', ?, ?, 'https://github.com/acme/old/issues/1', 'body', 0, '[]', ?)`, legacyAt, legacyAt, legacyAt); err != nil {
+		t.Fatalf("seed legacy issue: %v", err)
+	}
+	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+		t.Fatalf("set legacy version: %v", err)
+	}
+	db.Close()
+
+	// Opening the legacy database must migrate it transparently.
+	sq, err := NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore on legacy db: %v", err)
+	}
+	defer sq.Close()
+
+	repos, err := sq.ListCachedRepos()
+	if err != nil {
+		t.Fatalf("ListCachedRepos on migrated db: %v (legacy columns must be migrated, not fail)", err)
+	}
+	if len(repos) != 1 {
+		t.Fatalf("got %d repos, want 1", len(repos))
+	}
+	r := repos[0]
+	if r.Owner != "acme" || r.Repo != "old" || r.IssueCount != 1 {
+		t.Fatalf("unexpected repo summary: %+v", r)
+	}
+	if r.Info == nil || r.Info.CachedAt.IsZero() || r.Info.Duration != 30 || !r.Info.Complete {
+		t.Fatalf("legacy metadata lost in migration: %+v", r.Info)
+	}
+
+	// The migrated columns are NULL: per-type freshness falls back to CachedAt.
+	info, err := sq.LoadCacheInfo("github.com", "acme", "old")
+	if err != nil {
+		t.Fatalf("LoadCacheInfo: %v", err)
+	}
+	if !info.IssuesCachedAt.IsZero() || !info.PRsCachedAt.IsZero() {
+		t.Fatalf("freshness columns should start empty after migration: %+v", info)
+	}
+	if info.IssuesUpdatedAt() != info.CachedAt || info.PRsUpdatedAt() != info.CachedAt {
+		t.Fatalf("per-type freshness should fall back to CachedAt: %+v", info)
+	}
+
+	// A metadata write records the new columns and survives a reopen.
+	if err := sq.SaveCacheInfo("github.com", "acme", "old", 45); err != nil {
+		t.Fatalf("SaveCacheInfo after migration: %v", err)
+	}
+	reopened, err := NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("reopen migrated db: %v", err)
+	}
+	defer reopened.Close()
+	info2, err := reopened.LoadCacheInfo("github.com", "acme", "old")
+	if err != nil {
+		t.Fatalf("LoadCacheInfo after reopen: %v", err)
+	}
+	if info2.Duration != 45 {
+		t.Fatalf("duration not persisted after reopen: %+v", info2)
+	}
+	if repos2, err := reopened.ListCachedRepos(); err != nil || len(repos2) != 1 {
+		t.Fatalf("ListCachedRepos after reopen: %v, %d repos", err, len(repos2))
+	}
+}

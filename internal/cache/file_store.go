@@ -2,7 +2,6 @@ package cache
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -30,30 +29,24 @@ func (s *fileStore) prDir(host, owner, repo string) string {
 	return filepath.Join(s.repoDir(host, owner, repo), "prs")
 }
 
-// SaveIssue writes a single issue to disk.
+// SaveIssue writes a single issue to disk. The write is atomic so concurrent
+// readers (for example the serve UI during a refresh) never observe a
+// half-written file.
 func (s *fileStore) SaveIssue(host, owner, repo string, issue *github.Issue) error {
-	dir := s.issueDir(host, owner, repo)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating issue dir: %w", err)
-	}
 	data, err := json.MarshalIndent(issue, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, strconv.Itoa(issue.Number)+".json"), data, 0644)
+	return atomicWrite(filepath.Join(s.issueDir(host, owner, repo), strconv.Itoa(issue.Number)+".json"), data, 0644)
 }
 
-// SavePR writes a single pull request to disk.
+// SavePR writes a single pull request to disk. The write is atomic (see SaveIssue).
 func (s *fileStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
-	dir := s.prDir(host, owner, repo)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("creating pr dir: %w", err)
-	}
 	data, err := json.MarshalIndent(pr, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, strconv.Itoa(pr.Number)+".json"), data, 0644)
+	return atomicWrite(filepath.Join(s.prDir(host, owner, repo), strconv.Itoa(pr.Number)+".json"), data, 0644)
 }
 
 // LoadIssue reads a single issue from disk, returning the file's modification time.

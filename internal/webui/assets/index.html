@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ghx</title>
+<script>
+// Resolve the theme before the CSS applies so there is no light/dark flash.
+// Stored preference wins; otherwise follow the system preference.
+document.documentElement.dataset.theme = localStorage.getItem('ghx-theme')
+  || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+</script>
+<link rel="icon" href="data:,">
+<link href="https://cdn.jsdelivr.net/npm/daisyui@5/daisyui.css" rel="stylesheet" type="text/css" />
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+<script>
+if (!window.Vue) {
+  document.getElementById('app').innerHTML =
+    '<div class="alert alert-error m-8"><div><h2 class="font-bold">Failed to load Vue from the CDN</h2>' +
+    '<p>Check your internet connection and reload the page.</p>' +
+    '<p>The JSON API is still available under <code>/api/</code>.</p></div></div>';
+}
+</script>
+<script src="/assets/app.js"></script>
+</body>
+</html>

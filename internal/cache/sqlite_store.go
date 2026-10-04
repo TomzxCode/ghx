@@ -81,6 +81,16 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			column: "head_ref_oid",
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN head_ref_oid TEXT NOT NULL DEFAULT ''",
 		},
+		{
+			table:  "cache_meta",
+			column: "issues_cached_at",
+			ddl:    "ALTER TABLE cache_meta ADD COLUMN issues_cached_at TEXT",
+		},
+		{
+			table:  "cache_meta",
+			column: "prs_cached_at",
+			ddl:    "ALTER TABLE cache_meta ADD COLUMN prs_cached_at TEXT",
+		},
 	} {
 		has, err := columnExists(db, m.table, m.column)
 		if err != nil {

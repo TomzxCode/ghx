@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 // ---------------------------------------------------------------------------
@@ -260,7 +261,7 @@ func printPRList(prs []*github.PullRequest, total int, jsonFields []string, noTr
 	w.Flush()
 
 	if total > len(prs) {
-		fmt.Fprintf(os.Stderr, "Showing %d of %d pull requests\n", len(prs), total)
+		logging.Info("showing pull requests", "shown", len(prs), "total", total)
 	}
 	return nil
 }

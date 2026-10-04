@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	gh "github.com/tomzxcode/ghx/internal/gh"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 var (
@@ -139,7 +140,7 @@ func runReviewStashPop(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := gh.RemoveStashEntry(owner, name, prNumber, stashIndex); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to remove stash entry: %v\n", err)
+		logging.Warn("failed to remove stash entry", "error", err)
 	}
 
 	totalComments := 0

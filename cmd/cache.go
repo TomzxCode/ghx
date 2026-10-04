@@ -12,6 +12,7 @@ import (
 
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/gitremote"
 )
 
 var (
@@ -93,6 +94,33 @@ func parseSinceDate(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid --since value %q: use YYYY-MM-DD or RFC3339 (e.g. 2026-09-01T15:04:05Z)", s)
 }
 
+// FetchEvent describes progress during a repository fetch. Phase is "issues",
+// "prs", or "prs-scan" (the newest-first walk locating the delta window);
+// Kind is "start", "batch", or "done"; Message carries the human-readable
+// phase description on start (empty for silent phases); Done is the number of
+// items written (or scanned for prs-scan) so far; Total is the server-reported
+// total (0 when unknown).
+type FetchEvent struct {
+	Phase   string
+	Kind    string
+	Message string
+	Done    int
+	Total   int
+}
+
+// FetchProgress receives fetch progress events. It may be nil.
+type FetchProgress func(ev FetchEvent)
+
+// FetchOptions controls a fetchRepoData run.
+type FetchOptions struct {
+	Force       bool       // discard resume state for the selected portions and full-fetch
+	Since       *time.Time // explicit cutoff overriding the resume cursors
+	FetchIssues bool
+	FetchPRs    bool
+	Duration    int           // freshness window recorded on completion; <= 0 leaves the previous value
+	OnProgress  FetchProgress // may be nil
+}
+
 func runCache(cmd *cobra.Command, args []string) error {
 	var sinceTime *time.Time
 	if cacheSince != "" {
@@ -146,162 +174,20 @@ func runCache(cmd *cobra.Command, args []string) error {
 		info = &cache.CacheInfo{}
 	}
 
-	// --force discards partial resume state and starts a full fetch. With a
-	// partial --type, only the selected portion is reset.
-	if cacheForce {
-		if fetchIssues {
-			info.IssueCursor = nil
-		}
-		if fetchPRs {
-			info.PRCursor = nil
-		}
-		if fetchIssues && fetchPRs {
-			info.Complete = false
-		}
-	}
-
-	// --since only applies to a complete cache: applying it to an interrupted
-	// fetch would mark the cache complete while most history is missing, so in
-	// that case finish the full fetch instead and ignore --since.
-	if sinceTime != nil && !info.Complete {
-		fmt.Println("Cache is incomplete; resuming the full fetch (--since ignored).")
-		sinceTime = nil
-	}
-
 	if !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(cacheDuration)*time.Minute {
 		fmt.Printf("Cache is still fresh (within %d minutes). Use --force to refresh anyway.\n", cacheDuration)
 		return nil
 	}
 
-	saveInfo := func() error {
-		return store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info)
-	}
-
-	if fetchIssues {
-		// --- Issues ---
-		// Issues are fetched oldest-first. `since = IssueCursor` either resumes an
-		// interrupted fetch (cursor mid-history) or delta-updates a complete cache
-		// (cursor near newest). nil cursor => cold fetch from the beginning.
-		// An explicit --since overrides the cursor for this run.
-		issueSince := info.IssueCursor
-		if sinceTime != nil {
-			issueSince = sinceTime
-		}
-		if issueSince != nil && !info.Complete {
-			fmt.Printf("Resuming issues from %s for %s/%s...\n", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)
-		} else if issueSince != nil && sinceTime != nil {
-			fmt.Printf("Fetching issues created or updated since %s for %s/%s...\n", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)
-		} else if issueSince != nil {
-			fmt.Printf("Fetching issues updated since %s for %s/%s...\n", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)
-		} else {
-			fmt.Printf("Caching issues for %s/%s...\n", repo.Owner, repo.Name)
-		}
-		tracker := newProgressTracker("issues", rateLimitStatus(client))
-		issueCount := 0
-		issueHandler := func(batch []*github.Issue, total int) error {
-			tracker.setTotal(total)
-			for _, issue := range batch {
-				if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue); err != nil {
-					return fmt.Errorf("saving issue #%d: %w", issue.Number, err)
-				}
-				advanceCursor(&info.IssueCursor, issue.UpdatedAt)
-			}
-			issueCount += len(batch)
-			tracker.set(issueCount)
-			return saveInfo() // persist resume cursor after each page
-		}
-		if _, err := client.FetchAllIssues(repo.Owner, repo.Name, issueSince, issueHandler); err != nil {
-			tracker.done()
-			return fmt.Errorf("fetching issues: %w", err)
-		}
-		tracker.done()
-		fmt.Printf("Cached %d issue(s).\n", issueCount)
-	}
-
-	if fetchPRs {
-		if !fetchIssues {
-			fmt.Println("Skipping issues (--type prs).")
-		}
-
-		// --- Pull requests ---
-		// The pullRequests connection has no server-side date filter, so the
-		// delta/resume/since fetch walks the connection newest-first and stops
-		// at the cutoff (exact timestamps, fetched with the same stable API as
-		// the cold path).
-		prCount := 0
-		prTracker := newProgressTracker("pull requests", rateLimitStatus(client))
-		prHandler := func(batch []*github.PullRequest, total int) error {
-			prTracker.setTotal(total)
-			for _, pr := range batch {
-				if err := store.SavePR(repo.Host, repo.Owner, repo.Name, pr); err != nil {
-					return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
-				}
-				advanceCursor(&info.PRCursor, pr.UpdatedAt)
-			}
-			prCount += len(batch)
-			prTracker.set(prCount)
-			return saveInfo()
-		}
-		if info.PRCursor == nil && sinceTime == nil {
-			fmt.Printf("Caching pull requests for %s/%s...\n", repo.Owner, repo.Name)
-			if _, err := client.FetchAllPRs(repo.Owner, repo.Name, prHandler); err != nil {
-				prTracker.done()
-				return fmt.Errorf("fetching pull requests: %w", err)
-			}
-		} else {
-			// Both delta/resume (cursor) and an explicit --since use the same
-			// newest-first connection walk with an exact-timestamp cutoff.
-			prSince := sinceTime
-			if prSince == nil && info.PRCursor != nil {
-				prSince = info.PRCursor
-			}
-			if sinceTime != nil {
-				fmt.Printf("Fetching pull requests created or updated since %s for %s/%s...\n", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)
-			} else {
-				fmt.Printf("Fetching pull requests updated since %s for %s/%s...\n", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)
-			}
-			// Phase 1 (locating the window) gets its own spinner bar so
-			// users see progress before full pages start arriving.
-			walkTracker := newProgressTracker("scanning pull requests", rateLimitStatus(client))
-			if _, err := client.FetchPRsUpdated(repo.Owner, repo.Name, *prSince, prHandler, func(scanned int) {
-				walkTracker.set(scanned)
-			}); err != nil {
-				walkTracker.done()
-				prTracker.done()
-				return fmt.Errorf("fetching pull requests: %w", err)
-			}
-			walkTracker.done()
-		}
-		prTracker.done()
-		fmt.Printf("Cached %d pull request(s).\n", prCount)
-	}
-	if !fetchPRs {
-		fmt.Println("Skipping pull requests (--type issues).")
-	}
-
-	// Only a run that fetched both portions may mark the cache complete: the
-	// skipped portion of a partial run may never have been fetched.
-	if fetchIssues && fetchPRs {
-		info.Complete = true
-	}
-	// Record freshness per data type. A partial run (--type issues|prs) only
-	// resets the window of the portion it fetched, so the other portion keeps
-	// its own age instead of being treated as fresh. CachedAt is advanced only
-	// when both portions were fetched; the per-type timestamps fall back to it
-	// for full runs and the legacy on-disk format.
-	now := time.Now()
-	if fetchIssues {
-		info.IssuesCachedAt = now
-	}
-	if fetchPRs {
-		info.PRsCachedAt = now
-	}
-	if fetchIssues && fetchPRs {
-		info.CachedAt = now
-	}
-	info.Duration = cacheDuration
-	if err := saveInfo(); err != nil {
-		return fmt.Errorf("saving cache info: %w", err)
+	if _, _, err := fetchRepoData(store, client, repo, info, FetchOptions{
+		Force:       cacheForce,
+		Since:       sinceTime,
+		FetchIssues: fetchIssues,
+		FetchPRs:    fetchPRs,
+		Duration:    cacheDuration,
+		OnProgress:  cliFetchProgress(client),
+	}); err != nil {
+		return err
 	}
 
 	fmt.Printf("Cache updated. Valid for %d minute(s).\n", cacheDuration)
@@ -381,6 +267,226 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// fetchRepoData fetches issues and/or pull requests for repo into the store,
+// resuming from (and advancing) the cursors in info. When opts.Force is true
+// the resume state of the selected portions is discarded and a full fetch
+// runs. opts.Since, when set, overrides the cursors with an explicit cutoff.
+// opts.OnProgress may be nil; when set it receives start/batch/done events for
+// each phase. Returns the number of issues and PRs written. On error the store
+// keeps what was written before the failure and info holds the resume cursor
+// for the next attempt.
+//
+// Freshness is recorded per data type: a partial run (--type issues|prs)
+// updates only the timestamp of the portion it fetched, so the other portion
+// keeps its own age. The cache is only marked complete when both portions were
+// fetched.
+func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Repo, info *cache.CacheInfo, opts FetchOptions) (int, int, error) {
+	if opts.Force {
+		if opts.FetchIssues {
+			info.IssueCursor = nil
+		}
+		if opts.FetchPRs {
+			info.PRCursor = nil
+		}
+		if opts.FetchIssues && opts.FetchPRs {
+			info.Complete = false
+		}
+	}
+
+	// --since only applies to a complete cache: applying it to an interrupted
+	// fetch would mark the cache complete while most history is missing, so in
+	// that case finish the full fetch instead and ignore --since.
+	if opts.Since != nil && !info.Complete {
+		fmt.Println("Cache is incomplete; resuming the full fetch (--since ignored).")
+		opts.Since = nil
+	}
+
+	notify := func(ev FetchEvent) {
+		if opts.OnProgress != nil {
+			opts.OnProgress(ev)
+		}
+	}
+
+	saveInfo := func() error {
+		return store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info)
+	}
+
+	issueCount := 0
+	prCount := 0
+
+	if opts.FetchIssues {
+		// --- Issues ---
+		// Issues are fetched oldest-first. `since = IssueCursor` either resumes an
+		// interrupted fetch (cursor mid-history) or delta-updates a complete cache
+		// (cursor near newest). nil cursor => cold fetch from the beginning.
+		// An explicit --since overrides the cursor for this run.
+		issueSince := info.IssueCursor
+		if opts.Since != nil {
+			issueSince = opts.Since
+		}
+		switch {
+		case issueSince != nil && !info.Complete:
+			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Resuming issues from %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+		case issueSince != nil && opts.Since != nil:
+			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Fetching issues created or updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+		case issueSince != nil:
+			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Fetching issues updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+		default:
+			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Caching issues for %s/%s...", repo.Owner, repo.Name)})
+		}
+		issueHandler := func(batch []*github.Issue, total int) error {
+			for _, issue := range batch {
+				if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue); err != nil {
+					return fmt.Errorf("saving issue #%d: %w", issue.Number, err)
+				}
+				advanceCursor(&info.IssueCursor, issue.UpdatedAt)
+			}
+			issueCount += len(batch)
+			notify(FetchEvent{Phase: "issues", Kind: "batch", Done: issueCount, Total: total})
+			return saveInfo() // persist resume cursor after each page
+		}
+		if _, err := client.FetchAllIssues(repo.Owner, repo.Name, issueSince, issueHandler); err != nil {
+			notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
+			return issueCount, prCount, fmt.Errorf("fetching issues: %w", err)
+		}
+		notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
+	}
+
+	if opts.FetchPRs {
+		if !opts.FetchIssues {
+			fmt.Println("Skipping issues (--type prs).")
+		}
+
+		// --- Pull requests ---
+		// The pullRequests connection has no server-side date filter, so the
+		// delta/resume/since fetch walks the connection newest-first and stops
+		// at the cutoff (exact timestamps, fetched with the same stable API as
+		// the cold path).
+		prHandler := func(batch []*github.PullRequest, total int) error {
+			for _, pr := range batch {
+				if err := store.SavePR(repo.Host, repo.Owner, repo.Name, pr); err != nil {
+					return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
+				}
+				advanceCursor(&info.PRCursor, pr.UpdatedAt)
+			}
+			prCount += len(batch)
+			notify(FetchEvent{Phase: "prs", Kind: "batch", Done: prCount, Total: total})
+			return saveInfo()
+		}
+		if info.PRCursor == nil && opts.Since == nil {
+			notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Caching pull requests for %s/%s...", repo.Owner, repo.Name)})
+			if _, err := client.FetchAllPRs(repo.Owner, repo.Name, prHandler); err != nil {
+				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
+				return issueCount, prCount, fmt.Errorf("fetching pull requests: %w", err)
+			}
+		} else {
+			// Both delta/resume (cursor) and an explicit --since use the same
+			// newest-first connection walk with an exact-timestamp cutoff.
+			prSince := opts.Since
+			if prSince == nil && info.PRCursor != nil {
+				prSince = info.PRCursor
+			}
+			if opts.Since != nil {
+				notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Fetching pull requests created or updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+			} else {
+				notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Fetching pull requests updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+			}
+			// Phase 1 (locating the window) gets its own spinner bar so
+			// users see progress before full pages start arriving.
+			if _, err := client.FetchPRsUpdated(repo.Owner, repo.Name, *prSince, prHandler, func(scanned int) {
+				notify(FetchEvent{Phase: "prs-scan", Kind: "batch", Done: scanned})
+			}); err != nil {
+				notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
+				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
+				return issueCount, prCount, fmt.Errorf("fetching pull requests: %w", err)
+			}
+			notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
+		}
+		notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
+	}
+	if !opts.FetchPRs {
+		fmt.Println("Skipping pull requests (--type issues).")
+	}
+
+	return finalizeFetch(store, repo, info, opts, issueCount, prCount)
+}
+
+// finalizeFetch records freshness per data type and persists the final cache
+// info. A partial run only resets the window of the portion it fetched;
+// CachedAt is advanced only when both portions were fetched, so full runs keep
+// the legacy single-timestamp behavior.
+func finalizeFetch(store cache.Store, repo *gitremote.Repo, info *cache.CacheInfo, opts FetchOptions, issueCount, prCount int) (int, int, error) {
+	now := time.Now()
+	if opts.FetchIssues {
+		info.IssuesCachedAt = now
+	}
+	if opts.FetchPRs {
+		info.PRsCachedAt = now
+	}
+	if opts.FetchIssues && opts.FetchPRs {
+		info.CachedAt = now
+		info.Complete = true
+	}
+	if opts.Duration > 0 {
+		info.Duration = opts.Duration
+	}
+	if err := store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info); err != nil {
+		return issueCount, prCount, fmt.Errorf("saving cache info: %w", err)
+	}
+	return issueCount, prCount, nil
+}
+
+// cliFetchProgress renders fetch events as CLI status lines and progress bars.
+// Phases map onto labelled bars; unknown phases still print their messages.
+func cliFetchProgress(client *github.Client) FetchProgress {
+	type phaseBar struct {
+		tracker *progressTracker
+	}
+	phases := map[string]*phaseBar{}
+	return func(ev FetchEvent) {
+		p := phases[ev.Phase]
+		if p == nil {
+			p = &phaseBar{}
+			phases[ev.Phase] = p
+		}
+		switch ev.Kind {
+		case "start":
+			if ev.Message != "" {
+				fmt.Println(ev.Message)
+			}
+		case "batch":
+			if p.tracker == nil {
+				p.tracker = newProgressTracker(fetchPhaseLabel(ev.Phase), rateLimitStatus(client))
+			}
+			p.tracker.setTotal(ev.Total)
+			p.tracker.set(ev.Done)
+		case "done":
+			if p.tracker != nil {
+				p.tracker.done()
+				p.tracker = nil
+			}
+			switch ev.Phase {
+			case "issues":
+				fmt.Printf("Cached %d issue(s).\n", ev.Done)
+			case "prs":
+				fmt.Printf("Cached %d pull request(s).\n", ev.Done)
+			}
+		}
+	}
+}
+
+// fetchPhaseLabel maps a fetch phase onto its progress bar label.
+func fetchPhaseLabel(phase string) string {
+	switch phase {
+	case "prs":
+		return "pull requests"
+	case "prs-scan":
+		return "scanning pull requests"
+	default:
+		return phase
+	}
+}
+
 // advanceCursor sets *cur to t when t is later than the current value (or when
 // *cur is nil), advancing the resume high-water mark.
 func advanceCursor(cur **time.Time, t time.Time) {
@@ -445,6 +551,9 @@ func (t *progressTracker) setTotal(total int) {
 			progressbar.OptionSetPredictTime(false),
 			progressbar.OptionThrottle(50*time.Millisecond),
 		)
+		if t.writer == os.Stderr {
+			setActiveBar(t.bar)
+		}
 	} else if total > 0 && !t.maxSet {
 		t.bar.ChangeMax(total)
 		t.maxSet = true
@@ -473,6 +582,9 @@ func (t *progressTracker) done() {
 		t.bar.Finish()
 	}
 	fmt.Fprintln(t.writer)
+	if t.writer == os.Stderr {
+		setActiveBar(nil)
+	}
 }
 
 // progressWriter returns os.Stderr when it is a terminal device, otherwise

@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 // ---------------------------------------------------------------------------
@@ -236,7 +237,7 @@ func printIssueList(issues []*github.Issue, total int, asJSON bool, noTruncate b
 	w.Flush()
 
 	if total > len(issues) {
-		fmt.Fprintf(os.Stderr, "Showing %d of %d issues\n", len(issues), total)
+		logging.Info("showing issues", "shown", len(issues), "total", total)
 	}
 	return nil
 }

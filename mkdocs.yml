@@ -49,6 +49,7 @@ nav:
     - Repositories: user-guide/repositories.md
     - Stats: user-guide/stats.md
     - Telemetry: user-guide/telemetry.md
+    - Serve (Web UI): user-guide/serve.md
     - Mock Server: user-guide/mock-server.md
     - Flag Reference: user-guide/flag-reference.md
   - Context:
@@ -72,6 +73,9 @@ nav:
     - Mock Server:
       - Requirements: sdlc/features/FEAT-0005-mock-server/requirements.md
       - Specification: sdlc/features/FEAT-0005-mock-server/specification.md
+    - Web UI:
+      - Requirements: sdlc/features/FEAT-0007-web-ui/requirements.md
+      - Specification: sdlc/features/FEAT-0007-web-ui/specification.md
 
 markdown_extensions:
   - pymdownx.highlight:

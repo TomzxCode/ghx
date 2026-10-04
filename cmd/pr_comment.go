@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	gh "github.com/tomzxcode/ghx/internal/gh"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 var (
@@ -207,26 +208,26 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		}
 		threads, popErr := gh.PopStash(owner, name, prNumber, stashIdx)
 		if popErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to pop stash: %v\n", popErr)
+			logging.Warn("failed to pop stash", "error", popErr)
 			return
 		}
 		prID, idErr := gh.GetPRNodeID(owner, name, prNumber)
 		if idErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to restore pending review: %v\n", idErr)
+			logging.Warn("failed to restore pending review", "error", idErr)
 			return
 		}
 		leftover, _ := gh.ListPendingReviews(owner, name, prNumber)
 		if len(leftover) > 0 {
 			if sErr := gh.SubmitReview(leftover[0].ID, "COMMENT", ""); sErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to submit leftover pending review: %v\n", sErr)
+				logging.Warn("failed to submit leftover pending review", "error", sErr)
 				return
 			}
 		}
 		newReviewID, rErr := gh.RestorePendingReview(prID, threads)
 		if rErr != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to restore %d pending comments: %v\n", len(threads), rErr)
+			logging.Warn("failed to restore pending comments", "count", len(threads), "error", rErr)
 		} else {
-			fmt.Fprintf(os.Stderr, "Restored %d pending comments (review %s)\n", len(threads), newReviewID)
+			logging.Info("restored pending comments", "count", len(threads), "review", newReviewID)
 		}
 	}()
 

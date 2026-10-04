@@ -10,6 +10,7 @@ These flags apply to all commands.
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr. |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
 | `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
 | `--version`, `-v` | Print version. |
@@ -153,6 +154,13 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 | `--include-bots` | | `false` | Include bot accounts as reviewers |
 | `--top int` | | `5` | Number of pull requests per notable-PRs list |
 | `--list-prs` | | `false` | Include the table of individual pull requests (can be large) |
+
+## serve
+
+| Flag | Default | Description |
+|---|---|---|
+| `--addr string` | `127.0.0.1:8080` | Address to listen on |
+| `--open` | `false` | Open the browser after starting the server |
 
 ## mock serve
 

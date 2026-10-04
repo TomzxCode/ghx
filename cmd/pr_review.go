@@ -61,10 +61,10 @@ Use --review to submit a specific review by ID.`,
 }
 
 var (
-	reviewEvent   string
-	reviewBody    string
+	reviewEvent    string
+	reviewBody     string
 	reviewBodyFile string
-	reviewIDFlag  string
+	reviewIDFlag   string
 )
 
 func init() {
