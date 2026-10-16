@@ -56,10 +56,10 @@ ghx issue list --search "memory leak"
 ghx issue list --limit 10
 ```
 
-When the total exceeds the limit, a summary is printed to stderr:
+When the total exceeds the limit, a log line is printed to stderr:
 
 ```
-Showing 10 of 42 issues
+info showing issues shown=10 total=42
 ```
 
 ### JSON output

@@ -33,7 +33,7 @@ Download the latest pre-built binary from the [releases page](https://github.com
 
 ## Build from source
 
-Requires [Go](https://go.dev/) 1.21 or later.
+Requires [Go](https://go.dev/) 1.26 or later.
 
 ```bash
 go install github.com/tomzxcode/ghx@main
@@ -46,3 +46,17 @@ This places the binary at `$(go env GOPATH)/bin/ghx`. Make sure that directory i
 ```bash
 ghx --version
 ```
+
+## Shell completion
+
+ghx can generate completion scripts for the common shells:
+
+```bash
+ghx completion bash        # also: zsh, fish, powershell
+```
+
+Each subcommand prints the completion script for that shell; see `ghx completion <shell> --help` for where to install it. Pass `--no-descriptions` to omit completion descriptions.
+
+## Getting help
+
+`ghx help [command]` prints the full help for any command (the same output as `ghx <command> --help`).

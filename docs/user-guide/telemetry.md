@@ -4,7 +4,7 @@ ghx can record how long each GitHub API call and each cache operation takes, so
 performance work and the mock server's simulation generator can rely on measured
 costs instead of assumed ones.
 
-Recording is **off by default**, **local-only**, and **never uploaded**. A
+Recording is **on by default**, **local-only**, and **never uploaded**. A
 failure to record never fails, slows, or changes the exit code of the command
 that produced the event.
 

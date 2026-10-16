@@ -57,6 +57,7 @@ nav:
     - Architecture: sdlc/context/architecture.md
     - Conventions: sdlc/context/conventions.md
     - Vocabulary: sdlc/context/vocabulary.md
+    - Use Cases: sdlc/context/use-cases.md
   - Features:
     - Issue Browsing:
       - Requirements: sdlc/features/FEAT-0001-issue-browsing/requirements.md
@@ -73,6 +74,9 @@ nav:
     - Mock Server:
       - Requirements: sdlc/features/FEAT-0005-mock-server/requirements.md
       - Specification: sdlc/features/FEAT-0005-mock-server/specification.md
+    - Stats Report Analytics:
+      - Requirements: sdlc/features/FEAT-0006-stats-report-analytics/requirements.md
+      - Specification: sdlc/features/FEAT-0006-stats-report-analytics/specification.md
     - Web UI:
       - Requirements: sdlc/features/FEAT-0007-web-ui/requirements.md
       - Specification: sdlc/features/FEAT-0007-web-ui/specification.md

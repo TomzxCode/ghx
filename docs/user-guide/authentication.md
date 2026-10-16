@@ -9,6 +9,8 @@ ghx needs a GitHub personal access token to call the GitHub GraphQL API. It reso
 
 If none of these are available, ghx exits with an error.
 
+The host-specific `gh auth token --hostname <host>` lookup applies to the GraphQL client used by the read commands (`cache`, `list`, `view`, `stats`, `serve`). The comment and review commands use a separate client that skips that step and resolves only plain `gh auth token`, and it always calls `api.github.com`, so those commands do not support GitHub Enterprise.
+
 ## Personal access token
 
 Create a token at [GitHub Settings > Developer settings > Personal access tokens](https://github.com/settings/tokens). The token needs the `repo` scope for private repositories.
@@ -31,4 +33,4 @@ For GitHub Enterprise hosts, pass the full repository path:
 ghx --repo ghe.example.com/org/repo cache
 ```
 
-ghx resolves the API endpoint as `https://ghe.example.com/api/graphql` and uses `gh auth token --hostname ghe.example.com` when looking for a token.
+ghx resolves the API endpoint as `https://ghe.example.com/api/graphql` and uses `gh auth token --hostname ghe.example.com` when looking for a token. This applies to the read commands; the comment and review commands only support github.com (see above).

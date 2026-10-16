@@ -60,10 +60,10 @@ ghx pr list --search "fix crash"
 ghx pr list --limit 10
 ```
 
-When the total exceeds the limit, a summary is printed to stderr:
+When the total exceeds the limit, a log line is printed to stderr:
 
 ```
-Showing 10 of 30 pull requests
+info showing pull requests shown=10 total=30
 ```
 
 ### JSON output

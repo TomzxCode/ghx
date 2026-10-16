@@ -6,7 +6,7 @@ These flags apply to all commands.
 
 | Flag | Description |
 |---|---|
-| `--repo [HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory. |
+| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory. |
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
