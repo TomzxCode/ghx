@@ -1,7 +1,8 @@
 VERSION := $(or $(VERSION),$(shell git describe --tags --long --dirty --always))
 LDFLAGS := -s -w -X github.com/tomzxcode/ghx/internal/version.version=$(VERSION)
 OUTPUT ?= ghx
-PREFIX ?= /usr/local
+# Per-user by default so `make install` needs no sudo; use PREFIX=/usr/local for a system-wide install.
+PREFIX ?= $(HOME)/.local
 
 .PHONY: build clean install uninstall
 

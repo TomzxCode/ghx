@@ -12,6 +12,18 @@ go install github.com/tomzxcode/ghx@main
 
 Or download a pre-built binary from the [releases page](https://github.com/TomzxCode/ghx/releases/tag/latest).
 
+### Build from source with make
+
+Requires [Go](https://go.dev/) 1.26 or later.
+
+```bash
+make build                        # produces ./ghx
+make install                      # installs to ~/.local/bin/ghx, no sudo
+sudo make install PREFIX=/usr/local   # system-wide install to /usr/local/bin/ghx
+```
+
+`make install` installs under `$(PREFIX)/bin`. `PREFIX` defaults to `$(HOME)/.local` (the standard per-user location on Linux), so a plain `make install` needs no `sudo`. Set `PREFIX=/usr/local` for a system-wide install. `make uninstall` removes the binary from the same prefix.
+
 ## Authentication
 
 Set a GitHub personal access token in your environment:
