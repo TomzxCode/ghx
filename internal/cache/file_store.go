@@ -326,6 +326,22 @@ func (s *fileStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, nil
 }
 
+// DeleteRepo removes the repository's cache directory, which holds its issues,
+// pull requests, and cache metadata. It reports false when nothing is cached.
+func (s *fileStore) DeleteRepo(host, owner, repo string) (bool, error) {
+	dir := s.repoDir(host, owner, repo)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // Kind reports the backend name.
 func (s *fileStore) Kind() string { return "file" }
 

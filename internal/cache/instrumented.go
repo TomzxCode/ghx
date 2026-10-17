@@ -161,6 +161,14 @@ func (s *InstrumentedStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, err
 }
 
+// DeleteRepo records the removal.
+func (s *InstrumentedStore) DeleteRepo(host, owner, repo string) (bool, error) {
+	start := time.Now()
+	deleted, err := s.store.DeleteRepo(host, owner, repo)
+	s.record(telemetry.KindCacheOther, "DeleteRepo", start, boolInt(deleted), err)
+	return deleted, err
+}
+
 // QueryIssues records the query and its result size.
 func (s *InstrumentedStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*github.Issue, error) {
 	start := time.Now()

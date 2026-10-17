@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/tomzxcode/ghx/internal/gitremote"
 )
 
 var repoCmd = &cobra.Command{
@@ -19,8 +21,32 @@ var repoListCmd = &cobra.Command{
 	RunE:  runRepoList,
 }
 
+var repoDeleteCmd = &cobra.Command{
+	Use:   "delete [REPO]",
+	Short: "Delete all cached data for a repository",
+	Long: `Deletes the locally cached issues, pull requests, and cache metadata for one
+repository. The repository is given as [HOST/]OWNER/REPO, or resolved from
+--repo or the current directory's git remote when omitted.
+
+The data is local only; the next cache, list, or view command fetches it again
+from GitHub. With the SQLite backend, only that repository's rows are removed
+from the shared database.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runRepoDelete,
+}
+
 func init() {
 	repoCmd.AddCommand(repoListCmd)
+	repoCmd.AddCommand(repoDeleteCmd)
+}
+
+// repoLabel formats repository coordinates the way the CLI displays them:
+// OWNER/REPO on github.com, HOST/OWNER/REPO elsewhere.
+func repoLabel(host, owner, repo string) string {
+	if host == "" || host == "github.com" {
+		return owner + "/" + repo
+	}
+	return host + "/" + owner + "/" + repo
 }
 
 func runRepoList(cmd *cobra.Command, args []string) error {
@@ -35,17 +61,14 @@ func runRepoList(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(repos) == 0 {
-		fmt.Println("No cached repositories found.")
+		fmt.Fprintln(cmd.OutOrStdout(), "No cached repositories found.")
 		return nil
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
 	fmt.Fprintln(w, "REPO\tISSUES\tPRS\tCACHED AGE\tSTATUS")
 	for _, r := range repos {
-		repoStr := r.Host + "/" + r.Owner + "/" + r.Repo
-		if r.Host == "github.com" {
-			repoStr = r.Owner + "/" + r.Repo
-		}
+		repoStr := repoLabel(r.Host, r.Owner, r.Repo)
 		age := "—"
 		status := "no cache info"
 		if r.Info != nil {
@@ -61,6 +84,44 @@ func runRepoList(cmd *cobra.Command, args []string) error {
 			repoStr, r.IssueCount, r.PRCount, age, status)
 	}
 	w.Flush()
+	return nil
+}
+
+// resolveRepoArg resolves the repository targeted by a command that takes an
+// optional [HOST/]OWNER/REPO argument. Without an argument it falls back to
+// --repo or the current directory's git remote.
+func resolveRepoArg(args []string) (*gitremote.Repo, error) {
+	if len(args) == 0 {
+		return getRepo()
+	}
+	if repoFlag != "" {
+		return nil, fmt.Errorf("specify the repository as an argument or with --repo, not both")
+	}
+	return gitremote.ParseRepo(args[0])
+}
+
+func runRepoDelete(cmd *cobra.Command, args []string) error {
+	repo, err := resolveRepoArg(args)
+	if err != nil {
+		return err
+	}
+	label := repoLabel(repo.Host, repo.Owner, repo.Name)
+
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	deleted, err := store.DeleteRepo(repo.Host, repo.Owner, repo.Name)
+	if err != nil {
+		return fmt.Errorf("deleting cache for %s: %w", label, err)
+	}
+	if !deleted {
+		fmt.Fprintf(cmd.OutOrStdout(), "No cached data found for %s.\n", label)
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Deleted cached data for %s.\n", label)
 	return nil
 }
 

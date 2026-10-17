@@ -556,3 +556,58 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 		t.Fatalf("ListCachedRepos after reopen: %v, %d repos", err, len(repos2))
 	}
 }
+
+// TestSQLiteDeleteRepo verifies that deleting one repository removes only its
+// rows and metadata, leaving other repositories in the shared database intact.
+func TestSQLiteDeleteRepo(t *testing.T) {
+	sq, err := NewSQLiteStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer sq.Close()
+
+	for _, name := range []string{"alpha", "beta"} {
+		if err := sq.SaveIssue(qHost, "acme", name, richIssue(1)); err != nil {
+			t.Fatalf("SaveIssue %s: %v", name, err)
+		}
+		if err := sq.SavePR(qHost, "acme", name, richPR(10)); err != nil {
+			t.Fatalf("SavePR %s: %v", name, err)
+		}
+		if err := sq.SaveCacheInfo(qHost, "acme", name, 60); err != nil {
+			t.Fatalf("SaveCacheInfo %s: %v", name, err)
+		}
+	}
+
+	deleted, err := sq.DeleteRepo(qHost, "acme", "alpha")
+	if err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
+	if !deleted {
+		t.Error("DeleteRepo reported false, want true for a cached repository")
+	}
+	if issues, _ := sq.LoadAllIssues(qHost, "acme", "alpha"); len(issues) != 0 {
+		t.Errorf("alpha still has %d issues", len(issues))
+	}
+	if prs, _ := sq.LoadAllPRs(qHost, "acme", "alpha"); len(prs) != 0 {
+		t.Errorf("alpha still has %d pull requests", len(prs))
+	}
+	if _, err := sq.LoadCacheInfo(qHost, "acme", "alpha"); err == nil {
+		t.Error("alpha cache metadata still present")
+	}
+
+	repos, err := sq.ListCachedRepos()
+	if err != nil {
+		t.Fatalf("ListCachedRepos: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Repo != "beta" {
+		t.Fatalf("remaining repos = %+v, want only beta", repos)
+	}
+
+	deleted, err = sq.DeleteRepo(qHost, "acme", "alpha")
+	if err != nil {
+		t.Fatalf("second DeleteRepo: %v", err)
+	}
+	if deleted {
+		t.Error("second DeleteRepo reported true, want false when nothing is cached")
+	}
+}

@@ -139,6 +139,10 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 
 No command-specific flags. Uses only the global `--cache-dir`.
 
+## repo delete
+
+Takes an optional positional `[HOST/]OWNER/REPO` argument; when omitted, the repository is resolved from `--repo` or the current directory's git remote. Uses only the global `--cache-dir` and `--storage`.
+
 ## stats
 
 Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the repository is resolved from `--repo` or the current directory's git remote.

@@ -730,3 +730,36 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	}
 	return repos, rows.Err()
 }
+
+// DeleteRepo removes every issue, pull request, and cache metadata row for one
+// repository, leaving other repositories in the shared database untouched. The
+// deletes run in a transaction so an interrupted call cannot leave a partially
+// deleted repository. It reports false when nothing was cached.
+func (s *sqliteStore) DeleteRepo(host, owner, repo string) (bool, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, err
+	}
+	deleted := false
+	for _, table := range []string{"issues", "pull_requests", "cache_meta"} {
+		res, err := tx.Exec(
+			`DELETE FROM `+table+` WHERE host = ? AND owner = ? AND repo = ?`,
+			host, owner, repo)
+		if err != nil {
+			tx.Rollback()
+			return false, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			tx.Rollback()
+			return false, err
+		}
+		if n > 0 {
+			deleted = true
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return deleted, nil
+}

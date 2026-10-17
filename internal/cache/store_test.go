@@ -225,3 +225,40 @@ func TestIsCacheFresh_RequiresComplete(t *testing.T) {
 		t.Error("incomplete cache should not be fresh")
 	}
 }
+
+func TestFileStoreDeleteRepo(t *testing.T) {
+	s := newTempStore(t)
+	const host, owner, repo = "github.com", "owner", "repo"
+
+	if err := s.SaveIssue(host, owner, repo, sampleIssue(1)); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := s.SavePR(host, owner, repo, samplePR(2)); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	if err := s.SaveCacheInfo(host, owner, repo, 60); err != nil {
+		t.Fatalf("SaveCacheInfo: %v", err)
+	}
+
+	deleted, err := s.DeleteRepo(host, owner, repo)
+	if err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
+	if !deleted {
+		t.Error("DeleteRepo reported false, want true for a cached repository")
+	}
+	if _, err := os.Stat(s.repoDir(host, owner, repo)); !os.IsNotExist(err) {
+		t.Errorf("repository directory still exists: %v", err)
+	}
+	if issues, _ := s.LoadAllIssues(host, owner, repo); len(issues) != 0 {
+		t.Errorf("LoadAllIssues after delete returned %d issues, want 0", len(issues))
+	}
+
+	deleted, err = s.DeleteRepo(host, owner, repo)
+	if err != nil {
+		t.Fatalf("second DeleteRepo: %v", err)
+	}
+	if deleted {
+		t.Error("second DeleteRepo reported true, want false when nothing is cached")
+	}
+}

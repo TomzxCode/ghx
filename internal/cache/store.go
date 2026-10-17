@@ -99,6 +99,10 @@ type Store interface {
 	IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	ListCachedRepos() ([]CachedRepo, error)
+	// DeleteRepo removes every cached item and the cache metadata for one
+	// repository. It reports whether anything was deleted, so callers can
+	// distinguish "removed" from "nothing cached" without a prior read.
+	DeleteRepo(host, owner, repo string) (bool, error)
 
 	// QueryIssues returns the cached issues matching q. Backends may push the
 	// scalar predicates to indexed storage, but the returned set is identical

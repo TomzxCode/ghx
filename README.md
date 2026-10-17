@@ -219,6 +219,12 @@ octocat/hello-world       42      15   2h30m       fresh
 alice/another-repo        10      3    1d          stale
 ```
 
+Delete the cached data for one repository:
+
+```bash
+ghx repo delete octocat/hello-world
+```
+
 ### Web UI
 
 Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette):

@@ -22,9 +22,26 @@ The status column shows `fresh` when the cache is within its configured duration
 
 Use `repo list` to see which repositories are cached and how many issues and PRs each holds.
 
+## Delete a cached repository
+
+```bash
+ghx repo delete octocat/hello-world
+```
+
+Removes the cached issues, pull requests, and cache metadata for one repository. With the SQLite backend (the default), only that repository's rows are removed from the shared database. With `--storage file`, the per-repository directory is removed.
+
+The repository can also be resolved from `--repo` or the current directory's git remote:
+
+```bash
+ghx repo delete
+ghx repo delete -R octocat/hello-world
+```
+
+Deleting cached data is local only; the next `cache`, `list`, or `view` command fetches it from GitHub again. The command reports when nothing is cached for the repository.
+
 ## Clean up
 
-Cache data is never automatically removed. To free disk space, delete the SQLite database (the default backend):
+Cache data is never automatically removed. To remove a single repository, use `repo delete` above. To remove every cached repository, delete the SQLite database (the default backend):
 
 ```bash
 rm ~/.cache/ghx/cache/cache.db
