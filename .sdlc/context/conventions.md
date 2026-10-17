@@ -18,6 +18,7 @@
 │   ├── issue.go             # issue list, issue view
 │   ├── pr.go                # pr list, pr view
 │   ├── cache.go             # cache command, shared fetch logic (fetchRepoData)
+│   ├── readcache.go         # read-path cache backfill for list/view
 │   ├── serve.go             # serve command (local web UI server)
 │   ├── mock.go              # mock serve command
 │   ├── repo.go              # repo list command

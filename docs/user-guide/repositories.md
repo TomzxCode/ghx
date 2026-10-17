@@ -22,6 +22,10 @@ The status column shows `fresh` when the cache is within its configured duration
 
 Use `repo list` to see which repositories are cached and how many issues and PRs each holds.
 
+## Repository identity
+
+Owner and repository names are matched case-insensitively, as GitHub does. `ghx repo delete TomzxCode/ai-text-editor` and `ghx repo delete tomzxcode/ai-text-editor` address the same cache entry, and a cache written under a mixed-case spelling is collapsed to one entry on first open. Coordinates are stored lower-case, so `repo list` shows that canonical form.
+
 ## Delete a cached repository
 
 ```bash

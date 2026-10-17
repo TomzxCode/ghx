@@ -85,11 +85,13 @@ cache command ──► LoadCacheInfo() ──► get cachedAt timestamp
 | Delta via client-side comparison | PRs check `updatedAt` client-side | No `since` filter available on PR GraphQL connection |
 | Progress via `totalCount` | Determinate bar for full fetches and issue deltas; spinner for PR deltas | Issues' `totalCount` is accurate (server-filtered); PR `totalCount` counts all PRs so a spinner is shown during delta scans |
 | No cache eviction | Let cache grow | Simplicity; disk usage is typically small |
+| Repository key casing | Lower-case host/owner/repo | GitHub names are case-insensitive, so one repository maps to one cache entry |
 
 ## Risks and Unknowns
 
 1. PR delta fetch relies on ordering by `updatedAt DESC`; if ordering changes, some updates may be missed
 2. No atomic cache replacement; a failed mid-fetch leaves a partially updated cache
+3. A cache written before key normalization is collapsed on first open: mixed-case rows and directories are lower-cased, keeping the most recent write when two spellings collide
 
 ## Out of Scope
 

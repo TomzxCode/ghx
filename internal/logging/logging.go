@@ -1,8 +1,9 @@
 // Package logging provides a small, CLI-friendly logging facade over
 // log/slog. The global level is controlled by the --log-level flag and
-// defaults to info. Messages are written to stderr as "level message key=value"
-// lines, deliberately without timestamps or source locations so terminal
-// output stays readable.
+// defaults to info. Messages are written to stderr as
+// "2006-01-02 15:04:05.000 level message key=value" lines: a local-time
+// timestamp, the level, the message, then attributes, deliberately without
+// source locations so terminal output stays readable.
 package logging
 
 import (
@@ -80,7 +81,12 @@ func Warn(msg string, args ...any) { logger.Warn(msg, args...) }
 // Error logs at error level.
 func Error(msg string, args ...any) { logger.Error(msg, args...) }
 
-// handler is a minimal slog.Handler emitting "level message key=value" lines.
+// timeFormat is the local-time prefix on every log line. Millisecond precision
+// lets lines within the same second be ordered when reading timing logs.
+const timeFormat = "2006-01-02 15:04:05.000"
+
+// handler is a minimal slog.Handler emitting
+// "2006-01-02 15:04:05.000 level message key=value" lines.
 type handler struct {
 	mu     *sync.Mutex
 	w      io.Writer
@@ -99,6 +105,8 @@ func (h *handler) Enabled(_ context.Context, l slog.Level) bool {
 
 func (h *handler) Handle(_ context.Context, r slog.Record) error {
 	var b strings.Builder
+	b.WriteString(r.Time.Format(timeFormat))
+	b.WriteByte(' ')
 	b.WriteString(levelLabel(r.Level))
 	b.WriteByte(' ')
 	b.WriteString(r.Message)

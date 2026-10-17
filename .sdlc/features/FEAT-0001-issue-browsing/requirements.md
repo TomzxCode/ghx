@@ -37,6 +37,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-12 | Should | The system shall filter by mention and app author (API-only, not cached) |
 | FR-13 | Should | The system shall support `--no-truncate` to show full issue titles |
 | FR-14 | Should | The system shall support `--limit` to cap the number of results |
+| FR-15 | Should | The system shall write issues fetched from the API during `list` and `view` to the local cache in the same form `ghx cache` writes (full record, comments included) |
 
 ## Non-Functional Requirements
 
@@ -50,7 +51,8 @@ Order rows by priority: Must first, then Should, then May.
 ## Constraints
 
 - Filtering by `mention` and `app` cannot be done from cache alone; these filters are only applied when serving from the API
-- Cache-fresh view treats the full cache as authoritative; if an item is not in cache, the user must refresh
+- A cache-fresh view serves the item from the full cache; an item missing from it is fetched and cached rather than reported as missing
+- A read command never advances the cache freshness window; only `ghx cache` does
 
 ## Acceptance Criteria
 
@@ -60,6 +62,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-07: With fresh cache, `issue list` reads from disk without API calls
 - [ ] FR-09: `--comments` shows inline comments on view
 - [ ] FR-10: `--json` outputs valid JSON
+- [ ] FR-15: After `issue list` or `issue view` falls back to the API, the fetched issues are in the cache (comments included)
 
 ## Open Questions
 

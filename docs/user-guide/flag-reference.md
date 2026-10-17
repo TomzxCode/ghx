@@ -10,7 +10,7 @@ These flags apply to all commands.
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
-| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr. |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
 | `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
 | `--version`, `-v` | Print version. |

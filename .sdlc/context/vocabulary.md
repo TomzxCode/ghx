@@ -35,7 +35,7 @@
 | Time advance | A scenario builder mode that processes events chronologically to simulate evolving activity |
 | Endpoint URL | The GraphQL API URL, auto-detected from the host or overridden via `--api-url` |
 | Token resolution | The chain used to find a GitHub token: GH_TOKEN > GITHUB_TOKEN > gh auth token |
-| Authoritative cache | When the full cache is fresh, `view` commands serve from it without API fallback |
+| Authoritative cache | When the full cache is fresh, `view` commands serve from it; an item missing from it is fetched and cached instead of erroring |
 
 ## Acronyms
 

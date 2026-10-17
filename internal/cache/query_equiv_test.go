@@ -228,7 +228,7 @@ func TestSQLiteQueryUsesIndex(t *testing.T) {
 		t.Fatalf("NewSQLiteStore: %v", err)
 	}
 	defer sq.Close()
-	s := sq.(*sqliteStore)
+	s := backend(sq).(*sqliteStore)
 
 	rows, err := s.db.Query(`EXPLAIN QUERY PLAN SELECT number FROM issues
 		WHERE host=? AND owner=? AND repo=? AND state=? COLLATE NOCASE`,

@@ -17,17 +17,29 @@ func (r *Repo) String() string {
 	return fmt.Sprintf("%s/%s/%s", r.Host, r.Owner, r.Name)
 }
 
-// ParseRepo parses a [HOST/]OWNER/REPO string.
+// ParseRepo parses a [HOST/]OWNER/REPO string. The result is normalized to
+// lower case: GitHub treats owner and repository names case-insensitively, so
+// one repository always maps to one cache key and one identity.
 func ParseRepo(s string) (*Repo, error) {
 	parts := strings.Split(s, "/")
 	switch len(parts) {
 	case 2:
-		return &Repo{Host: "github.com", Owner: parts[0], Name: parts[1]}, nil
+		return normalizeRepo(&Repo{Host: "github.com", Owner: parts[0], Name: parts[1]}), nil
 	case 3:
-		return &Repo{Host: parts[0], Owner: parts[1], Name: parts[2]}, nil
+		return normalizeRepo(&Repo{Host: parts[0], Owner: parts[1], Name: parts[2]}), nil
 	default:
 		return nil, fmt.Errorf("invalid repo format %q: expected [HOST/]OWNER/REPO", s)
 	}
+}
+
+// normalizeRepo lowercases the host, owner, and repository name. GitHub owner
+// and repository names are case-insensitive, so the lower-case form is the
+// canonical key everywhere (cache keys, deduplication, display).
+func normalizeRepo(r *Repo) *Repo {
+	r.Host = strings.ToLower(r.Host)
+	r.Owner = strings.ToLower(r.Owner)
+	r.Name = strings.ToLower(r.Name)
+	return r
 }
 
 // DetectRepo reads the origin remote URL from the current directory's git repo.
@@ -53,7 +65,7 @@ func parseRemoteURL(rawURL string) (*Repo, error) {
 		if len(ownerRepo) != 2 {
 			return nil, fmt.Errorf("invalid SSH remote URL: %s", rawURL)
 		}
-		return &Repo{Host: parts[0], Owner: ownerRepo[0], Name: ownerRepo[1]}, nil
+		return normalizeRepo(&Repo{Host: parts[0], Owner: ownerRepo[0], Name: ownerRepo[1]}), nil
 	}
 
 	// HTTPS: https://github.com/owner/repo
@@ -64,7 +76,7 @@ func parseRemoteURL(rawURL string) (*Repo, error) {
 		if len(parts) != 3 {
 			return nil, fmt.Errorf("invalid HTTPS remote URL: %s", rawURL)
 		}
-		return &Repo{Host: parts[0], Owner: parts[1], Name: parts[2]}, nil
+		return normalizeRepo(&Repo{Host: parts[0], Owner: parts[1], Name: parts[2]}), nil
 	}
 
 	return nil, fmt.Errorf("unrecognized remote URL format: %s", rawURL)

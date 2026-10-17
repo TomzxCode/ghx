@@ -75,6 +75,7 @@ Cache updated. Valid for 60 minute(s).
 ```
 
 List and view commands serve from the cache when it is fresh, and fall back to the GitHub API otherwise.
+When they fall back, they also write what they fetch into the cache (using the same records `ghx cache` produces), so browsing incrementally warms the cache.
 
 #### Storage backends
 
@@ -403,8 +404,12 @@ a speedup is not read as a like-for-like win.
 | Command | Cache behaviour |
 |---|---|
 | `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
-| `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. |
-| `issue view` / `pr view` | Serves the individual cached item when it is less than 60 minutes old, or the full cache is fresh; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
+| `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. |
+| `issue view` / `pr view` | Serves the individual cached item when it is less than 60 minutes old, or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
+
+Run a read command with `--log-level debug` to see where its time goes (repository resolution, cache store open, token resolution, the list call, and the cache backfill stages).
+
+Repository coordinates are matched case-insensitively (as GitHub does) and stored lower-case, so a repository has one cache entry however its name is spelled.
 
 ## Flag reference
 
@@ -415,7 +420,7 @@ a speedup is not read as a like-for-like win.
 | `-R, --repo [HOST/]OWNER/REPO` | Target repository (default: detected from `git remote origin`) |
 | `--api-url string` | Override the GitHub GraphQL API endpoint URL (for testing) |
 | `--cache-dir string` | Override the cache directory path |
-| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error` (stderr) |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error` (stderr; each line is prefixed with a local timestamp) |
 
 ### `cache`
 

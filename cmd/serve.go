@@ -82,7 +82,12 @@ func serveRefreshFunc(store cache.Store) webui.RefreshFunc {
 		if err != nil {
 			return 0, 0, err
 		}
-		repo := &gitremote.Repo{Host: host, Owner: owner, Name: name}
+		// ParseRepo normalizes the coordinates, so a request that differs only
+		// by casing targets the same cache entry as the CLI.
+		repo, err := gitremote.ParseRepo(host + "/" + owner + "/" + name)
+		if err != nil {
+			return 0, 0, err
+		}
 		info, _ := store.LoadCacheInfo(host, owner, name)
 		if info == nil {
 			info = &cache.CacheInfo{}

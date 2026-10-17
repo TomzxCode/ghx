@@ -100,6 +100,7 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	// Serve from cache when it is fresh.
+	cacheStart := time.Now()
 	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
 			State:     issueListState,
@@ -117,8 +118,10 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 			if issueListLimit > 0 && len(issues) > issueListLimit {
 				issues = issues[:issueListLimit]
 			}
+			logging.Debug("issue list: served from cache", "count", total, "duration", time.Since(cacheStart))
 			return printIssueList(issues, total, issueListJSON, issueListNoTruncate)
 		}
+		logging.Debug("issue list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
 	}
 
 	// Fall back to the GitHub API.
@@ -139,11 +142,14 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 		App:       issueListApp,
 	}
 
+	listStart := time.Now()
 	issues, err := client.ListIssues(repo.Owner, repo.Name, opts)
 	if err != nil {
 		return err
 	}
+	logging.Debug("issue list: fetched from API", "count", len(issues), "duration", time.Since(listStart))
 
+	backfillIssueDetails(store, client, repo, issues)
 	return printIssueList(issues, len(issues), issueListJSON, issueListNoTruncate)
 }
 
@@ -165,19 +171,20 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	if !issueViewRefresh {
-		// When a full cache is fresh, treat it as authoritative: don't hit the API
-		// if the item isn't there — it simply doesn't exist (or wasn't cached).
+		// When a full cache is fresh, serve the item from it. A missing item is
+		// treated as a cache miss (fetched and cached below) rather than an
+		// error, so browsing fills gaps the full cache does not cover.
 		if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-			issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number)
-			if err != nil {
-				return fmt.Errorf("issue #%d not found in cache; run `ghx cache --force` to refresh", number)
+			lookupStart := time.Now()
+			if issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
+				logging.Debug("issue view: served from cache", "number", number, "source", "full-cache", "duration", time.Since(lookupStart))
+				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
-			return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
-		}
-
-		// No fresh full cache — try the individual file, then fall back to the API.
-		if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
+			logging.Debug("issue view: not in fresh cache, fetching from API", "number", number, "duration", time.Since(lookupStart))
+		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
+			// No fresh full cache — serve the individual file when it is recent.
 			if time.Since(mtime) < 60*time.Minute {
+				logging.Debug("issue view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
 		}
@@ -188,12 +195,19 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	fetchStart := time.Now()
 	issue, err := client.GetIssue(repo.Owner, repo.Name, number)
 	if err != nil {
 		return err
 	}
+	fetchDuration := time.Since(fetchStart)
 
-	_ = store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue)
+	saveStart := time.Now()
+	saveErr := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue)
+	if saveErr != nil {
+		logging.Warn("caching issue", "number", number, "error", saveErr)
+	}
+	logging.Debug("issue view: fetched from API", "number", number, "fetch", fetchDuration, "save", time.Since(saveStart))
 	return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 }
 

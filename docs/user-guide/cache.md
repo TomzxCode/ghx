@@ -137,18 +137,21 @@ The cache metadata (the `.cache_info.json` file for the file backend, the `cache
 
 A cache is considered **fresh** when `time.Since(cachedAt) < duration × 1 minute`.
 
-When the cache is fresh, `list` and `view` commands serve entirely from the cache with no API calls. When stale, they fall back to the GitHub API.
+When the cache is fresh, `list` and `view` commands serve entirely from the cache with no API calls. When stale, they fall back to the GitHub API and write what they fetch back into the cache.
 
 ## Cache behavior per command
 
 | Command | Behavior |
 |---|---|
 | `cache` | Fetches all issues and PRs (all states, with comments). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
-| `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale. Does not write to cache. |
-| `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written less than 60 minutes ago. Otherwise fetches from the API and saves to cache. `--refresh` bypasses all checks. |
+| `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale, and writes each entry not already cached to the cache in full (comments, reviews, timeline), so the record is identical to what `ghx cache` writes. |
+| `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written less than 60 minutes ago. Otherwise fetches from the API and saves to cache; an item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. `--refresh` bypasses all checks. |
 
 ## Notes
 
+- Repository coordinates are stored lower-case. GitHub owner and repository names are case-insensitive, so a repository has one cache entry however its name is spelled; a cache written before this rule is collapsed to the lower-case key on first open.
+- Run a read command with `--log-level debug` to see where its time goes: repository resolution, cache store open, token resolution, the list API call, and the cache backfill (scan, per-item detail fetch, and totals).
+- A read command (`list`/`view`) never marks the repository's cache fresh; only `cache` (or `cache --type`) advances the freshness window. Reads fill the cache without claiming the repository is fully cached, so `ghx cache` still does its full or delta fetch afterwards.
 - Transient failures (rate limits and GitHub 5xx errors such as an HTML 502 from a proxy) are retried automatically with exponential backoff. Each fetched page is already persisted, so if a run still fails, re-running resumes from the last page written.
 - Cache data is never automatically cleaned up. Delete `~/.cache/ghx/cache/cache.db` (SQLite) or the per-repository directories under `~/.cache/ghx/cache/` (file) to free space.
 - The `--mention` and `--app` filters cannot be evaluated from cached data and are silently skipped when serving from cache.

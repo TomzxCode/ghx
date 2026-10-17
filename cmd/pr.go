@@ -106,6 +106,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	// Serve from cache when it is fresh.
+	cacheStart := time.Now()
 	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
 			State:    prListState,
@@ -125,8 +126,10 @@ func runPRList(cmd *cobra.Command, args []string) error {
 			if prListLimit > 0 && len(prs) > prListLimit {
 				prs = prs[:prListLimit]
 			}
+			logging.Debug("pr list: served from cache", "count", total, "duration", time.Since(cacheStart))
 			return printPRList(prs, total, jsonFields, prListNoTruncate)
 		}
+		logging.Debug("pr list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
 	}
 
 	// Fall back to the GitHub API.
@@ -148,11 +151,14 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		App:      prListApp,
 	}
 
+	listStart := time.Now()
 	prs, err := client.ListPRs(repo.Owner, repo.Name, opts)
 	if err != nil {
 		return err
 	}
+	logging.Debug("pr list: fetched from API", "count", len(prs), "duration", time.Since(listStart))
 
+	backfillPRDetails(store, client, repo, prs)
 	return printPRList(prs, len(prs), jsonFields, prListNoTruncate)
 }
 
@@ -174,18 +180,20 @@ func runPRView(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	if !prViewRefresh {
-		// When a full cache is fresh, treat it as authoritative.
+		// When a full cache is fresh, serve the item from it. A missing item is
+		// treated as a cache miss (fetched and cached below) rather than an
+		// error, so browsing fills gaps the full cache does not cover.
 		if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-			pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number)
-			if err != nil {
-				return fmt.Errorf("pull request #%d not found in cache; run `ghx cache --force` to refresh", number)
+			lookupStart := time.Now()
+			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
+				logging.Debug("pr view: served from cache", "number", number, "source", "full-cache", "duration", time.Since(lookupStart))
+				return printPRView(pr, prViewComments, prViewJSON)
 			}
-			return printPRView(pr, prViewComments, prViewJSON)
-		}
-
-		// No fresh full cache — try the individual file, then fall back to the API.
-		if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
+			logging.Debug("pr view: not in fresh cache, fetching from API", "number", number, "duration", time.Since(lookupStart))
+		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
+			// No fresh full cache — serve the individual file when it is recent.
 			if time.Since(mtime) < 60*time.Minute {
+				logging.Debug("pr view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
 				return printPRView(pr, prViewComments, prViewJSON)
 			}
 		}
@@ -196,12 +204,19 @@ func runPRView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	fetchStart := time.Now()
 	pr, err := client.GetPR(repo.Owner, repo.Name, number)
 	if err != nil {
 		return err
 	}
+	fetchDuration := time.Since(fetchStart)
 
-	_ = store.SavePR(repo.Host, repo.Owner, repo.Name, pr)
+	saveStart := time.Now()
+	saveErr := store.SavePR(repo.Host, repo.Owner, repo.Name, pr)
+	if saveErr != nil {
+		logging.Warn("caching pull request", "number", number, "error", saveErr)
+	}
+	logging.Debug("pr view: fetched from API", "number", number, "fetch", fetchDuration, "save", time.Since(saveStart))
 	return printPRView(pr, prViewComments, prViewJSON)
 }
 

@@ -46,7 +46,7 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
   - On push to main: creates/updates a `latest` prerelease with all binaries
 - **Distribution:** `go install` from source, or pre-built binaries from GitHub Releases
 - **Testing:** Mock server (`internal/mockserver`) provides an `httptest.Server` that mirrors the GitHub GraphQL API contract for integration tests without network access
-- **No observability:** The tool is a CLI with no runtime metrics, logging, or tracing; performance data is available only through the local-only telemetry recorder (`internal/telemetry/`), which is on by default, switchable with `ghx telemetry enable|disable`, and never transmits anything (see `.sdlc/knowledge/decisions/1-telemetry-default-on.md`)
+- **Observability:** The tool is a CLI with no runtime metrics or tracing. It logs to stderr (`--log-level debug|info|warn|error`); at debug level it reports where a command spends its time (repository resolution, cache store open, token resolution, API calls, and the cache backfill stages). Performance data is also available through the local-only telemetry recorder (`internal/telemetry/`), which is on by default, switchable with `ghx telemetry enable|disable`, and never transmits anything (see `.sdlc/knowledge/decisions/1-telemetry-default-on.md`)
 - **No hosting:** Fully client-side, no server component (mock server is for testing only)
 
 ## Architecture Decisions
@@ -54,6 +54,7 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
 - GraphQL-only API access (no REST endpoints used), documented in code and README
 - File-per-item cache layout (`issues/42.json`, `prs/10.json`) for efficient individual lookups
 - Token resolution chain: `GH_TOKEN` > `GITHUB_TOKEN` > `gh auth token`
-- Authoritative cache mode: when full cache is fresh, `view` commands serve from cache without API fallback
+- Cache-first reads: `list`/`view` serve from cache when it is fresh and otherwise fetch from the API; a `view` of an item missing from a fresh cache fetches and caches it rather than erroring. Read commands backfill the cache with the full records `ghx cache` writes but never advance its freshness window.
+- Canonical cache keys: host/owner/repo are stored lower-case because GitHub names are case-insensitive, so one repository maps to one cache entry; a store decorator normalizes every key and a one-time migration collapses any mixed-case rows or directories
 - Mock server uses `httptest.Server` with route-based query matching (string contains) for simplicity
 - Simulation generator uses an event-based timeline with weighted time sampling for realistic activity bursts

@@ -133,7 +133,10 @@ func NewStore() Store {
 	return NewStoreWithPath(DefaultDir())
 }
 
-// NewStoreWithPath opens the file-based cache store rooted at baseDir.
+// NewStoreWithPath opens the file-based cache store rooted at baseDir. On first
+// open it normalizes any mixed-case repository directories, then wraps the store
+// so every key is canonical.
 func NewStoreWithPath(baseDir string) Store {
-	return &fileStore{baseDir: baseDir}
+	normalizeFileKeys(baseDir)
+	return normalize(&fileStore{baseDir: baseDir})
 }

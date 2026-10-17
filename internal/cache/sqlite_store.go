@@ -64,11 +64,22 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrating schema: %w", err)
 	}
-	if _, err := db.Exec("PRAGMA user_version = 2"); err != nil {
+	version, err := sqliteUserVersion(db)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("reading schema version: %w", err)
+	}
+	if version < schemaVersionKeysNormalized {
+		if err := normalizeSQLiteKeys(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("normalizing cache keys: %w", err)
+		}
+	}
+	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersionKeysNormalized)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("setting schema version: %w", err)
 	}
-	return &sqliteStore{db: db, path: path}, nil
+	return normalize(&sqliteStore{db: db, path: path}), nil
 }
 
 // migrateSQLiteSchema applies additive column migrations to databases created

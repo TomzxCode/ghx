@@ -15,6 +15,8 @@ func TestParseRepo(t *testing.T) {
 		{"owner/repo", "github.com", "owner", "repo", false},
 		{"github.com/owner/repo", "github.com", "owner", "repo", false},
 		{"ghe.example.com/acme/tool", "ghe.example.com", "acme", "tool", false},
+		{"TomzxCode/ai-text-editor", "github.com", "tomzxcode", "ai-text-editor", false},
+		{"GitHub.com/Owner/Repo", "github.com", "owner", "repo", false},
 		{"bad", "", "", "", true},
 		{"a/b/c/d", "", "", "", true},
 	}
@@ -52,6 +54,7 @@ func TestParseRemoteURL(t *testing.T) {
 		{"http://github.com/owner/repo", "github.com", "owner", "repo", false},
 		{"git@ghe.example.com:acme/tool.git", "ghe.example.com", "acme", "tool", false},
 		{"https://ghe.example.com/acme/tool", "ghe.example.com", "acme", "tool", false},
+		{"git@github.com:TomzxCode/ai-text-editor.git", "github.com", "tomzxcode", "ai-text-editor", false},
 		{"notaurl", "", "", "", true},
 	}
 	for _, c := range cases {

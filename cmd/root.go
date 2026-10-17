@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
@@ -79,10 +80,21 @@ func init() {
 // getRepo resolves the target repository from the --repo flag or the current
 // directory's git remote.
 func getRepo() (*gitremote.Repo, error) {
+	start := time.Now()
+	var (
+		repo *gitremote.Repo
+		err  error
+	)
 	if repoFlag != "" {
-		return gitremote.ParseRepo(repoFlag)
+		repo, err = gitremote.ParseRepo(repoFlag)
+	} else {
+		repo, err = gitremote.DetectRepo()
 	}
-	return gitremote.DetectRepo()
+	if err != nil {
+		return nil, err
+	}
+	logging.Debug("resolved repository", "repo", repo.String(), "duration", time.Since(start))
+	return repo, nil
 }
 
 // resolveOwnerName resolves the target repository and returns its owner and
@@ -99,6 +111,7 @@ func resolveOwnerName() (owner, name string, err error) {
 // telemetry is enabled, the client is instrumented so every GraphQL call is
 // recorded.
 func newClient(host string) (*github.Client, error) {
+	start := time.Now()
 	var (
 		client *github.Client
 		err    error
@@ -112,6 +125,7 @@ func newClient(host string) (*github.Client, error) {
 		return nil, err
 	}
 	client.SetTelemetry(initTelemetry())
+	logging.Debug("github client ready", "host", host, "duration", time.Since(start))
 	return client, nil
 }
 
@@ -120,6 +134,7 @@ func newClient(host string) (*github.Client, error) {
 // cache root for both backends. When telemetry is enabled, the store is wrapped
 // so its operations are recorded.
 func newStore() (cache.Store, error) {
+	start := time.Now()
 	backend := strings.ToLower(storageFlag)
 	if backend == "" {
 		backend = strings.ToLower(os.Getenv("GHX_STORAGE"))
@@ -153,5 +168,6 @@ func newStore() (cache.Store, error) {
 		// operations themselves pass their own coordinates.
 		store = cache.Instrument(store, rec, "", "", "")
 	}
+	logging.Debug("cache store ready", "backend", store.Kind(), "duration", time.Since(start))
 	return store, nil
 }

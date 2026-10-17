@@ -30,6 +30,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-05 | Must | The system shall support `--force` to re-fetch even when cache is fresh |
 | FR-06 | Must | The system shall perform delta fetches when cache exists and `--force` is not used |
 | FR-07 | Should | The system shall report progress during caching (items fetched, cache status) |
+| FR-08 | Should | The system shall key the cache on lower-case host/owner/repo, so a repository has one entry regardless of the casing it is named with |
 
 ## Non-Functional Requirements
 

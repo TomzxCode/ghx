@@ -16,18 +16,22 @@ The filtering and display logic follows the same cache-first, API-fallback patte
 ```
 pr list ──► runPRList()
                  │
-                 ├─ Cache fresh? ──Yes──► LoadAllPRs() ──► filterPRs() ──► printPRList()
+                 ├─ Cache fresh? ──Yes──► QueryPRs() ──► printPRList()
                  │
-                 └─ No ──► NewClient() ──► ListPRs() ──► printPRList()
+                 └─ No ──► NewClient() ──► ListPRs() ──► backfillPRDetails() ──► printPRList()
 
 pr view N ──► runPRView()
                  │
                  ├─ Cache fresh? ──Yes──► LoadPR(N) ──► printPRView()
+                 │                            │ (missing) ──► fall through to API
                  │
                  ├─ Individual file fresh (<60m)? ──Yes──► printPRView()
                  │
                  └─ API ──► GetPR(N) ──► SavePR() ──► printPRView()
 ```
+
+`backfillPRDetails` writes each listed pull request the repository does not already have cached, re-fetching it with `getPRQuery` because a list payload never carries the detail (`additions`, `deletions`, reviews, timeline) a cache record does.
+Read commands never advance the cache freshness window.
 
 ## Data Models
 
@@ -77,10 +81,13 @@ Fetches a single PR with up to 100 inline comments.
 |---|---|---|
 | Merged as distinct state | `MERGED` is a separate PullRequestState in GraphQL | Allows filtering merged PRs separately from closed |
 | Review decision formatting | Human-readable strings in output | `APPROVED` becomes "approved" for tabular display |
+| Read-path caching | `list` and `view` write fetched PRs to the cache | Browsing warms the cache without a separate `ghx cache` run |
+| Full record for cached items | Re-fetch with `getPRQuery` for every new entry | Cached records are identical to `ghx cache` output |
 
 ## Risks and Unknowns
 
 1. `app` filter cannot be verified from cached data
+2. Backfilling a large list issues one detail request per uncached entry, bounded to a small worker pool
 
 ## Out of Scope
 
