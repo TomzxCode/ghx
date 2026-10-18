@@ -45,10 +45,14 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 	// "database is locked" churn within one process.
 	db.SetMaxOpenConns(1)
 
+	// busy_timeout is applied before the journal mode switch: setting WAL takes
+	// a lock another ghx process may hold, and until the busy handler is
+	// installed that attempt returns SQLITE_BUSY at once instead of waiting, so
+	// parallel invocations fail while the cache database is being created.
 	for _, pragma := range []string{
+		"PRAGMA busy_timeout = 5000",
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
-		"PRAGMA busy_timeout = 5000",
 		"PRAGMA foreign_keys = ON",
 	} {
 		if _, err := db.Exec(pragma); err != nil {

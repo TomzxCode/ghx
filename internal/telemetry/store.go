@@ -82,10 +82,13 @@ func Open(path string) (*Store, error) {
 	// A single writer connection avoids "database is locked" churn between the
 	// batched writer goroutine and any reader in the same process.
 	db.SetMaxOpenConns(1)
+	// busy_timeout is applied before the journal mode switch so a concurrent
+	// process contending for the WAL switch waits instead of failing with
+	// SQLITE_BUSY immediately.
 	for _, pragma := range []string{
+		"PRAGMA busy_timeout = 2000",
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
-		"PRAGMA busy_timeout = 2000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
 			db.Close()
