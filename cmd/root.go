@@ -32,9 +32,11 @@ var rootCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	Long: `ghx is an extended GitHub CLI. It caches issues, pull requests, and their
-comments locally to minimise API calls (cache at ~/.cache/ghx/cache/<host>/<owner>/<repo>),
-and provides PR/issue comment operations beyond the standard gh CLI: inline review
-comments, line-range comments, thread replies, pending reviews, and local stashes.`,
+comments locally to minimise API calls (the SQLite database ~/.cache/ghx/cache/cache.db
+by default, or per-repository JSON files under ~/.cache/ghx/cache/<host>/<owner>/<repo>
+with --storage file), and provides PR/issue comment operations beyond the standard gh
+CLI: inline review comments, line-range comments, thread replies, pending reviews, and
+local stashes.`,
 	// PersistentPreRunE runs before every command's RunE: it configures logging
 	// and resolves the --telemetry flag's explicit-or-unset state for
 	// initTelemetry.

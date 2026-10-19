@@ -27,8 +27,10 @@ var cacheCmd = &cobra.Command{
 	Use:   "cache",
 	Short: "Fetch and cache issues and PRs (including comments)",
 	Long: `Fetches all issues and pull requests (with comments) from GitHub and writes them
-to ~/.cache/ghx/cache/<host>/<owner>/<repo>. Subsequent list/view commands will
-serve results from this cache until it expires.
+to the local cache: the SQLite database ~/.cache/ghx/cache/cache.db by default, or
+per-repository JSON files under ~/.cache/ghx/cache/<host>/<owner>/<repo> with
+--storage file. Subsequent list/view commands will serve results from this cache
+until it expires.
 
 Each page is written to disk as soon as it is fetched, and the resume position
 is persisted after every page. If a fetch is interrupted (for example by a GitHub
