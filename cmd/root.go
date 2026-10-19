@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -36,7 +37,10 @@ comments locally to minimise API calls (the SQLite database ~/.cache/ghx/cache/c
 by default, or per-repository JSON files under ~/.cache/ghx/cache/<host>/<owner>/<repo>
 with --storage file), and provides PR/issue comment operations beyond the standard gh
 CLI: inline review comments, line-range comments, thread replies, pending reviews, and
-local stashes.`,
+local stashes.
+
+Use --remote URL to run any command on a running ghx rpc serve instance
+instead of locally.`,
 	// PersistentPreRunE runs before every command's RunE: it configures logging
 	// and resolves the --telemetry flag's explicit-or-unset state for
 	// initTelemetry.
@@ -55,8 +59,24 @@ local stashes.`,
 
 // Execute is the entry point called from main.
 func Execute() {
+	// --remote forwards the command to a running `ghx rpc serve` instance.
+	// It is handled before cobra so every command and flag, including ones the
+	// client binary does not know about, reaches the server unchanged.
+	if url, token, args, ok := takeRemoteArgs(os.Args[1:]); ok {
+		code := runRemote(url, token, args)
+		flushTelemetry()
+		os.Exit(code)
+	}
+
 	defer flushTelemetry()
 	if err := rootCmd.Execute(); err != nil {
+		var exit *exitError
+		if errors.As(err, &exit) {
+			if exit.err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %s\n", exit.err)
+			}
+			os.Exit(exit.code)
+		}
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}

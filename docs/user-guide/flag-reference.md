@@ -13,6 +13,8 @@ These flags apply to all commands.
 | `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
 | `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
+| `--remote [URL]` | Run the command on a `ghx rpc serve` instance; the URL falls back to `GHX_RPC_URL`. Handled before cobra, so it does not appear in command help. |
+| `--rpc-token string` | Bearer token sent with `--remote` (also `GHX_RPC_TOKEN`). |
 | `--version`, `-v` | Print version. |
 | `--help`, `-h` | Show help. |
 
@@ -165,6 +167,42 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 |---|---|---|
 | `--addr string` | `127.0.0.1:8080` | Address to listen on |
 | `--open` | `false` | Open the browser after starting the server |
+| `--rpc-token string` | | Require this bearer token from JSON-RPC clients (env `GHX_RPC_TOKEN`) |
+| `--rpc-allow-exec` | `true` | Expose `cli.run` over JSON-RPC, which executes ghx commands for clients |
+
+The web UI server also exposes the JSON-RPC API at `POST /rpc`.
+Binding a non-loopback address without `--rpc-token` is refused.
+
+## rpc
+
+### `rpc serve`
+
+| Flag | Default | Description |
+|---|---|---|
+| `--addr string` | `127.0.0.1:8090` | Address to listen on |
+| `--token string` | | Require this bearer token from clients (env `GHX_RPC_TOKEN`) |
+| `--allow-exec` | `true` | Expose `cli.run`, which executes ghx commands for clients |
+
+Binding a non-loopback address without `--token` is refused.
+
+### `rpc call`
+
+| Argument | Description |
+|---|---|
+| `<method>` | Method name, for example `issue.list` |
+| `[params-json]` | JSON object, `-` for stdin, or `@path` for a file |
+
+### `rpc methods`
+
+Calls `rpc.discover` and prints the method names and descriptions.
+
+### `rpc exec`
+
+| Flag | Description |
+|---|---|
+| `--url string` | RPC server URL; also `GHX_RPC_URL` |
+| `--token string` | Bearer token; also `GHX_RPC_TOKEN` |
+| `--` | End of options; the rest is forwarded to the server |
 
 ## mock serve
 

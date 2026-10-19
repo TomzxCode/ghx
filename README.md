@@ -235,6 +235,35 @@ ghx cache && ghx serve
 ghx serve --addr 127.0.0.1:9000 --open
 ```
 
+### JSON-RPC API
+
+Run a local JSON-RPC 2.0 server so clients can call the CLI without spawning a process per call:
+
+```bash
+ghx rpc serve                                   # POST /rpc on 127.0.0.1:8090
+ghx rpc methods                                 # list methods
+ghx rpc call repo.list
+ghx rpc call issue.list '{"repo":"cli/cli","state":"open","limit":20}'
+ghx rpc call pr.view '{"repo":"cli/cli","number":1234}'
+```
+
+Typed methods cover the read and cache commands (`repo.list`, `repo.delete`, `issue.list`, `issue.view`, `pr.list`, `pr.view`, `pr.threads`, `cache.refresh`).
+The `cli.run` method executes any other ghx command and returns its stdout, stderr, and exit code:
+
+```bash
+ghx rpc call cli.run '{"args":["pr","comment","10","--body","Looks good"]}'
+ghx rpc exec -- pr comment 10 --body "Looks good"
+```
+
+Any command can run against a server with `--remote`:
+
+```bash
+ghx --remote http://127.0.0.1:8090 issue list --state open
+```
+
+`ghx serve` also exposes the API at `/rpc` on its web UI port.
+See the [JSON-RPC guide](docs/user-guide/json-rpc.md) for the method reference, authentication, and security notes.
+
 ### PR comments (inline, replies, pending, stash)
 
 ```bash

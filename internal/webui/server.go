@@ -38,7 +38,15 @@ type Server struct {
 	mu         sync.Mutex
 	refreshing map[string]bool
 
+	mounts []mount
+
 	srv *http.Server
+}
+
+// mount is an extra handler served alongside the UI, such as the JSON-RPC API.
+type mount struct {
+	path    string
+	handler http.Handler
 }
 
 // New creates a Server reading from store. refresh may be nil, in which case
@@ -73,10 +81,20 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.srv.Shutdown(ctx)
 }
 
+// Mount registers an extra handler at path, so a single server can expose the
+// UI and another API (the JSON-RPC endpoint) on one port. Mount must be called
+// before Handler.
+func (s *Server) Mount(path string, handler http.Handler) {
+	s.mounts = append(s.mounts, mount{path: path, handler: handler})
+}
+
 // Handler returns the root http.Handler, separately from ListenAndServe so
 // tests can exercise it without binding a port.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	for _, m := range s.mounts {
+		mux.Handle(m.path, m.handler)
+	}
 	mux.HandleFunc("/api/repos/", s.handleRepoPath)
 	mux.HandleFunc("/api/repos", s.handleRepos)
 	mux.HandleFunc("/api/search", s.handleSearch)

@@ -50,6 +50,7 @@ nav:
     - Stats: user-guide/stats.md
     - Telemetry: user-guide/telemetry.md
     - Serve (Web UI): user-guide/serve.md
+    - JSON-RPC API: user-guide/json-rpc.md
     - Mock Server: user-guide/mock-server.md
     - Flag Reference: user-guide/flag-reference.md
   - Context:

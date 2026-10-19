@@ -72,4 +72,8 @@ ghx serve --cache-dir /tmp/mock-cache --addr 127.0.0.1:8080
 ## Security
 
 The server binds to a loopback address by default and exposes cached data plus the refresh action.
-It has no authentication, so do not expose it beyond your machine; if you must listen on a public interface, put your own protection in front of it.
+The JSON-RPC endpoint at `/rpc` also exposes `cli.run` and `repo.delete` by default, which can change the cache and GitHub.
+Because of that, binding a non-loopback address requires `--rpc-token` (or `GHX_RPC_TOKEN`), which JSON-RPC clients then send as a bearer token.
+The web UI itself has no authentication, so do not expose it beyond your machine; if you must listen on a public interface, put your own protection in front of it.
+
+The JSON-RPC API is documented in the [JSON-RPC guide](json-rpc.md).

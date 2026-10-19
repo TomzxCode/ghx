@@ -14,12 +14,15 @@ import (
 
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/gitremote"
+	"github.com/tomzxcode/ghx/internal/rpc"
 	"github.com/tomzxcode/ghx/internal/webui"
 )
 
 var (
-	serveAddr string
-	serveOpen bool
+	serveAddr         string
+	serveOpen         bool
+	serveRPCToken     string
+	serveRPCAllowExec bool
 )
 
 var serveCmd = &cobra.Command{
@@ -36,19 +39,27 @@ The UI is read-only against the cache except for the explicit refresh action.`,
 func init() {
 	serveCmd.Flags().StringVar(&serveAddr, "addr", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().BoolVar(&serveOpen, "open", false, "Open the browser after starting the server")
+	serveCmd.Flags().StringVar(&serveRPCToken, "rpc-token", os.Getenv("GHX_RPC_TOKEN"), "Require this bearer token from JSON-RPC clients (env GHX_RPC_TOKEN)")
+	serveCmd.Flags().BoolVar(&serveRPCAllowExec, "rpc-allow-exec", true, "Expose cli.run over JSON-RPC, which executes ghx commands for clients")
 	rootCmd.AddCommand(serveCmd)
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	if serveRPCToken == "" && !isLoopbackAddr(serveAddr) {
+		return fmt.Errorf("refusing to expose the JSON-RPC API on %s without --rpc-token: clients could run ghx commands and change the cache", serveAddr)
+	}
+
 	store, err := newStore()
 	if err != nil {
 		return err
 	}
 	defer store.Close()
 	server := webui.New(store, serveRefreshFunc(store))
+	server.Mount("/rpc", rpc.NewServer(newRPCConfig(store, serveRPCToken, serveRPCAllowExec)))
 
 	url := "http://" + serveAddr
 	fmt.Printf("Serving ghx cache at %s\n", url)
+	fmt.Printf("Serving ghx JSON-RPC at %s/rpc\n", url)
 	if serveOpen {
 		if err := openBrowser(url); err != nil {
 			fmt.Fprintf(os.Stderr, "Could not open browser: %s\n", err)

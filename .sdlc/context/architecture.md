@@ -22,8 +22,10 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
 
 | Component | Responsibility | Technology |
 |---|---|---|
-| `cmd/` (root, issue, pr, cache, repo, mock) | CLI interface, flag parsing, command handlers | cobra |
+| `cmd/` (root, issue, pr, cache, repo, mock, serve, rpc, remote) | CLI interface, flag parsing, command handlers | cobra |
 | `internal/cache/` | On-disk JSON cache read/write, freshness checks | Go standard library |
+| `internal/rpc/` | JSON-RPC 2.0 server and client, typed read/cache methods, `cli.run` | Go net/http |
+| `internal/webui/` | Local web UI server and its JSON API | Go net/http |
 | `internal/github/` | GitHub GraphQL API client, query building, response parsing | Go net/http |
 | `internal/gitremote/` | Git remote URL detection and parsing | Go os/exec |
 | `internal/mockserver/` | In-process mock GitHub GraphQL server, scenario builder, simulation generator, optional latency injection | Go net/http/httptest |
@@ -47,7 +49,7 @@ The tool is a single Go binary with four layers: CLI commands, business logic (f
 - **Distribution:** `go install` from source, or pre-built binaries from GitHub Releases
 - **Testing:** Mock server (`internal/mockserver`) provides an `httptest.Server` that mirrors the GitHub GraphQL API contract for integration tests without network access
 - **Observability:** The tool is a CLI with no runtime metrics or tracing. It logs to stderr (`--log-level debug|info|warn|error`); at debug level it reports where a command spends its time (repository resolution, cache store open, token resolution, API calls, and the cache backfill stages). Performance data is also available through the local-only telemetry recorder (`internal/telemetry/`), which is on by default, switchable with `ghx telemetry enable|disable`, and never transmits anything (see `.sdlc/knowledge/decisions/1-telemetry-default-on.md`)
-- **No hosting:** Fully client-side, no server component (mock server is for testing only)
+- **Optional local servers:** `ghx serve` exposes a web UI and the JSON-RPC API; `ghx rpc serve` exposes only the API. Both bind to loopback by default, and non-loopback binds require a token. There is no hosted or multi-tenant deployment.
 
 ## Architecture Decisions
 

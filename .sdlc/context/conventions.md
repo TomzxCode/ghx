@@ -22,12 +22,16 @@
 │   ├── serve.go             # serve command (local web UI server)
 │   ├── mock.go              # mock serve command
 │   ├── repo.go              # repo list command
+│   ├── rpc.go               # rpc serve/call/methods/exec commands
+│   ├── remote.go            # --remote forwarding
+│   ├── serve.go             # web UI server, also mounts /rpc
 │   └── *_test.go            # Tests co-located with commands
 ├── internal/                # Private packages
 │   ├── cache/               # Cache store (disk I/O)
 │   ├── github/              # GitHub API client
 │   ├── gitremote/           # Git remote detection
 │   ├── mockserver/          # Mock GraphQL server, scenario builder, simulation
+│   ├── rpc/                 # JSON-RPC 2.0 server/client and typed methods
 │   ├── webui/               # serve command's HTTP server, JSON API, embedded UI assets
 │   └── version/             # Version resolution
 ├── .github/workflows/       # CI configuration
