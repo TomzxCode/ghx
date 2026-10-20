@@ -98,11 +98,11 @@ func setCacheTestEnv(t *testing.T, apiURL, dir string) {
 	t.Helper()
 	oldRepo, oldAPI, oldDir := repoFlag, apiURLFlag, cacheDir
 	oldStorage := storageFlag
-	oldDur, oldForce, oldSince, oldType, oldRetries := cacheDuration, cacheForce, cacheSince, cacheType, cacheRetries
+	oldDur, oldForce, oldIfStale, oldSince, oldType, oldRetries := cacheDuration, cacheForce, cacheIfStale, cacheSince, cacheType, cacheRetries
 	t.Cleanup(func() {
 		repoFlag, apiURLFlag, cacheDir = oldRepo, oldAPI, oldDir
 		storageFlag = oldStorage
-		cacheDuration, cacheForce, cacheSince, cacheType, cacheRetries = oldDur, oldForce, oldSince, oldType, oldRetries
+		cacheDuration, cacheForce, cacheIfStale, cacheSince, cacheType, cacheRetries = oldDur, oldForce, oldIfStale, oldSince, oldType, oldRetries
 	})
 	repoFlag = "acme/myproject"
 	apiURLFlag = apiURL
@@ -112,6 +112,7 @@ func setCacheTestEnv(t *testing.T, apiURL, dir string) {
 	storageFlag = "file"
 	cacheDuration = 60
 	cacheForce = false
+	cacheIfStale = false
 	cacheSince = ""
 	cacheType = "both"
 	cacheRetries = 2
@@ -186,7 +187,7 @@ func sinceScenario(now time.Time) *mockserver.Scenario {
 }
 
 // TestCache_SinceRefreshesFreshCache verifies that --since performs a targeted
-// refresh on an otherwise fresh cache: it bypasses the freshness short-circuit,
+// refresh on an otherwise fresh cache: it bypasses the --if-stale short-circuit,
 // fetches only entries updated on/after the date, and keeps the cache complete.
 func TestCache_SinceRefreshesFreshCache(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
@@ -200,11 +201,13 @@ func TestCache_SinceRefreshesFreshCache(t *testing.T) {
 		t.Errorf("expected cold fetch output, got %q", out)
 	}
 
-	// The cache is now fresh; a plain run must short-circuit.
+	// The cache is now fresh; with --if-stale a plain run does nothing.
+	cacheIfStale = true
 	out = runCacheCapture(t)
 	if !strings.Contains(out, "Cache is still fresh") {
-		t.Errorf("expected fresh-cache short-circuit, got %q", out)
+		t.Errorf("expected --if-stale short-circuit, got %q", out)
 	}
+	cacheIfStale = false
 
 	// Count what a --since 2026-08-25 refresh should return, according to the
 	// scenario itself.
@@ -238,7 +241,7 @@ func TestCache_SinceRefreshesFreshCache(t *testing.T) {
 	cacheSince = "2026-08-25"
 	out = runCacheCapture(t)
 	if strings.Contains(out, "Cache is still fresh") {
-		t.Error("--since should bypass the freshness short-circuit")
+		t.Error("--since should bypass the --if-stale short-circuit")
 	}
 	if !strings.Contains(out, "Fetching issues created or updated since 2026-08-25 00:00") {
 		t.Errorf("expected --since issue fetch message, got %q", out)

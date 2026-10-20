@@ -31,6 +31,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-06 | Must | The system shall perform delta fetches when cache exists and `--force` is not used |
 | FR-07 | Should | The system shall report progress during caching (items fetched, cache status) |
 | FR-08 | Should | The system shall key the cache on lower-case host/owner/repo, so a repository has one entry regardless of the casing it is named with |
+| FR-09 | Should | The system shall support `--if-stale` to skip a run when the cache is complete and still fresh |
 
 ## Non-Functional Requirements
 
@@ -53,6 +54,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-04: `--cache-duration 120` sets freshness to 2 hours
 - [ ] FR-05: `--force` triggers a full re-fetch regardless of freshness
 - [ ] FR-06: Second `cache` run without `--force` performs delta fetch
+- [ ] FR-09: `--if-stale` on a complete, fresh cache performs no requests
 
 ## Open Questions
 

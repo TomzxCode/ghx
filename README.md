@@ -47,8 +47,8 @@ Pre-populate the local cache with all issues and PRs (including comments):
 ```bash
 ghx cache
 ghx cache --repo cli/cli
-ghx cache --cache-duration 120   # treat cache as fresh for 2 hours
-ghx cache --cache-duration 0     # always re-fetch (delta)
+ghx cache --cache-duration 120   # record a 2-hour freshness window for reads
+ghx cache --if-stale             # do nothing while the cache is still fresh
 ghx cache --since 2026-09-01     # refresh entries created/updated since a date
 ghx cache --type issues            # refresh only issues (or prs)
 ghx cache --force                  # force full re-fetch
@@ -436,7 +436,7 @@ a speedup is not read as a like-for-like win.
 
 | Command | Cache behaviour |
 |---|---|
-| `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
+| `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Each run delta-refreshes from the last cache write; `--if-stale` skips the run while the cache is fresh. Supports `--since` windowed refresh and `--type issues/prs` partial refresh. |
 | `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. |
 | `issue view` / `pr view` | Serves the individual cached item when it is less than 60 minutes old, or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. `--refresh` bypasses all cache checks, fetches from the API, and updates the cache. |
 

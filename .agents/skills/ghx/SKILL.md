@@ -69,11 +69,11 @@ Run `cache` once to pull everything down so subsequent list/view commands are
 served instantly from disk:
 
 ```bash
-ghx cache                            # default: stale after 60 min
+ghx cache                            # delta refresh; records a 60 min window
 ghx cache --repo owner/repo
-ghx cache --cache-duration 120       # stale after 2 hours
-ghx cache --cache-duration 0         # always re-fetch (delta)
-ghx cache --force                    # force full re-fetch
+ghx cache --cache-duration 120       # record a 2-hour freshness window for reads
+ghx cache --if-stale                 # no-op while the cache is still fresh
+ghx cache --force                    # discard resume state, full re-fetch
 ```
 
 ### List issues
@@ -132,7 +132,7 @@ ghx repo list                        # locally cached repositories
 
 | Command | Cache behaviour |
 |---|---|
-| `cache` | Fetches all issues/PRs (all states, with comments); writes one JSON file each. Skips when younger than `--cache-duration`. |
+| `cache` | Fetches all issues/PRs (all states, with comments); writes one JSON file each. Each run delta-refreshes; `--if-stale` skips while the cache is fresh. |
 | `issue list` / `pr list` | Reads all cached files and filters in memory when the full cache is fresh; falls back to the GitHub API otherwise. |
 | `issue view` / `pr view` | Serves from the per-item file when it is < 60 min old; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, always fetches from the API, and updates the cache. |
 

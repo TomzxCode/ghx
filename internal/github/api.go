@@ -775,9 +775,9 @@ query($query: String!, $first: Int!, $after: String) {
 }`
 
 const fetchAllPRsQuery = `
-query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!) {
+query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $first: Int!) {
   repository(owner: $owner, name: $repo) {
-    pullRequests(first: 50, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: $dir}) {
+    pullRequests(first: $first, states: [OPEN, CLOSED, MERGED], after: $after, orderBy: {field: UPDATED_AT, direction: $dir}) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
@@ -989,6 +989,7 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 			"owner": owner,
 			"repo":  repo,
 			"dir":   "ASC",
+			"first": 50,
 		}
 		if cursor != "" {
 			vars["after"] = cursor
@@ -1069,8 +1070,10 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
 //     GitHub's GraphQL backend evaluates within its timeout, surfacing as
 //     HTML 502s from the edge, so full pages are capped at prFullPageSize
 //     nodes. The window is divided into prScanPageSize-wide blocks, and each
-//     block is fetched as a chain of prPagesPerBlock full pages seeded by the
-//     block's cursor; chains run prBlocksInFlight at a time in parallel.
+//     block is fetched as a chain of pages seeded by the block's cursor;
+//     chains run prBlocksInFlight at a time in parallel. Each page is sized
+//     to the in-window items its block is expected to hold, so a delta with
+//     one changed PR costs one small page instead of a full one.
 //
 // onBatch is invoked per completed page (in completion order; caching is
 // order-independent) with total reporting the exact number of in-window PRs
@@ -1176,7 +1179,7 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 		done  bool // last message of a block
 	}
 	jobs := make(chan int)
-	results := make(chan pageResult, blocks*(prPagesPerBlock+1)) // buffered: workers never block
+	results := make(chan pageResult, blocks*(prPagesPerBlock+2)) // buffered: workers never block
 	var wg sync.WaitGroup
 	var mu sync.Mutex // guards firstErr
 	var firstErr error
@@ -1194,11 +1197,27 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 					continue
 				}
 				cursor := blockCursors[blockIdx]
-				for page := 0; page < prPagesPerBlock; page++ {
+				remaining := blockCandidates[blockIdx]
+				// Size each page to the number of in-window items this block
+				// is expected to hold, plus one lookahead node so the last
+				// page also reveals whether the cutoff was passed without an
+				// extra request. A small delta (often just the boundary item
+				// at the cutoff) therefore fetches a small page instead of a
+				// full one. The walk still stops on the timestamp cutoff
+				// rather than on this estimate, so ties and items updated
+				// between the scan and this fetch are not dropped.
+				for page := 0; page <= prPagesPerBlock; page++ {
 					if abort.Load() {
 						break
 					}
-					res, err := c.fetchPRPage(owner, repo, cursor, since)
+					first := remaining + 1
+					if first > prFullPageSize {
+						first = prFullPageSize
+					}
+					if first < 1 {
+						first = 1
+					}
+					res, err := c.fetchPRPage(owner, repo, cursor, since, first)
 					if err != nil {
 						mu.Lock()
 						if firstErr == nil {
@@ -1209,6 +1228,7 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 						results <- pageResult{err: err}
 						break
 					}
+					remaining -= len(res.batch)
 					results <- pageResult{batch: res.batch}
 					if res.oldest.Before(since) || !res.hasNext {
 						break
@@ -1271,13 +1291,13 @@ type prPage struct {
 	oldest  time.Time // oldest updatedAt in the page (zero when empty)
 }
 
-// fetchPRPage fetches one full-payload page of PRs starting at the given
-// after-cursor and returns those updated at or after since.
-func (c *Client) fetchPRPage(owner, repo, after string, since time.Time) (prPage, error) {
+// fetchPRPage fetches one full-payload page of at most first PRs starting at
+// the given after-cursor and returns those updated at or after since.
+func (c *Client) fetchPRPage(owner, repo, after string, since time.Time, first int) (prPage, error) {
 	vars := map[string]interface{}{
 		"owner": owner,
 		"repo":  repo,
-		"first": prFullPageSize,
+		"first": first,
 		"dir":   "DESC",
 	}
 	if after != "" {
@@ -1300,7 +1320,7 @@ func (c *Client) fetchPRPage(owner, repo, after string, since time.Time) (prPage
 		Operation: "fetch_pr_full_page",
 		Kind:      telemetry.KindPRFullPage,
 		Repo:      repoKey(owner, repo),
-		PageSize:  prFullPageSize,
+		PageSize:  first,
 		Cursor:    after != "",
 	}, fetchAllPRsQuery, vars, &result); err != nil {
 		return prPage{}, err

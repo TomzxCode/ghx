@@ -65,14 +65,24 @@ The file cache is left in place (the migration is non-destructive), and re-runni
 ```bash
 ghx cache
 ghx cache --repo cli/cli
-ghx cache --cache-duration 120   # treat cache as fresh for 2 hours
-ghx cache --cache-duration 0     # always re-fetch (delta)
-ghx cache --force                # force full re-fetch
+ghx cache --cache-duration 120   # record a 2-hour freshness window for reads
+ghx cache --if-stale             # do nothing while the cache is still fresh
+ghx cache --force                # discard resume state and full re-fetch
 ```
+
+Every plain run refreshes the cache with a delta fetch from the last cache write, even when the cache is still fresh.
+
+Issues and pull requests are fetched concurrently, so a run takes about as long as the slower portion instead of the sum of both. While both run, the progress bar counts their items together and shows each portion's figure in its label. A failure in one portion keeps whatever the other portion wrote, and the next run resumes both from their saved positions.
+
+On an unchanged repository that costs three small requests (one issue page, one lightweight PR scan page, and one tiny full-payload page for the boundary PR), and a changed one fetches only what changed.
+
+The `--cache-duration` window decides when read commands stop trusting the cache; it does not stop `ghx cache` from refreshing.
+
+Use `--if-stale` for scripts that only need the cache warm and want a no-op while it is fresh.
 
 ### Refresh one portion only with --type
 
-`--type issues` or `--type prs` refreshes only that portion; `--type both` (the default) refreshes both. Like `--since`, an explicit `--type` bypasses the freshness short-circuit:
+`--type issues` or `--type prs` refreshes only that portion; `--type both` (the default) refreshes both. An explicit `--type` always fetches, even when the cache is fresh:
 
 ```bash
 ghx cache --type issues
@@ -100,16 +110,16 @@ Accepted formats: `YYYY-MM-DD` (UTC midnight), RFC3339, and naive datetimes (loc
 
 Notes:
 
-- Issues use a server-side filter with exact timestamps. PRs are fetched in two phases: a lightweight newest-first walk locates the exact window (so the progress bar knows the total), then the window is fetched in small full-payload pages. Both avoid the search API.
-- `--since` bypasses the freshness short-circuit and cannot be combined with `--force`.
+- Issues use a server-side filter with exact timestamps. PRs are fetched in two phases: a lightweight newest-first walk locates the exact window (so the progress bar knows the total), then the window is fetched in full-payload pages sized to the number of in-window items. Both avoid the search API.
+- `--since` always fetches and cannot be combined with `--force`.
 - Using a `--since` date newer than the last cache write intentionally skips items in between; run `ghx cache --force` afterwards if you need to backfill them.
 
 First run fetches everything. Example output:
 
 ```
 Caching issues for octocat/hello-world...
-Cached 42 issue(s).
 Caching pull requests for octocat/hello-world...
+Cached 42 issue(s).
 Cached 15 pull request(s).
 Cache updated. Valid for 60 minute(s).
 ```
@@ -118,11 +128,13 @@ Subsequent runs use a delta fetch, only retrieving items updated since the last 
 
 ```
 Fetching issues updated since 2025-01-15 10:30 for octocat/hello-world...
+Fetching pull requests updated since 2025-01-15 10:30 for octocat/hello-world...
 Cached 3 issue(s).
-Fetching PRs updated since 2025-01-15 10:30 for octocat/hello-world...
 Cached 1 pull request(s).
 Cache updated. Valid for 60 minute(s).
 ```
+
+The two `Cached` lines appear in whichever order the portions finish.
 
 ## How freshness works
 
@@ -137,13 +149,15 @@ The cache metadata (the `.cache_info.json` file for the file backend, the `cache
 
 A cache is considered **fresh** when `time.Since(cachedAt) < duration × 1 minute`.
 
-When the cache is fresh, `list` and `view` commands serve entirely from the cache with no API calls. When stale, they fall back to the GitHub API and write what they fetch back into the cache.
+The window decides how read commands behave: when the cache is fresh, `list` and `view` serve entirely from the cache with no API calls; when stale, they fall back to the GitHub API and write what they fetch back into the cache.
+
+It does not gate `ghx cache` itself, which always refreshes with a delta fetch unless you pass `--if-stale`.
 
 ## Cache behavior per command
 
 | Command | Behavior |
 |---|---|
-| `cache` | Fetches all issues and PRs (all states, with comments). Skips if cache is younger than `--cache-duration`. Supports delta fetch, `--since` windowed refresh, and `--type issues/prs` partial refresh. |
+| `cache` | Fetches all issues and PRs (all states, with comments). Each run delta-refreshes from the last cache write; `--if-stale` skips the run while the cache is still within `--cache-duration`. Supports `--since` windowed refresh and `--type issues/prs` partial refresh. |
 | `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale, and writes each entry not already cached to the cache in full (comments, reviews, timeline), so the record is identical to what `ghx cache` writes. |
 | `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written less than 60 minutes ago. Otherwise fetches from the API and saves to cache; an item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. `--refresh` bypasses all checks. |
 

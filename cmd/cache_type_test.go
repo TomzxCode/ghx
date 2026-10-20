@@ -24,24 +24,19 @@ func TestCache_TypeInvalid(t *testing.T) {
 }
 
 // TestCache_TypeIssuesOnly verifies --type issues refreshes only the issue
-// portion, bypasses the freshness short-circuit, and keeps the cache complete.
+// portion and keeps the cache complete.
 func TestCache_TypeIssuesOnly(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	srv := mockserver.NewServer(sinceScenario(now))
 	t.Cleanup(srv.Close)
 	setCacheTestEnv(t, srv.URL(), t.TempDir())
 
-	// Full cache first; a second full run would short-circuit as fresh.
-	_ = runCacheCapture(t)
-	out := runCacheCapture(t)
-	if !strings.Contains(out, "Cache is still fresh") {
-		t.Fatalf("expected fresh-cache short-circuit, got %q", out)
-	}
+	_ = runCacheCapture(t) // full cache
 
 	cacheType = "issues"
-	out = runCacheCapture(t)
+	out := runCacheCapture(t)
 	if strings.Contains(out, "Cache is still fresh") {
-		t.Error("--type issues should bypass the freshness short-circuit")
+		t.Error("--type issues must not short-circuit")
 	}
 	if !strings.Contains(out, "Cached ") && !strings.Contains(out, "issue(s)") {
 		t.Errorf("expected issue fetch output, got %q", out)

@@ -1,12 +1,17 @@
 package integration
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"sort"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -700,6 +705,112 @@ func TestClient_FetchPRsUpdated_StopsEarly(t *testing.T) {
 	// single full page. Allow slack for boundary ties.
 	if got := atomic.LoadInt32(&count); got > 3 {
 		t.Errorf("delta made %d requests, want at most 3 (walks did not stop early)", got)
+	}
+}
+
+// TestClient_FetchPRsUpdated_SizesPagesToWindow verifies the full-payload page
+// size follows the number of in-window PRs, so an idle delta (one boundary PR)
+// does not fetch a whole page of unchanged PRs.
+func TestClient_FetchPRsUpdated_SizesPagesToWindow(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:          3,
+		Repos:             []string{"acme/big"},
+		History:           60 * 24 * time.Hour,
+		IssuesPerRepo:     5,
+		PRsPerRepo:        250,
+		CommentsPerIssue:  0,
+		CommentsPerPR:     0,
+		CloseRate:         0.3,
+		MergeRate:         0.3,
+		DraftRate:         0.1,
+		ReviewRate:        0.5,
+		Seed:              11,
+		AssigneesPerIssue: 0,
+		AssigneesPerPR:    1,
+		LabelsPerItem:     1,
+		MilestonesPerRepo: 1,
+	}
+	mock := mockserver.NewServer(mockserver.Generate(cfg))
+	t.Cleanup(mock.Close)
+
+	// Record the `first` variable of every full-payload page.
+	var mu sync.Mutex
+	var pageSizes []int
+	target, err := url.Parse(mock.URL())
+	if err != nil {
+		t.Fatalf("parsing mock URL: %v", err)
+	}
+	sizing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, readErr := io.ReadAll(r.Body)
+		if readErr == nil {
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var req struct {
+				Query     string                 `json:"query"`
+				Variables map[string]interface{} `json:"variables"`
+			}
+			// The light scan selects only number and updatedAt; the full page
+			// is the one carrying additions/deletions.
+			if json.Unmarshal(body, &req) == nil && strings.Contains(req.Query, "additions") {
+				if f, ok := req.Variables["first"].(float64); ok {
+					mu.Lock()
+					pageSizes = append(pageSizes, int(f))
+					mu.Unlock()
+				}
+			}
+		}
+		httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+	}))
+	t.Cleanup(sizing.Close)
+
+	client, err := github.NewClientWithURL(sizing.URL, "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+	all, err := client.FetchAllPRs("acme", "big", nil)
+	if err != nil {
+		t.Fatalf("FetchAllPRs: %v", err)
+	}
+
+	// Cutoff at the newest PR: the window is just the boundary item(s).
+	desc := append([]*github.PullRequest(nil), all...)
+	sort.Slice(desc, func(i, j int) bool { return desc[i].UpdatedAt.After(desc[j].UpdatedAt) })
+	cutoff := desc[0].UpdatedAt
+	want := 0
+	for _, pr := range all {
+		if !pr.UpdatedAt.Before(cutoff) {
+			want++
+		}
+	}
+
+	mu.Lock()
+	pageSizes = nil
+	mu.Unlock()
+
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	if err != nil {
+		t.Fatalf("FetchPRsUpdated: %v", err)
+	}
+	if len(got) != want {
+		t.Errorf("delta returned %d PRs, want %d", len(got), want)
+	}
+
+	mu.Lock()
+	sizes := append([]int(nil), pageSizes...)
+	mu.Unlock()
+	if len(sizes) == 0 {
+		t.Fatal("no full-payload page was requested")
+	}
+	maxPage := want + 1
+	if maxPage > 25 {
+		maxPage = 25
+	}
+	for _, size := range sizes {
+		if size < 1 || size > maxPage {
+			t.Errorf("full-payload page requested %d PR(s) for a %d-PR window; want between 1 and %d", size, want, maxPage)
+		}
+	}
+	if want < 25 && sizes[0] != maxPage {
+		t.Errorf("first full-payload page requested %d PR(s), want %d", sizes[0], maxPage)
 	}
 }
 

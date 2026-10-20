@@ -9,6 +9,8 @@ status: draft
 
 The cache command fetches all issues and PRs (with comments) from GitHub via GraphQL, writing each as a separate JSON file.
 Cache metadata tracks the last fetch timestamp and configured duration.
+Every plain run delta-refreshes from the last cache write; the freshness window governs read commands, not the fetch itself.
+`--if-stale` restores the no-op behavior while the cache is fresh, and `--force` discards resume state for a full re-fetch.
 Delta fetches use the `since` parameter on issues and client-side timestamp comparison on PRs to only fetch updated items.
 A progress bar (`schollz/progressbar/v3`) renders to stderr during each fetch, driven by the GraphQL connection `totalCount`; it is suppressed when stderr is not a terminal.
 
@@ -17,9 +19,9 @@ A progress bar (`schollz/progressbar/v3`) renders to stderr during each fetch, d
 ```
 cache command ──► runCache()
                       │
-                      ├─ Fresh & not forced? ──Yes──► Print "still fresh", exit
+                      ├─ --if-stale & fresh? ──Yes──► Print "still fresh", exit
                       │
-                      └─ Stale or forced
+                      └─ Otherwise (always, for a plain run)
                            │
                            ├─ Determine delta cutoff (previous cache timestamp)
                            │

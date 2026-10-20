@@ -23,7 +23,8 @@ These flags apply to all commands.
 | Flag | Default | Description |
 |---|---|---|
 | `--cache-duration int` | `60` | Minutes before the cache is considered stale |
-| `--force` | `false` | Re-fetch even if the cache is still fresh (full fetch, not delta) |
+| `--if-stale` | `false` | Do nothing when the cache is still fresh instead of delta-refreshing |
+| `--force` | `false` | Discard the resume state and run a full re-fetch |
 | `--since string` | | Only refresh entries created or updated since this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
 | `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
 | `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |

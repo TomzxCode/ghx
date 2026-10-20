@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
@@ -18,6 +20,7 @@ import (
 var (
 	cacheDuration int
 	cacheForce    bool
+	cacheIfStale  bool
 	cacheSince    string
 	cacheType     string
 	cacheRetries  int
@@ -37,13 +40,20 @@ is persisted after every page. If a fetch is interrupted (for example by a GitHu
 rate limit), re-running the command resumes from the last page written rather
 than starting over.
 
+Every run refreshes the cache with a delta fetch from the last cache write, so
+an unchanged repository costs three small requests and a changed one fetches
+only what changed. Pass --if-stale to skip the run entirely while the cache is
+still within --cache-duration, which is useful for scripts that only need the
+cache warm.
+
 Use --since to refresh only entries created or updated on or after a given
 date, instead of the default last-cache-write delta.
 
 Use --type issues or --type prs to refresh only one of the two; --type both
-(the default) refreshes both. A partial refresh only resets the freshness
-window of the type it fetched, so a fresh issues cache still serves issue
-reads while pull requests are re-fetched.`,
+(the default) refreshes both, concurrently, so a run takes about as long as the
+slower of the two. A partial refresh only resets the freshness window of the
+type it fetched, so a fresh issues cache still serves issue reads while pull
+requests are re-fetched.`,
 	RunE: runCache,
 }
 
@@ -62,7 +72,8 @@ to migrate a single repository.`,
 func init() {
 	cacheCmd.AddCommand(cacheMigrateCmd)
 	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", 60, "Cache duration in minutes")
-	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Re-fetch even if the cache is still fresh")
+	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Discard the resume state and run a full re-fetch")
+	cacheCmd.Flags().BoolVar(&cacheIfStale, "if-stale", false, "Do nothing when the cache is still fresh instead of delta-refreshing")
 	cacheCmd.Flags().StringVar(&cacheSince, "since", "", "Only refresh entries created or updated since this date (YYYY-MM-DD or RFC3339)")
 	cacheCmd.Flags().StringVar(&cacheType, "type", "both", "Which entries to refresh: issues, prs, or both")
 	cacheCmd.Flags().IntVar(&cacheRetries, "retries", 2, "Retries on transient errors (rate limits, 5xx); 0 means a single attempt. Total attempts = retries + 1")
@@ -136,8 +147,9 @@ func runCache(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--force and --since cannot be combined: --force re-fetches everything, --since refreshes a targeted window")
 	}
 
-	// --type selects which portions to refresh. Any explicit targeting
-	// (--since or --type != both) bypasses the freshness short-circuit.
+	// --type selects which portions to refresh. An explicit targeting
+	// (--since or --type != both) always fetches; only --if-stale can skip a
+	// run on a fresh cache.
 	fetchIssues, fetchPRs := true, true
 	switch cacheType {
 	case "", "both":
@@ -176,8 +188,12 @@ func runCache(cmd *cobra.Command, args []string) error {
 		info = &cache.CacheInfo{}
 	}
 
-	if !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(cacheDuration)*time.Minute {
-		fmt.Printf("Cache is still fresh (within %d minutes). Use --force to refresh anyway.\n", cacheDuration)
+	// A plain run always delta-refreshes: the delta is the cheapest possible
+	// check for changes (three small requests when nothing moved), so a probe
+	// could not save anything. --if-stale opts into the old no-op behavior for
+	// scripts that only need the cache warm.
+	if cacheIfStale && !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(cacheDuration)*time.Minute {
+		fmt.Printf("Cache is still fresh (within %d minutes); nothing to do. Re-run without --if-stale for a delta refresh, or with --force for a full re-fetch.\n", cacheDuration)
 		return nil
 	}
 
@@ -187,7 +203,7 @@ func runCache(cmd *cobra.Command, args []string) error {
 		FetchIssues: fetchIssues,
 		FetchPRs:    fetchPRs,
 		Duration:    cacheDuration,
-		OnProgress:  cliFetchProgress(client),
+		OnProgress:  cliFetchProgress(client, fetchIssues && fetchPRs),
 	}); err != nil {
 		return err
 	}
@@ -278,6 +294,13 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 // keeps what was written before the failure and info holds the resume cursor
 // for the next attempt.
 //
+// When both portions are selected they are fetched concurrently, each writing
+// its own rows, so a run costs about as long as the slower portion instead of
+// the sum of both. A failure in one portion does not discard what the other
+// wrote. Progress callbacks are serialized, and the cache metadata is guarded
+// by a mutex because both portions advance their cursor and rewrite it after
+// every page.
+//
 // Freshness is recorded per data type: a partial run (--type issues|prs)
 // updates only the timestamp of the portion it fetched, so the other portion
 // keeps its own age. The cache is only marked complete when both portions were
@@ -303,31 +326,62 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 		opts.Since = nil
 	}
 
-	notify := func(ev FetchEvent) {
-		if opts.OnProgress != nil {
-			opts.OnProgress(ev)
-		}
+	if !opts.FetchIssues {
+		fmt.Println("Skipping issues (--type prs).")
+	}
+	if !opts.FetchPRs {
+		fmt.Println("Skipping pull requests (--type issues).")
 	}
 
+	// Resolve both fetch windows before either portion starts: the portions run
+	// concurrently, so nothing may read info while they run (they only advance
+	// their own cursor field, under infoMu).
+	issueSince := info.IssueCursor
+	if opts.Since != nil {
+		issueSince = opts.Since
+	}
+	completeAtStart := info.Complete
+	prCold := info.PRCursor == nil && opts.Since == nil
+	prSince := opts.Since
+	if prSince == nil && info.PRCursor != nil {
+		prSince = info.PRCursor
+	}
+
+	// Both portions emit progress concurrently; serializing the callback keeps
+	// a single-threaded renderer (progress bars, status lines) safe.
+	var progressMu sync.Mutex
+	notify := func(ev FetchEvent) {
+		if opts.OnProgress == nil {
+			return
+		}
+		progressMu.Lock()
+		defer progressMu.Unlock()
+		opts.OnProgress(ev)
+	}
+
+	// info is shared: the cursors are advanced and the metadata rewritten by
+	// both portions, so those two operations take the same lock.
+	var infoMu sync.Mutex
 	saveInfo := func() error {
+		infoMu.Lock()
+		defer infoMu.Unlock()
 		return store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info)
 	}
+	advance := func(cur **time.Time, updatedAt time.Time) {
+		infoMu.Lock()
+		defer infoMu.Unlock()
+		advanceCursor(cur, updatedAt)
+	}
 
-	issueCount := 0
-	prCount := 0
+	var issueCount, prCount int
 
-	if opts.FetchIssues {
-		// --- Issues ---
-		// Issues are fetched oldest-first. `since = IssueCursor` either resumes an
-		// interrupted fetch (cursor mid-history) or delta-updates a complete cache
-		// (cursor near newest). nil cursor => cold fetch from the beginning.
-		// An explicit --since overrides the cursor for this run.
-		issueSince := info.IssueCursor
-		if opts.Since != nil {
-			issueSince = opts.Since
-		}
+	fetchIssues := func() error {
+		// Issues are fetched oldest-first. `since = IssueCursor` either resumes
+		// an interrupted fetch (cursor mid-history) or delta-updates a complete
+		// cache (cursor near newest). nil cursor => cold fetch from the
+		// beginning. An explicit --since overrides the cursor for this run.
 		switch {
-		case issueSince != nil && !info.Complete:
+		case issueSince != nil && !completeAtStart:
 			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Resuming issues from %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 		case issueSince != nil && opts.Since != nil:
 			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Fetching issues created or updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
@@ -341,7 +395,7 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 				if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue); err != nil {
 					return fmt.Errorf("saving issue #%d: %w", issue.Number, err)
 				}
-				advanceCursor(&info.IssueCursor, issue.UpdatedAt)
+				advance(&info.IssueCursor, issue.UpdatedAt)
 			}
 			issueCount += len(batch)
 			notify(FetchEvent{Phase: "issues", Kind: "batch", Done: issueCount, Total: total})
@@ -349,17 +403,13 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 		}
 		if _, err := client.FetchAllIssues(repo.Owner, repo.Name, issueSince, issueHandler); err != nil {
 			notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
-			return issueCount, prCount, fmt.Errorf("fetching issues: %w", err)
+			return fmt.Errorf("fetching issues: %w", err)
 		}
 		notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
+		return nil
 	}
 
-	if opts.FetchPRs {
-		if !opts.FetchIssues {
-			fmt.Println("Skipping issues (--type prs).")
-		}
-
-		// --- Pull requests ---
+	fetchPRs := func() error {
 		// The pullRequests connection has no server-side date filter, so the
 		// delta/resume/since fetch walks the connection newest-first and stops
 		// at the cutoff (exact timestamps, fetched with the same stable API as
@@ -369,25 +419,21 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 				if err := store.SavePR(repo.Host, repo.Owner, repo.Name, pr); err != nil {
 					return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
 				}
-				advanceCursor(&info.PRCursor, pr.UpdatedAt)
+				advance(&info.PRCursor, pr.UpdatedAt)
 			}
 			prCount += len(batch)
 			notify(FetchEvent{Phase: "prs", Kind: "batch", Done: prCount, Total: total})
 			return saveInfo()
 		}
-		if info.PRCursor == nil && opts.Since == nil {
+		if prCold {
 			notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Caching pull requests for %s/%s...", repo.Owner, repo.Name)})
 			if _, err := client.FetchAllPRs(repo.Owner, repo.Name, prHandler); err != nil {
 				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
-				return issueCount, prCount, fmt.Errorf("fetching pull requests: %w", err)
+				return fmt.Errorf("fetching pull requests: %w", err)
 			}
 		} else {
 			// Both delta/resume (cursor) and an explicit --since use the same
 			// newest-first connection walk with an exact-timestamp cutoff.
-			prSince := opts.Since
-			if prSince == nil && info.PRCursor != nil {
-				prSince = info.PRCursor
-			}
 			if opts.Since != nil {
 				notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Fetching pull requests created or updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 			} else {
@@ -400,14 +446,39 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 			}); err != nil {
 				notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
 				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
-				return issueCount, prCount, fmt.Errorf("fetching pull requests: %w", err)
+				return fmt.Errorf("fetching pull requests: %w", err)
 			}
 			notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
 		}
 		notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
+		return nil
 	}
-	if !opts.FetchPRs {
-		fmt.Println("Skipping pull requests (--type issues).")
+
+	switch {
+	case opts.FetchIssues && opts.FetchPRs:
+		var wg sync.WaitGroup
+		var issueErr, prErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			issueErr = fetchIssues()
+		}()
+		go func() {
+			defer wg.Done()
+			prErr = fetchPRs()
+		}()
+		wg.Wait()
+		if err := errors.Join(issueErr, prErr); err != nil {
+			return issueCount, prCount, err
+		}
+	case opts.FetchIssues:
+		if err := fetchIssues(); err != nil {
+			return issueCount, prCount, err
+		}
+	case opts.FetchPRs:
+		if err := fetchPRs(); err != nil {
+			return issueCount, prCount, err
+		}
 	}
 
 	return finalizeFetch(store, repo, info, opts, issueCount, prCount)
@@ -440,7 +511,14 @@ func finalizeFetch(store cache.Store, repo *gitremote.Repo, info *cache.CacheInf
 
 // cliFetchProgress renders fetch events as CLI status lines and progress bars.
 // Phases map onto labelled bars; unknown phases still print their messages.
-func cliFetchProgress(client *github.Client) FetchProgress {
+//
+// concurrent is true when issues and pull requests are fetched at the same
+// time. Their events then interleave, so they share one bar: two live bars
+// cannot share a terminal line without overwriting each other.
+func cliFetchProgress(client *github.Client, concurrent bool) FetchProgress {
+	if concurrent {
+		return combinedProgress(client)
+	}
 	type phaseBar struct {
 		tracker *progressTracker
 	}
@@ -475,6 +553,159 @@ func cliFetchProgress(client *github.Client) FetchProgress {
 			}
 		}
 	}
+}
+
+// combinedProgress renders the concurrently fetched portions on a single bar.
+// The bar counts issues and pull requests together and shows each portion's own
+// figure in its description. fetchRepoData delivers events one at a time, so no
+// locking is needed here.
+func combinedProgress(client *github.Client) FetchProgress {
+	p := &combinedBar{
+		status: rateLimitStatus(client),
+		totals: map[string]int{},
+		done:   map[string]int{},
+		writer: progressWriter(),
+	}
+	return p.handle
+}
+
+// combinedBar is the one progress bar shared by concurrent portions.
+type combinedBar struct {
+	status func() string
+	writer io.Writer
+	bar    *progressbar.ProgressBar
+	phases []string // portions that reported at least one item, in first-seen order
+	totals map[string]int
+	done   map[string]int
+	max    int
+	active int // portions that started and have not finished yet
+}
+
+func (p *combinedBar) handle(ev FetchEvent) {
+	switch ev.Kind {
+	case "start":
+		if ev.Phase == "issues" || ev.Phase == "prs" {
+			p.active++
+		}
+		if ev.Message != "" {
+			p.println(ev.Message)
+		}
+	case "batch":
+		// The prs-scan phase locates the delta window and has no fixed total,
+		// so it would keep the shared bar spinning. The full-page phase that
+		// follows reports the real total.
+		if ev.Phase == "prs-scan" {
+			return
+		}
+		p.record(ev.Phase, ev.Done, ev.Total)
+	case "done":
+		if ev.Phase == "prs-scan" {
+			return
+		}
+		p.finish(ev.Phase, ev.Done)
+	}
+}
+
+// record updates the shared count with one portion's progress.
+func (p *combinedBar) record(phase string, done, total int) {
+	if _, seen := p.done[phase]; !seen {
+		p.phases = append(p.phases, phase)
+	}
+	p.done[phase] = done
+	if total > 0 {
+		p.totals[phase] = total
+	}
+	p.ensureBar()
+	p.updateMax()
+	sum := 0
+	for _, ph := range p.phases {
+		sum += p.done[ph]
+	}
+	p.bar.Describe(p.describe())
+	p.bar.Set(sum)
+}
+
+// ensureBar creates the shared bar as a spinner on the first item. It becomes
+// determinate once every portion has reported a total (see updateMax).
+func (p *combinedBar) ensureBar() {
+	if p.bar != nil {
+		return
+	}
+	p.max = -1
+	p.bar = newProgressBar("caching", 0, p.writer)
+	if p.writer == os.Stderr {
+		setActiveBar(p.bar)
+	}
+}
+
+// updateMax sets the bar maximum to the sum of the portions' totals, once all
+// of them are known.
+func (p *combinedBar) updateMax() {
+	sum := 0
+	for _, ph := range p.phases {
+		if p.totals[ph] <= 0 {
+			return // still a spinner until every portion's total is known
+		}
+		sum += p.totals[ph]
+	}
+	if sum <= 0 || sum == p.max {
+		return
+	}
+	p.max = sum
+	p.bar.ChangeMax(sum)
+}
+
+// describe renders the per-portion figures plus the live rate limit status.
+func (p *combinedBar) describe() string {
+	parts := make([]string, 0, len(p.phases))
+	for _, ph := range p.phases {
+		if total := p.totals[ph]; total > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d/%d", fetchPhaseLabel(ph), p.done[ph], total))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s %d", fetchPhaseLabel(ph), p.done[ph]))
+		}
+	}
+	return "caching (" + strings.Join(parts, ", ") + ")" + p.status()
+}
+
+// finish closes one portion: its summary is printed outside the bar, and the
+// bar is finished once no portion is left running.
+func (p *combinedBar) finish(phase string, count int) {
+	p.active--
+	last := p.active <= 0
+	if p.bar != nil {
+		if last {
+			if !p.bar.IsFinished() && p.bar.GetMax() > 0 {
+				p.bar.Finish()
+			}
+			fmt.Fprintln(p.writer)
+			if p.writer == os.Stderr {
+				setActiveBar(nil)
+			}
+		} else {
+			_ = p.bar.Clear() // keep the summary line clear of the bar
+		}
+	}
+	switch phase {
+	case "issues":
+		fmt.Printf("Cached %d issue(s).\n", count)
+	case "prs":
+		fmt.Printf("Cached %d pull request(s).\n", count)
+	}
+	if p.bar != nil && !last {
+		_ = p.bar.RenderBlank()
+	}
+}
+
+// println prints a message without landing it in the middle of the bar.
+func (p *combinedBar) println(msg string) {
+	if p.bar == nil {
+		fmt.Println(msg)
+		return
+	}
+	_ = p.bar.Clear()
+	fmt.Println(msg)
+	_ = p.bar.RenderBlank()
 }
 
 // fetchPhaseLabel maps a fetch phase onto its progress bar label.
@@ -539,20 +770,25 @@ func (t *progressTracker) describe() {
 	t.bar.Describe(t.label + t.status())
 }
 
+// newProgressBar creates a schollz bar configured like every ghx bar: spinner
+// mode when max is not positive, a fixed width, and no ETA prediction.
+func newProgressBar(label string, max int, writer io.Writer) *progressbar.ProgressBar {
+	if max <= 0 {
+		max = -1 // -1 selects spinner mode for an unknown length
+	}
+	return progressbar.NewOptions(max,
+		progressbar.OptionSetDescription(label),
+		progressbar.OptionSetWriter(writer),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetWidth(30),
+		progressbar.OptionSetPredictTime(false),
+		progressbar.OptionThrottle(50*time.Millisecond),
+	)
+}
+
 func (t *progressTracker) setTotal(total int) {
 	if t.bar == nil {
-		max := -1 // -1 selects spinner mode for an unknown length
-		if total > 0 {
-			max = total
-		}
-		t.bar = progressbar.NewOptions(max,
-			progressbar.OptionSetDescription(t.label),
-			progressbar.OptionSetWriter(t.writer),
-			progressbar.OptionShowCount(),
-			progressbar.OptionSetWidth(30),
-			progressbar.OptionSetPredictTime(false),
-			progressbar.OptionThrottle(50*time.Millisecond),
-		)
+		t.bar = newProgressBar(t.label, total, t.writer)
 		if t.writer == os.Stderr {
 			setActiveBar(t.bar)
 		}
