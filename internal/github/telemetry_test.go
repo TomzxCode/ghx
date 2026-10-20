@@ -1,12 +1,16 @@
 package github
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
@@ -214,6 +218,45 @@ func TestQueryRecordsSizesAndItemCount(t *testing.T) {
 	}
 	if e.ResponseBytes <= 0 {
 		t.Errorf("responseBytes = %d, want > 0", e.ResponseBytes)
+	}
+}
+
+// Each request logs one debug line with its operation and outcome, so paged
+// fetches show up individually instead of only as a command-level total.
+func TestQueryCtxLogsEachRequest(t *testing.T) {
+	var buf bytes.Buffer
+	logging.SetOutput(&buf)
+	if err := logging.SetLevel("debug"); err != nil {
+		t.Fatalf("SetLevel(debug): %v", err)
+	}
+	t.Cleanup(func() {
+		logging.SetOutput(os.Stderr)
+		_ = logging.SetLevel("info")
+	})
+
+	c := newStubClient(t, nil, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"data":{"repository":{"issues":{"nodes":[{"number":1},{"number":2}]}}}}`))
+	})
+	if err := c.QueryCtx(CallContext{
+		Operation: "list_issues",
+		Kind:      telemetry.KindIssueList,
+		PageSize:  2,
+		Cursor:    true,
+	}, `query { ok }`, nil, nil); err != nil {
+		t.Fatalf("QueryCtx: %v", err)
+	}
+
+	out := buf.String()
+	for _, want := range []string{
+		"github request",
+		"operation=list_issues",
+		"page_size=2",
+		"cursor=true",
+		"duration=",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("debug log missing %q; got:\n%s", want, out)
+		}
 	}
 }
 

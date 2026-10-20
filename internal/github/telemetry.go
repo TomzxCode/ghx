@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
@@ -42,8 +43,28 @@ func (c *Client) SetTelemetry(rec telemetry.Recorder) {
 func (c *Client) QueryCtx(ctx CallContext, query string, variables map[string]interface{}, result interface{}) error {
 	start := time.Now()
 	err := c.Query(query, variables, result)
-	c.recordCall(ctx, start, time.Since(start), requestBytes(query, variables))
+	d := time.Since(start)
+	c.recordCall(ctx, start, d, requestBytes(query, variables))
+	logCall(ctx, d, err)
 	return err
+}
+
+// logCall emits one debug line per GraphQL request so individual fetches (one
+// per page, typically) are visible instead of only the command-level totals.
+// Only request-local data is logged: the client's last-call counters are shared
+// across concurrent calls (for example the parallel cache backfill), so they
+// cannot be trusted per line.
+func logCall(ctx CallContext, d time.Duration, err error) {
+	args := []any{
+		"operation", ctx.Operation,
+		"page_size", ctx.PageSize,
+		"cursor", ctx.Cursor,
+		"duration", d,
+	}
+	if err != nil {
+		args = append(args, "error", err)
+	}
+	logging.Debug("github request", args...)
 }
 
 // requestBytes estimates the marshalled request size without re-marshalling on
