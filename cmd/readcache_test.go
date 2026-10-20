@@ -215,6 +215,56 @@ func TestIssueView_FreshCacheMissFetches(t *testing.T) {
 	}
 }
 
+// TestIssueView_CachedPRReportsOtherType verifies that viewing a number cached
+// as a pull request through `issue view` reports the type mismatch instead of
+// querying GitHub for an issue. The server is closed before the call, so a type
+// error proves the lookup never left the cache.
+func TestIssueView_CachedPRReportsOtherType(t *testing.T) {
+	scenario := readCacheScenario()
+	prNumber := scenario.PRs[0].Number
+	srv := mockserver.NewServer(scenario)
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SavePR("github.com", "acme", "myproject", &github.PullRequest{Number: prNumber, Title: "Cached PR"}); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	store.Close()
+	srv.Close()
+
+	err := runIssueView(nil, []string{strconv.Itoa(prNumber)})
+	if err == nil {
+		t.Fatal("runIssueView succeeded for a cached pull request")
+	}
+	if !strings.Contains(err.Error(), "is a pull request, not an issue") {
+		t.Errorf("error = %q, want the pull request type message", err)
+	}
+}
+
+// TestPRView_CachedIssueReportsOtherType is the pull-request counterpart of
+// TestIssueView_CachedPRReportsOtherType.
+func TestPRView_CachedIssueReportsOtherType(t *testing.T) {
+	srv := mockserver.NewServer(readCacheScenario())
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SaveIssue("github.com", "acme", "myproject", &github.Issue{Number: 1, Title: "Cached issue"}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	store.Close()
+	srv.Close()
+
+	err := runPRView(nil, []string{"1"})
+	if err == nil {
+		t.Fatal("runPRView succeeded for a cached issue")
+	}
+	if !strings.Contains(err.Error(), "is an issue, not a pull request") {
+		t.Errorf("error = %q, want the issue type message", err)
+	}
+}
+
 // TestPRView_FreshCacheMissFetches is the pull-request counterpart of
 // TestIssueView_FreshCacheMissFetches.
 func TestPRView_FreshCacheMissFetches(t *testing.T) {

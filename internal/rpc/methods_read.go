@@ -291,6 +291,13 @@ func (s *Server) issueView(ctx context.Context, raw json.RawMessage) (any, error
 		}
 	}
 
+	// Issues and pull requests share one number sequence, so a cached pull
+	// request proves no issue with this number exists. Report the type instead
+	// of asking GitHub for an issue it cannot return.
+	if _, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
+		return nil, Errorf(CodeApplication, "#%d is a pull request, not an issue; use \"ghx pr view %d\"", p.Number, p.Number)
+	}
+
 	client, err := s.client(repo.Host)
 	if err != nil {
 		return nil, err
@@ -412,6 +419,13 @@ func (s *Server) prView(ctx context.Context, raw json.RawMessage) (any, error) {
 		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && time.Since(mtime) < 60*time.Minute {
 			return pr, nil
 		}
+	}
+
+	// Issues and pull requests share one number sequence, so a cached issue
+	// proves no pull request with this number exists. Report the type instead
+	// of asking GitHub for a pull request it cannot return.
+	if _, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
+		return nil, Errorf(CodeApplication, "#%d is an issue, not a pull request; use \"ghx issue view %d\"", p.Number, p.Number)
 	}
 
 	client, err := s.client(repo.Host)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,6 +165,41 @@ func TestPRListAndView(t *testing.T) {
 	}
 	if pr.Title != "Mock PR" {
 		t.Fatalf("title = %q", pr.Title)
+	}
+}
+
+// TestIssueViewCachedPRReportsOtherType verifies that issue.view reports the
+// type mismatch for a number cached as a pull request instead of querying
+// GitHub.
+func TestIssueViewCachedPRReportsOtherType(t *testing.T) {
+	srv, _, store, repo := newMockServer(t)
+	if err := store.SavePR(repo.Host, repo.Owner, repo.Name, &github.PullRequest{Number: 2, Title: "Cached PR"}); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+
+	_, rpcErr := call(t, srv, "issue.view", IssueViewParams{Number: 2})
+	if rpcErr == nil {
+		t.Fatal("issue.view succeeded for a cached pull request")
+	}
+	if !strings.Contains(rpcErr.Message, "is a pull request, not an issue") {
+		t.Errorf("error = %q, want the pull request type message", rpcErr.Message)
+	}
+}
+
+// TestPRViewCachedIssueReportsOtherType is the pull-request counterpart of
+// TestIssueViewCachedPRReportsOtherType.
+func TestPRViewCachedIssueReportsOtherType(t *testing.T) {
+	srv, _, store, repo := newMockServer(t)
+	if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, &github.Issue{Number: 1, Title: "Cached issue"}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+
+	_, rpcErr := call(t, srv, "pr.view", PRViewParams{Number: 1})
+	if rpcErr == nil {
+		t.Fatal("pr.view succeeded for a cached issue")
+	}
+	if !strings.Contains(rpcErr.Message, "is an issue, not a pull request") {
+		t.Errorf("error = %q, want the issue type message", rpcErr.Message)
 	}
 }
 

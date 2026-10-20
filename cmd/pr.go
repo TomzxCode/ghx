@@ -204,6 +204,14 @@ func runPRView(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Issues and pull requests share one number sequence, so a cached issue
+	// proves no pull request with this number exists. Report the type instead
+	// of asking GitHub for a pull request it cannot return.
+	if _, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
+		logging.Debug("pr view: cached item is an issue", "number", number)
+		return fmt.Errorf("#%d is an issue, not a pull request; use \"ghx issue view %d\"", number, number)
+	}
+
 	client, err := newClient(repo.Host)
 	if err != nil {
 		return err
