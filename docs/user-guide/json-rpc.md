@@ -139,6 +139,18 @@ Errors use standard JSON-RPC codes:
 The server accepts batches and notifications.
 A notification (a request without an `id`) is executed and produces no response body.
 
+## Benchmarking
+
+`scripts/benchmark_rpc.py` times the same read operations through the CLI and the JSON-RPC server against one warm cache:
+
+```bash
+python3 scripts/benchmark_rpc.py --build --runs 100
+```
+
+It builds ghx, populates a throwaway cache, starts `ghx rpc serve` on a free port, and reports median and p95 latency for each path.
+Use `--cache-dir` to reuse an existing cache, `--json` for raw samples, and `-o report.md` for a Markdown table.
+Typed methods avoid process startup and store initialization per call; `cli.run` and `--remote` still spawn a process, so they trade speed for compatibility.
+
 ## Authentication and security
 
 The server binds to loopback by default and the typed read methods only expose cached data.
