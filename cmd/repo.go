@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tomzxcode/ghx/internal/gitremote"
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 var repoCmd = &cobra.Command{
@@ -18,7 +19,14 @@ var repoCmd = &cobra.Command{
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List locally cached repositories",
-	RunE:  runRepoList,
+	Long: `Lists every repository in the local cache with its issue and PR counts,
+cache age, freshness, and a cache hit rate with the retrieval count per
+operation.
+
+Hit rates are read from the local telemetry database and are split by
+retrieval operation: issue list, issue view, PR list, and PR view. A dash
+means no retrieval of that kind has been recorded for the repository.`,
+	RunE: runRepoList,
 }
 
 var repoDeleteCmd = &cobra.Command{
@@ -66,7 +74,8 @@ func runRepoList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "REPO\tISSUES\tPRS\tCACHED AGE\tSTATUS")
+	fmt.Fprintln(w, "REPO\tISSUES\tPRS\tCACHED AGE\tSTATUS\tISSUE-LIST\tISSUE-VIEW\tPR-LIST\tPR-VIEW")
+	rates := retrievalHitRates()
 	for _, r := range repos {
 		repoStr := repoLabel(r.Host, r.Owner, r.Repo)
 		age := "—"
@@ -80,8 +89,12 @@ func runRepoList(cmd *cobra.Command, args []string) error {
 				status = "stale"
 			}
 		}
-		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\n",
-			repoStr, r.IssueCount, r.PRCount, age, status)
+		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			repoStr, r.IssueCount, r.PRCount, age, status,
+			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalIssueList),
+			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalIssueView),
+			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalPRList),
+			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalPRView))
 	}
 	w.Flush()
 	return nil

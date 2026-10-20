@@ -139,7 +139,7 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 
 ## repo list
 
-No command-specific flags. Uses only the global `--cache-dir`.
+No command-specific flags. Uses the global `--cache-dir` for repository data and `--telemetry-db` for the hit-rate columns.
 
 ## repo delete
 

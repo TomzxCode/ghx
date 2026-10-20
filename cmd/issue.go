@@ -14,6 +14,7 @@ import (
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/logging"
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 // ---------------------------------------------------------------------------
@@ -119,6 +120,7 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 				issues = issues[:issueListLimit]
 			}
 			logging.Debug("issue list: served from cache", "count", total, "duration", time.Since(cacheStart))
+			recordRetrievalOutcome(repo, telemetry.RetrievalIssueList, true)
 			return printIssueList(issues, total, issueListJSON, issueListNoTruncate)
 		}
 		logging.Debug("issue list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
@@ -148,6 +150,7 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	logging.Debug("issue list: fetched from API", "count", len(issues), "duration", time.Since(listStart))
+	recordRetrievalOutcome(repo, telemetry.RetrievalIssueList, false)
 
 	backfillIssueDetails(store, client, repo, issues)
 	return printIssueList(issues, len(issues), issueListJSON, issueListNoTruncate)
@@ -178,6 +181,7 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 			lookupStart := time.Now()
 			if issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
 				logging.Debug("issue view: served from cache", "number", number, "source", "full-cache", "duration", time.Since(lookupStart))
+				recordRetrievalOutcome(repo, telemetry.RetrievalIssueView, true)
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
 			logging.Debug("issue view: not in fresh cache, fetching from API", "number", number, "duration", time.Since(lookupStart))
@@ -185,6 +189,7 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 			// No fresh full cache — serve the individual file when it is recent.
 			if time.Since(mtime) < 60*time.Minute {
 				logging.Debug("issue view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
+				recordRetrievalOutcome(repo, telemetry.RetrievalIssueView, true)
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
 		}
@@ -201,6 +206,11 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fetchDuration := time.Since(fetchStart)
+	if !issueViewRefresh {
+		// A forced refresh asks the API for fresh data directly; it is not a
+		// cache miss, so it stays out of the hit rate.
+		recordRetrievalOutcome(repo, telemetry.RetrievalIssueView, false)
+	}
 
 	saveStart := time.Now()
 	saveErr := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue)

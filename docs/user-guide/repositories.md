@@ -11,14 +11,19 @@ Lists all repositories that have been cached locally. This command reads the fil
 Example output:
 
 ```
-REPO                      ISSUES  PRS  CACHED AGE  STATUS
-octocat/hello-world       42      15   2h30m       fresh
-alice/another-repo        10      3    1d          stale
+REPO                      ISSUES  PRS  CACHED AGE  STATUS  ISSUE-LIST  ISSUE-VIEW  PR-LIST  PR-VIEW
+octocat/hello-world       42      15   2h30m       fresh   92% (13)    80% (5)     75% (8)  60% (5)
+alice/another-repo        10      3    1d          stale   —           —           —        —
 ```
 
 For GitHub Enterprise hosts, the full `HOST/OWNER/REPO` format is displayed.
 
 The status column shows `fresh` when the cache is within its configured duration, and `stale` otherwise.
+
+The four hit-rate columns report how often each retrieval operation was served from the local cache instead of calling GitHub, with the total number of recorded retrievals in parentheses.
+The counts are read from the local telemetry database and are split by operation: issue list, issue view, PR list, and PR view.
+A dash means no retrieval of that kind has been recorded for the repository, for example when telemetry is disabled or was cleared.
+Telemetry is local only; see [Telemetry](telemetry.md).
 
 Use `repo list` to see which repositories are cached and how many issues and PRs each holds.
 

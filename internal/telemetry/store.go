@@ -332,6 +332,51 @@ func (s *Store) DeleteBefore(t time.Time) (int, error) {
 	return int(n), nil
 }
 
+// CacheHitRate is the hit and miss counts for one repository and retrieval
+// operation.
+type CacheHitRate struct {
+	Host      string
+	Repo      string
+	Operation string
+	Hits      int
+	Misses    int
+}
+
+// CacheHitRates aggregates cache hit and miss events by repository and
+// retrieval operation.
+func (s *Store) CacheHitRates() ([]CacheHitRate, error) {
+	const q = `SELECT host, repo, operation,
+	                  SUM(CASE WHEN kind = ? THEN 1 ELSE 0 END),
+	                  SUM(CASE WHEN kind = ? THEN 1 ELSE 0 END)
+	           FROM telemetry_events
+	           WHERE kind IN (?, ?) AND repo IS NOT NULL AND repo <> ''
+	           GROUP BY host, repo, operation`
+	rows, err := s.db.Query(q, KindCacheHit, KindCacheMiss, KindCacheHit, KindCacheMiss)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []CacheHitRate
+	for rows.Next() {
+		var (
+			host, repo, op sql.NullString
+			hits, misses   int
+		)
+		if err := rows.Scan(&host, &repo, &op, &hits, &misses); err != nil {
+			return nil, err
+		}
+		out = append(out, CacheHitRate{
+			Host:      host.String,
+			Repo:      repo.String,
+			Operation: op.String,
+			Hits:      hits,
+			Misses:    misses,
+		})
+	}
+	return out, rows.Err()
+}
+
 // Filter narrows a read. Zero values mean "no filter".
 type Filter struct {
 	Kind  string

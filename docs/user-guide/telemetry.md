@@ -109,3 +109,6 @@ given.
 | `cache_load_issue`, `cache_load_pr`, `cache_load_all` | Individual and bulk cache reads |
 | `cache_save_issue`, `cache_save_pr` | Cache writes |
 | `cache_info` | Cache metadata read/write and repository listing |
+| `cache_hit`, `cache_miss` | A list or view retrieval served from the cache, or one that fell back to the API; `operation` names the retrieval (`issue_list`, `issue_view`, `pr_list`, `pr_view`) |
+
+`repo list` reads the `cache_hit` and `cache_miss` events to show a hit rate per retrieval operation, with the number of recorded retrievals in parentheses.

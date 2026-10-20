@@ -7,7 +7,7 @@ status: draft
 
 ## Overview
 
-Provides a `repo list` command that scans the local cache directory and displays all repositories that have been previously cached, along with their issue/PR counts, cache age, and freshness status.
+Provides a `repo list` command that scans the local cache directory and displays all repositories that have been previously cached, along with their issue/PR counts, cache age, freshness status, and a cache hit rate per retrieval operation.
 
 ## Stakeholders
 
@@ -24,6 +24,10 @@ Order rows by priority: Must first, then Should, then May.
 | FR-01 | Must | The system shall provide a `repo list` command that displays all locally cached repositories |
 | FR-02 | Must | For each repository, the system shall display issue count, PR count, cache age, and freshness status |
 | FR-03 | Must | The system shall display the repository as `OWNER/REPO` for github.com hosts and `HOST/OWNER/REPO` for others |
+| FR-04 | Must | For each repository, the system shall display a cache hit rate for each retrieval operation: issue list, issue view, PR list, and PR view |
+| FR-05 | Must | A hit rate shall be the number of retrievals served from the local cache divided by all recorded retrievals of that operation for the repository |
+| FR-06 | Must | A hit rate shall be displayed as a dash when the repository has no recorded retrievals for that operation, including when telemetry is disabled or has no data |
+| FR-07 | Must | The system shall display the total number of recorded retrievals beside each hit rate |
 
 ## Non-Functional Requirements
 
@@ -32,17 +36,24 @@ Order rows by priority: Must first, then Should, then May.
 | ID | Priority | Category | Requirement |
 |---|---|---|---|
 | NFR-01 | Must | Performance | Listing shall complete in under 1 second for up to 50 cached repos |
+| NFR-02 | Must | Reliability | An unavailable, disabled, or unreadable telemetry database shall not fail the listing; hit-rate columns fall back to a dash |
 
 ## Constraints
 
 - Only shows repositories with data on disk; no network calls
 - Cache age formatting rounds to minutes
+- Hit rates are derived from local telemetry events recorded by list and view commands
 
 ## Acceptance Criteria
 
 - [ ] FR-01: `gh-cached repo list` shows all cached repos in tabular format
 - [ ] FR-02: Each row shows issue count, PR count, age, and fresh/stale status
 - [ ] FR-03: GitHub.com repos omit the host prefix; GHE repos include it
+- [ ] FR-04: Each row shows a hit rate for issue list, issue view, PR list, and PR view
+- [ ] FR-05: A repository with 2 hits and 1 miss for issue list reports 67%
+- [ ] FR-06: An operation with no recorded retrievals shows a dash
+- [ ] FR-07: A row with 2 hits and 1 miss shows `67% (3)`
+- [ ] NFR-02: Listing succeeds with a dash in every hit-rate column when no telemetry database exists
 
 ## Open Questions
 

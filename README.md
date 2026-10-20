@@ -215,10 +215,14 @@ ghx repo list
 Example output:
 
 ```
-REPO                      ISSUES  PRS  CACHED AGE  STATUS
-octocat/hello-world       42      15   2h30m       fresh
-alice/another-repo        10      3    1d          stale
+REPO                      ISSUES  PRS  CACHED AGE  STATUS  ISSUE-LIST  ISSUE-VIEW  PR-LIST  PR-VIEW
+octocat/hello-world       42      15   2h30m       fresh   92% (13)    80% (5)     75% (8)  60% (5)
+alice/another-repo        10      3    1d          stale   —           —           —        —
 ```
+
+The four hit-rate columns show how often each retrieval operation was served from the local cache instead of calling GitHub, with the total number of recorded retrievals in parentheses.
+They come from the local telemetry database and are split by operation: issue list, issue view, PR list, and PR view.
+A dash means no retrieval of that kind has been recorded for the repository, for example when telemetry is disabled or was cleared.
 
 Delete the cached data for one repository:
 

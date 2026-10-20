@@ -14,6 +14,7 @@ import (
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/logging"
+	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 // ---------------------------------------------------------------------------
@@ -127,6 +128,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 				prs = prs[:prListLimit]
 			}
 			logging.Debug("pr list: served from cache", "count", total, "duration", time.Since(cacheStart))
+			recordRetrievalOutcome(repo, telemetry.RetrievalPRList, true)
 			return printPRList(prs, total, jsonFields, prListNoTruncate)
 		}
 		logging.Debug("pr list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
@@ -157,6 +159,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	logging.Debug("pr list: fetched from API", "count", len(prs), "duration", time.Since(listStart))
+	recordRetrievalOutcome(repo, telemetry.RetrievalPRList, false)
 
 	backfillPRDetails(store, client, repo, prs)
 	return printPRList(prs, len(prs), jsonFields, prListNoTruncate)
@@ -187,6 +190,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 			lookupStart := time.Now()
 			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
 				logging.Debug("pr view: served from cache", "number", number, "source", "full-cache", "duration", time.Since(lookupStart))
+				recordRetrievalOutcome(repo, telemetry.RetrievalPRView, true)
 				return printPRView(pr, prViewComments, prViewJSON)
 			}
 			logging.Debug("pr view: not in fresh cache, fetching from API", "number", number, "duration", time.Since(lookupStart))
@@ -194,6 +198,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 			// No fresh full cache — serve the individual file when it is recent.
 			if time.Since(mtime) < 60*time.Minute {
 				logging.Debug("pr view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
+				recordRetrievalOutcome(repo, telemetry.RetrievalPRView, true)
 				return printPRView(pr, prViewComments, prViewJSON)
 			}
 		}
@@ -210,6 +215,11 @@ func runPRView(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fetchDuration := time.Since(fetchStart)
+	if !prViewRefresh {
+		// A forced refresh asks the API for fresh data directly; it is not a
+		// cache miss, so it stays out of the hit rate.
+		recordRetrievalOutcome(repo, telemetry.RetrievalPRView, false)
+	}
 
 	saveStart := time.Now()
 	saveErr := store.SavePR(repo.Host, repo.Owner, repo.Name, pr)

@@ -29,6 +29,23 @@ const (
 	KindUnknown      = "unknown"
 )
 
+// Cache retrieval outcome kinds. A hit is a read the command served from the
+// local cache; a miss is a read that had to fall back to the GitHub API.
+const (
+	KindCacheHit  = "cache_hit"
+	KindCacheMiss = "cache_miss"
+)
+
+// Retrieval operation labels recorded on cache_hit and cache_miss events. They
+// name the command-level operation rather than the store method, so a hit rate
+// can be reported per user-visible retrieval.
+const (
+	RetrievalIssueList = "issue_list"
+	RetrievalIssueView = "issue_view"
+	RetrievalPRList    = "pr_list"
+	RetrievalPRView    = "pr_view"
+)
+
 // Cache operation kinds.
 const (
 	KindCacheQueryIssues = "cache_query_issues"

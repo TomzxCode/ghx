@@ -40,6 +40,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-8 | Should | The system shall provide a machine-readable export of recorded events as JSON, so the benchmark script and external analysis can consume it |
 | FR-9 | Should | The system shall expose the recorded duration distribution per operation kind to the mock server simulation generator, which can inject per-kind latency when configured to do so |
 | FR-10 | Should | The `cache` command shall report total elapsed time and a per-page timing breakdown on completion |
+| FR-12 | Should | The system shall record a cache hit or miss event for each issue and PR list/view retrieval, naming the repository and the retrieval operation, so per-operation hit rates can be reported |
 | FR-11 | May | The system shall record the GraphQL rate-limit remaining value per call when the response carries it, so point consumption can be modelled |
 
 ## Non-Functional Requirements
@@ -220,6 +221,24 @@ Multiple scenarios per requirement are allowed; tag each with the requirement ID
       Given telemetry is enabled and the server returns a rate-limit remaining header
       When a GraphQL call completes
       Then the recorded event carries the remaining value
+    ```
+
+- [ ] **FR-12**
+
+    ```gherkin
+    @FR-12
+    Scenario: A cache hit and a cache miss are distinguishable
+      Given telemetry is enabled and a repository has a fresh cache
+      When an issue list is served from the cache and a PR view falls back to the API
+      Then the database contains a cache_hit event for issue_list and a cache_miss event for pr_view, both labelled with the repository
+    ```
+
+    ```gherkin
+    @FR-12
+    Scenario: A forced refresh is not counted as a miss
+      Given telemetry is enabled
+      When a view runs with refresh requested
+      Then no cache_miss event is recorded for that retrieval
     ```
 
 - [ ] **NFR-1**
