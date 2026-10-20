@@ -32,7 +32,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-07 | Must | The serve API shall render issue and PR bodies and comments from markdown to HTML using GFM extensions (tables, task lists, strikethrough, autolinks) without allowing raw HTML injection |
 | FR-08 | Must | The serve UI shall provide a refresh action that fetches new issues and PRs for the selected repository using the same resumable fetch logic as the `cache` command |
 | FR-09 | Must | All ghx-owned UI assets (HTML, CSS, JS) shall be embedded in the binary via `go:embed`; the frontend framework (Vue 3) and CSS framework (daisyUI) load from CDN |
-| FR-10 | Should | The `serve` command shall accept `--addr` to override the listen address and `--open` to open the browser automatically |
+| FR-10 | Should | The `serve` command shall accept `--host` and `--port` to override the listen address and `--open` to open the browser automatically |
 | FR-11 | Should | The palette shall support jumping across all cached repositories, not only the currently selected one |
 | FR-12 | Should | The serve API shall support machine-readable JSON responses for repos, issue/PR lists, issue/PR details, and search |
 | FR-13 | May | The UI shall show a friendly empty state with `ghx cache` instructions when no repositories are cached |
@@ -67,7 +67,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-07: Markdown bodies render with GFM features; a `<script>` tag in a body is removed
 - [ ] FR-08: The refresh action fetches from GitHub (or a mock server) and updates the cached rows
 - [ ] FR-09: The binary serves the UI with no external ghx-owned asset files
-- [ ] FR-10: `--addr` and `--open` behave as documented
+- [ ] FR-10: `--host`, `--port`, and `--open` behave as documented
 - [ ] FR-12: `/api/repos` and the list/detail endpoints return valid JSON
 
 ## Open Questions
