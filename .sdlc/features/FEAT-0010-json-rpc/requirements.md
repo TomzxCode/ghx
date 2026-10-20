@@ -61,7 +61,7 @@ Order rows by priority: Must first, then Should, then May.
 
 ## Acceptance Criteria
 
-- [ ] FR-01: `ghx rpc serve --addr 127.0.0.1:9000` answers a JSON-RPC request at `http://127.0.0.1:9000/rpc`
+- [ ] FR-01: `ghx rpc serve --host 127.0.0.1 --port 9000` answers a JSON-RPC request at `http://127.0.0.1:9000/rpc`
 - [ ] FR-02: Each typed method returns its documented result for a cached repository
 - [ ] FR-03: `cli.run` returns stdout, stderr, and the command's exit code; `--allow-exec=false` removes the method
 - [ ] FR-04: `rpc methods` lists the exposed methods, and `rpc call` prints an indented JSON result
@@ -70,7 +70,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-07: Omitting `repo` uses the server default; an invalid repository returns `-32602`
 - [ ] FR-08: `ghx serve` answers JSON-RPC at `/rpc` on its UI port
 - [ ] FR-09: A batch returns one response per request, and a notification returns no body
-- [ ] NFR-01: `rpc serve --addr 0.0.0.0:8090` without a token fails before listening
+- [ ] NFR-01: `rpc serve --host 0.0.0.0 --port 8090` without a token fails before listening
 - [ ] NFR-03: Two concurrent `cache.refresh` calls complete one after the other
 - [ ] NFR-04: `issue.list` against a fresh cache reports `source: "cache"`
 

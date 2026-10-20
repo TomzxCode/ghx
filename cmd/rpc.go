@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -23,7 +24,8 @@ import (
 )
 
 var (
-	rpcAddr      string
+	rpcHost      string
+	rpcPort      int
 	rpcURL       string
 	rpcToken     string
 	rpcAllowExec bool
@@ -86,7 +88,8 @@ func init() {
 	rpcCmd.PersistentFlags().StringVar(&rpcURL, "url", defaultRPCURL(), "RPC server URL (env GHX_RPC_URL)")
 	rpcCmd.PersistentFlags().StringVar(&rpcToken, "token", os.Getenv("GHX_RPC_TOKEN"), "Bearer token for the RPC client or server (env GHX_RPC_TOKEN)")
 
-	rpcServeCmd.Flags().StringVar(&rpcAddr, "addr", "127.0.0.1:8090", "Address to listen on")
+	rpcServeCmd.Flags().StringVar(&rpcHost, "host", "127.0.0.1", "Interface to bind the server to")
+	rpcServeCmd.Flags().IntVar(&rpcPort, "port", 8090, "Port to bind the server to")
 	rpcServeCmd.Flags().BoolVar(&rpcAllowExec, "allow-exec", true, "Expose cli.run, which executes ghx commands for clients")
 
 	rpcCmd.AddCommand(rpcServeCmd)
@@ -104,8 +107,9 @@ func defaultRPCURL() string {
 }
 
 func runRPCServe(cmd *cobra.Command, args []string) error {
-	if rpcToken == "" && !isLoopbackAddr(rpcAddr) {
-		return fmt.Errorf("refusing to listen on %s without --token: the RPC API can modify the cache and GitHub", rpcAddr)
+	addr := net.JoinHostPort(rpcHost, strconv.Itoa(rpcPort))
+	if rpcToken == "" && !isLoopbackAddr(addr) {
+		return fmt.Errorf("refusing to listen on %s without --token: the RPC API can modify the cache and GitHub", addr)
 	}
 
 	store, err := newStore()
@@ -116,13 +120,13 @@ func runRPCServe(cmd *cobra.Command, args []string) error {
 
 	server := rpc.NewServer(newRPCConfig(store, rpcToken, rpcAllowExec))
 	httpServer := &http.Server{
-		Addr:              rpcAddr,
+		Addr:              addr,
 		Handler:           server,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 
-	fmt.Printf("Serving ghx JSON-RPC at http://%s/rpc\n", rpcAddr)
+	fmt.Printf("Serving ghx JSON-RPC at http://%s/rpc\n", addr)
 	if rpcToken != "" {
 		fmt.Println("Bearer token authentication is required.")
 	}

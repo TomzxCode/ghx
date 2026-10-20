@@ -12,10 +12,10 @@ ghx serve
 The server prints its URL (default `http://127.0.0.1:8080`) and serves until you stop it with Ctrl+C.
 
 ```bash
-ghx serve --addr 127.0.0.1:9000 --open
+ghx serve --host 127.0.0.1 --port 9000 --open
 ```
 
-`--addr` overrides the listen address and `--open` opens your browser automatically.
+`--host` and `--port` override the listen address and `--open` opens your browser automatically.
 
 ## Using the UI
 
@@ -66,7 +66,7 @@ Combine `mock serve` with a throwaway cache directory to try the UI on synthetic
 ```bash
 ghx mock serve --repos octocat/hello-world
 ghx --api-url http://127.0.0.1:PORT --cache-dir /tmp/mock-cache --repo octocat/hello-world cache
-ghx serve --cache-dir /tmp/mock-cache --addr 127.0.0.1:8080
+ghx serve --cache-dir /tmp/mock-cache --host 127.0.0.1 --port 8080
 ```
 
 ## Security

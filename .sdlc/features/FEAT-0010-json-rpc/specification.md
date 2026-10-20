@@ -98,7 +98,7 @@ The client normalizes `http://host:port` to `http://host:port/rpc`, sends the to
 
 | Command | Behavior |
 |---|---|
-| `rpc serve` | Runs the server; `--addr` default `127.0.0.1:8090`, `--token`, `--allow-exec` default true |
+| `rpc serve` | Runs the server; `--host` and `--port` default `127.0.0.1:8090`, `--token`, `--allow-exec` default true |
 | `rpc call <method> [params]` | Calls one method and prints indented JSON; params may be a literal, `-`, or `@path` |
 | `rpc methods` | Calls `rpc.discover` and prints a method/description table |
 | `rpc exec [--url] [--token] [--] <args...>` | Calls `cli.run` and mirrors the output and exit code |

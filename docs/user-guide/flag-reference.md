@@ -165,7 +165,8 @@ Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the rep
 
 | Flag | Default | Description |
 |---|---|---|
-| `--addr string` | `127.0.0.1:8080` | Address to listen on |
+| `--host string` | `127.0.0.1` | Interface to bind the server to |
+| `--port int` | `8080` | Port to bind the server to |
 | `--open` | `false` | Open the browser after starting the server |
 | `--rpc-token string` | | Require this bearer token from JSON-RPC clients (env `GHX_RPC_TOKEN`) |
 | `--rpc-allow-exec` | `true` | Expose `cli.run` over JSON-RPC, which executes ghx commands for clients |
@@ -179,7 +180,8 @@ Binding a non-loopback address without `--rpc-token` is refused.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--addr string` | `127.0.0.1:8090` | Address to listen on |
+| `--host string` | `127.0.0.1` | Interface to bind the server to |
+| `--port int` | `8090` | Port to bind the server to |
 | `--token string` | | Require this bearer token from clients (env `GHX_RPC_TOKEN`) |
 | `--allow-exec` | `true` | Expose `cli.run`, which executes ghx commands for clients |
 

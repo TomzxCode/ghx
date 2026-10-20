@@ -232,7 +232,7 @@ Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and deta
 
 ```bash
 ghx cache && ghx serve
-ghx serve --addr 127.0.0.1:9000 --open
+ghx serve --host 127.0.0.1 --port 9000 --open
 ```
 
 ### JSON-RPC API

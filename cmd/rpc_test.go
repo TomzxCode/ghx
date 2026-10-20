@@ -91,14 +91,26 @@ func TestIsLoopbackAddr(t *testing.T) {
 }
 
 func TestRunServeRefusesNonLoopbackWithoutToken(t *testing.T) {
-	oldAddr, oldToken := serveAddr, serveRPCToken
+	oldHost, oldPort, oldToken := serveHost, servePort, serveRPCToken
 	defer func() {
-		serveAddr, serveRPCToken = oldAddr, oldToken
+		serveHost, servePort, serveRPCToken = oldHost, oldPort, oldToken
 	}()
-	serveAddr, serveRPCToken = "0.0.0.0:8080", ""
+	serveHost, servePort, serveRPCToken = "0.0.0.0", 8080, ""
 
 	if err := runServe(serveCmd, nil); err == nil {
 		t.Fatal("expected runServe to refuse a non-loopback address without a token")
+	}
+}
+
+func TestRunRPCServeRefusesNonLoopbackWithoutToken(t *testing.T) {
+	oldHost, oldPort, oldToken := rpcHost, rpcPort, rpcToken
+	defer func() {
+		rpcHost, rpcPort, rpcToken = oldHost, oldPort, oldToken
+	}()
+	rpcHost, rpcPort, rpcToken = "0.0.0.0", 8090, ""
+
+	if err := runRPCServe(rpcServeCmd, nil); err == nil {
+		t.Fatal("expected runRPCServe to refuse a non-loopback address without a token")
 	}
 }
 

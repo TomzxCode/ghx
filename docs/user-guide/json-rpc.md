@@ -12,7 +12,7 @@ ghx rpc serve
 The server listens on `127.0.0.1:8090` and answers `POST /rpc`.
 
 ```bash
-ghx rpc serve --addr 127.0.0.1:9000
+ghx rpc serve --host 127.0.0.1 --port 9000
 ```
 
 The server uses the same cache and GitHub configuration as the CLI.
@@ -23,7 +23,7 @@ ghx rpc serve --storage sqlite --cache-dir ~/.cache/ghx/cache --repo cli/cli
 ```
 
 `ghx serve` also mounts the JSON-RPC API at `/rpc` on its web UI port, so one process can serve both.
-It refuses a non-loopback `--addr` unless `--rpc-token` is set.
+It refuses a non-loopback `--host` and `--port` unless `--rpc-token` is set.
 
 ## Call methods
 
@@ -145,7 +145,7 @@ The server binds to loopback by default and the typed read methods only expose c
 `cache.refresh`, `repo.delete`, and `cli.run` can change the cache or GitHub, so binding a non-loopback address requires a token:
 
 ```bash
-ghx rpc serve --addr 0.0.0.0:8090 --token "$GHX_RPC_TOKEN"
+ghx rpc serve --host 0.0.0.0 --port 8090 --token "$GHX_RPC_TOKEN"
 ghx rpc call repo.list --url http://host:8090 --token "$GHX_RPC_TOKEN"
 ```
 
