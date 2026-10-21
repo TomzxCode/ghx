@@ -272,6 +272,7 @@ func TestDetailIssue(t *testing.T) {
 	if body["kind"] != "issue" || body["number"].(float64) != 7 {
 		t.Fatalf("unexpected detail: %v", body)
 	}
+	assertRecentCachedAt(t, body)
 
 	// Missing issue.
 	rec, _ = get(t, h, "/api/repos/github.com/acme/testrepo/issues/99")
@@ -300,6 +301,24 @@ func TestDetailPR(t *testing.T) {
 	}
 	if body["mergedAt"] == nil {
 		t.Fatal("expected mergedAt to be set")
+	}
+	assertRecentCachedAt(t, body)
+}
+
+// assertRecentCachedAt checks that a detail response reports when its cache row
+// was written, and that the timestamp is recent.
+func assertRecentCachedAt(t *testing.T, body map[string]any) {
+	t.Helper()
+	raw, ok := body["cachedAt"].(string)
+	if !ok || raw == "" {
+		t.Fatalf("expected cachedAt in detail, got %v", body["cachedAt"])
+	}
+	ts, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatalf("cachedAt is not RFC3339Nano: %v", err)
+	}
+	if time.Since(ts) > time.Minute {
+		t.Fatalf("expected a recent cachedAt, got %s", ts)
 	}
 }
 

@@ -147,11 +147,13 @@ type MilestoneInfo struct {
 }
 
 // ItemDetail is the detail-view projection of an issue or PR. ItemSummary is
-// embedded, so its fields are flattened into the JSON object.
+// embedded, so its fields are flattened into the JSON object. CachedAt is the
+// time the item's cache row was last written.
 type ItemDetail struct {
 	ItemSummary
 	BodyHTML    string         `json:"bodyHTML"`
 	CreatedAt   time.Time      `json:"createdAt"`
+	CachedAt    time.Time      `json:"cachedAt"`
 	ClosedAt    *time.Time     `json:"closedAt"`
 	MergedAt    *time.Time     `json:"mergedAt"`
 	Assignees   []string       `json:"assignees"`
@@ -323,19 +325,21 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request, host, owne
 	var detail *ItemDetail
 	switch kind {
 	case "issues":
-		issue, _, err := s.store.LoadIssue(host, owner, repo, number)
+		issue, cachedAt, err := s.store.LoadIssue(host, owner, repo, number)
 		if err != nil {
 			httpError(w, http.StatusNotFound, "issue #%d not found in cache", number)
 			return
 		}
 		detail = issueDetail(issue)
+		detail.CachedAt = cachedAt
 	case "prs":
-		pr, _, err := s.store.LoadPR(host, owner, repo, number)
+		pr, cachedAt, err := s.store.LoadPR(host, owner, repo, number)
 		if err != nil {
 			httpError(w, http.StatusNotFound, "pull request #%d not found in cache", number)
 			return
 		}
 		detail = prDetail(pr)
+		detail.CachedAt = cachedAt
 	}
 	writeJSON(w, http.StatusOK, detail)
 }

@@ -575,6 +575,9 @@
               <b class="text-base-content">{{ state.detail.author }}</b>
               opened this {{ detailNoun() }} on {{ fmtDate(state.detail.createdAt) }}
             </span>
+            <span class="cached-at" v-if="state.detail.cachedAt" :title="fmtDate(state.detail.cachedAt)">
+              cached {{ relTime(state.detail.cachedAt) }}
+            </span>
             <span class="branches" v-if="state.detail.kind === 'pr' && state.detail.headRefName">
               <code>{{ state.detail.headRefName }}</code> → <code>{{ state.detail.baseRefName }}</code>
             </span>
