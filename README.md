@@ -450,4 +450,5 @@ Every command and flag is listed in the generated [user guide flag reference](do
 
 ## Related projects
 
-- [gitcrawl](https://github.com/openclaw/gitcrawl)
+- [gitcrawl](https://github.com/openclaw/gitcrawl) is a local-first GitHub issue and pull request crawler for maintainer triage.
+- [brunoborges/ghx](https://github.com/brunoborges/ghx) is an unrelated project that reuses the `ghx` name: a caching daemon that proxies the `gh` CLI to avoid API rate limits, rather than a command-line tool with its own commands.
