@@ -538,7 +538,14 @@
           />
           <ul class="menu p-0 w-full max-h-72 overflow-y-auto overflow-x-hidden flex-nowrap">
             <li v-for="r in filteredRepos()" :key="repoKey(r)">
-              <a :class="{ 'menu-active': isCurrentRepo(r) }" @click="switchRepo(r)" class="justify-between gap-2">
+              <a
+                :class="{ 'menu-active': isCurrentRepo(r) }"
+                class="justify-between gap-2"
+                tabindex="0"
+                @mousedown.prevent
+                @click="switchRepo(r)"
+                @keydown.enter.prevent="switchRepo(r)"
+              >
                 <span class="truncate min-w-0">{{ r.owner }}/{{ r.repo }}</span>
                 <span class="text-xs opacity-60 flex-none">{{ r.issueCount }} issues · {{ r.prCount }} PRs</span>
               </a>
