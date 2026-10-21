@@ -378,6 +378,67 @@ func TestRefreshEndpoint(t *testing.T) {
 	}
 }
 
+// TestRefreshRepoCachedOnlyByView covers a repository whose items were written
+// by the read-through caching of `issue view`/`pr view` and therefore has no
+// cache metadata. The UI lists it, so it must be readable and refreshable, and
+// the refresh starts a cold fetch.
+func TestRefreshRepoCachedOnlyByView(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now()
+	if err := store.SaveIssue("github.com", "acme", "viewonly", makeIssue(1, "viewed", "OPEN", "", now)); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := store.SavePR("github.com", "acme", "viewonly", makePR(2, "viewed", "OPEN", false, nil, now)); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+
+	var (
+		mu        sync.Mutex
+		refreshed bool
+	)
+	refresh := func(host, owner, repo string) (int, int, error) {
+		mu.Lock()
+		refreshed = true
+		mu.Unlock()
+		return 1, 1, nil
+	}
+	h := newTestServer(store, refresh).Handler()
+
+	rec, body := get(t, h, "/api/repos/github.com/acme/viewonly/issues?state=all")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := len(items(t, body)); got != 1 {
+		t.Fatalf("expected 1 issue, got %d", got)
+	}
+
+	rec, _ = get(t, h, "/api/repos/github.com/acme/viewonly/prs/2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/repos/github.com/acme/viewonly/refresh", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d: %s", rec.Code, rec.Body.String())
+	}
+	mu.Lock()
+	called := refreshed
+	mu.Unlock()
+	if !called {
+		t.Fatal("expected the refresh callback to run")
+	}
+
+	// A repository with no items and no metadata is still unknown.
+	req = httptest.NewRequest(http.MethodPost, "/api/repos/github.com/acme/missing/refresh", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for unknown repo, got %d", rec.Code)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Search (palette)
 // ---------------------------------------------------------------------------

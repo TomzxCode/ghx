@@ -653,12 +653,25 @@ func isSubsequence(s, sub string) bool {
 // Helpers
 // ---------------------------------------------------------------------------
 
-// hasRepo reports whether the store holds cache metadata for a repository.
-// It works across backends (the file and SQLite stores both persist a
-// CacheInfo entry per repository).
+// hasRepo reports whether the store holds anything for a repository: cache
+// metadata from a cache run, or cached items written by the read-through
+// caching of `ghx issue view` and `ghx pr view`. A repository that was only
+// ever viewed has items but no metadata, and the UI still lists it, so it must
+// be treatable as cached; a refresh then starts a cold fetch.
 func (s *Server) hasRepo(host, owner, repo string) bool {
-	_, err := s.store.LoadCacheInfo(host, owner, repo)
-	return err == nil
+	if _, err := s.store.LoadCacheInfo(host, owner, repo); err == nil {
+		return true
+	}
+	repos, err := s.store.ListCachedRepos()
+	if err != nil {
+		return false
+	}
+	for _, cr := range repos {
+		if strings.EqualFold(cr.Host, host) && strings.EqualFold(cr.Owner, owner) && strings.EqualFold(cr.Repo, repo) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
