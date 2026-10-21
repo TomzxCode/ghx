@@ -27,6 +27,9 @@ type gqlError struct {
 
 var client = &http.Client{Timeout: 30 * time.Second}
 
+// graphqlEndpoint is the GraphQL API endpoint; tests point it at a local server.
+var graphqlEndpoint = "https://api.github.com/graphql"
+
 func resolveToken() string {
 	for _, env := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
 		if t := os.Getenv(env); t != "" {
@@ -52,7 +55,7 @@ func GraphQL(query string, variables map[string]interface{}) (json.RawMessage, e
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewReader(body))
+	req, err := http.NewRequest("POST", graphqlEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}

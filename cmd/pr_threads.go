@@ -23,7 +23,8 @@ var prThreadsCmd = &cobra.Command{
 	Long: `List review threads on a pull request.
 
 Shows all comments within each thread by default.
-Use --ids to show individual comment IDs (useful for editing/deleting).`,
+Use --ids to show individual comment IDs (useful for editing/deleting).
+Resolve a thread with 'ghx pr threads resolve <thread-id>'.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runPRThreads,
 }

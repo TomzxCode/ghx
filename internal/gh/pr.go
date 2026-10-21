@@ -440,6 +440,56 @@ func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 	return threads, nil
 }
 
+// ResolveThread marks a review thread as resolved.
+func ResolveThread(threadId string) error {
+	return setThreadResolved(threadId, true)
+}
+
+// UnresolveThread reopens a resolved review thread.
+func UnresolveThread(threadId string) error {
+	return setThreadResolved(threadId, false)
+}
+
+func setThreadResolved(threadId string, resolved bool) error {
+	mutation := "resolveReviewThread"
+	if !resolved {
+		mutation = "unresolveReviewThread"
+	}
+
+	query := fmt.Sprintf(`
+	mutation($threadId: ID!) {
+		%s(input: {threadId: $threadId}) {
+			thread {
+				id
+				isResolved
+			}
+		}
+	}`, mutation)
+
+	data, err := GraphQL(query, map[string]interface{}{
+		"threadId": threadId,
+	})
+	if err != nil {
+		return err
+	}
+
+	var result map[string]struct {
+		Thread *struct {
+			ID         string `json:"id"`
+			IsResolved bool   `json:"isResolved"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if payload, ok := result[mutation]; !ok || payload.Thread == nil {
+		return fmt.Errorf("failed to update thread %s: thread not found", threadId)
+	}
+
+	return nil
+}
+
 func GetCurrentUser() (string, error) {
 	query := `
 	query {

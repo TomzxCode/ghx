@@ -117,6 +117,9 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 | `--state string` | | `open` | Filter by state: open, resolved, all |
 | `--ids` | | `false` | Show comment IDs |
 
+`pr threads resolve <thread-id>...` and `pr threads unresolve <thread-id>...` take no flags.
+Both attempt every thread ID given, report each failure, and exit non-zero if any failed.
+
 ## pr review submit
 
 | Flag | Short | Default | Description |

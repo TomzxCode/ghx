@@ -314,6 +314,10 @@ ghx pr threads 10 --thread <thread-id>  # show one thread
 ghx pr threads 10 --ids                 # include comment IDs
 ghx pr threads 10 --state all
 ghx pr threads 10 --state resolved
+ghx pr threads resolve   <thread-id>    # mark a thread as resolved
+ghx pr threads resolve   <id1> <id2>    # resolve several threads
+ghx pr threads unresolve <thread-id>    # reopen a resolved thread
+ghx pr threads unresolve <id1> <id2>    # reopen several threads
 ```
 
 ### Pending reviews

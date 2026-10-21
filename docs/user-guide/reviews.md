@@ -5,15 +5,27 @@ ghx manages the pull-request review workflow: viewing review threads, staging co
 ## View review threads
 
 ```bash
-ghx pr threads 10                       # open threads, with comments
-ghx pr threads 10 --thread <thread-id>  # show a single thread
-ghx pr threads 10 --ids                 # include comment IDs
+ghx pr threads 10                          # open threads, with comments
+ghx pr threads 10 --thread <thread-id>     # show a single thread
+ghx pr threads 10 --ids                    # include comment IDs
 ghx pr threads 10 --state all
 ghx pr threads 10 --state resolved
 ```
 
 Each thread lists its file and line location, followed by every comment in the thread.
 Review threads are the inline code comments; top-level PR comments are shown by `ghx pr view <number> --comments`.
+
+## Resolve review threads
+
+```bash
+ghx pr threads resolve   <thread-id>             # mark a thread as resolved
+ghx pr threads resolve   <id1> <id2> <id3>       # resolve several threads
+ghx pr threads unresolve <thread-id>             # reopen a resolved thread
+ghx pr threads unresolve <id1> <id2>             # reopen several threads
+```
+
+Thread IDs come from `ghx pr threads <number> --ids`.
+Every thread in the list is attempted; if some fail, the command reports each failure and exits non-zero.
 
 ## Pending reviews
 
