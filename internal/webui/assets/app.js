@@ -261,7 +261,23 @@
     }
   }
 
+  // activeTab reports which tab the header should highlight. On a detail route
+  // the item kind decides, so opening a PR from the issues list (or the
+  // palette) still marks Pull requests as active.
+  function activeTab() {
+    const r = state.route;
+    if (r.name === 'detail') return r.kind === 'pulls' ? 'prs' : 'issues';
+    return state.tab;
+  }
+
   function setTab(tab) {
+    const r = state.route;
+    // From a detail view a tab click returns to that kind's list.
+    if (r.name === 'detail') {
+      const base = '#/' + encodeURIComponent(r.owner) + '/' + encodeURIComponent(r.repo);
+      go(tab === 'prs' ? base + '?tab=prs' : base);
+      return;
+    }
     const changes = { tab: tab === 'prs' ? 'prs' : null };
     // "merged" only exists on the PRs tab; drop it so the URL matches the
     // coerced open filter on the issues tab.
@@ -409,6 +425,7 @@
         labelStyle,
         setTab,
         setFilter,
+        activeTab,
         refreshRepo,
         openPalette,
         closePalette,
@@ -485,11 +502,11 @@
           </li>
         </ul>
       </div>
-      <nav class="join ml-2" v-if="state.route.name === 'list'">
-        <button class="btn btn-sm join-item text-neutral-content" :class="state.tab === 'issues' ? 'btn-neutral' : 'btn-ghost'" @click="setTab('issues')">
+      <nav class="join ml-2" v-if="state.route.name === 'list' || state.route.name === 'detail'">
+        <button class="btn btn-sm join-item text-neutral-content" :class="activeTab() === 'issues' ? 'btn-neutral' : 'btn-ghost'" @click="setTab('issues')">
           Issues <span class="badge badge-sm badge-neutral">{{ repoIssues() }}</span>
         </button>
-        <button class="btn btn-sm join-item text-neutral-content" :class="state.tab === 'prs' ? 'btn-neutral' : 'btn-ghost'" @click="setTab('prs')">
+        <button class="btn btn-sm join-item text-neutral-content" :class="activeTab() === 'prs' ? 'btn-neutral' : 'btn-ghost'" @click="setTab('prs')">
           Pull requests <span class="badge badge-sm badge-neutral">{{ repoPRs() }}</span>
         </button>
       </nav>
