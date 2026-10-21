@@ -273,10 +273,19 @@
 
   function setTab(tab) {
     const r = state.route;
-    // From a detail view a tab click returns to that kind's list.
+    // From a detail view a tab click returns to that kind's list, carrying the
+    // status filter along so going back to the list keeps the current view.
     if (r.name === 'detail') {
       const base = '#/' + encodeURIComponent(r.owner) + '/' + encodeURIComponent(r.repo);
-      go(tab === 'prs' ? base + '?tab=prs' : base);
+      const params = new URLSearchParams();
+      if (tab === 'prs') params.set('tab', 'prs');
+      // "merged" only exists on the PRs tab; drop it so the URL matches the
+      // coerced open filter on the issues tab.
+      if (state.stateFilter !== 'open' && !(tab === 'issues' && state.stateFilter === 'merged')) {
+        params.set('state', state.stateFilter);
+      }
+      const qs = params.toString();
+      go(base + (qs ? '?' + qs : ''));
       return;
     }
     const changes = { tab: tab === 'prs' ? 'prs' : null };
