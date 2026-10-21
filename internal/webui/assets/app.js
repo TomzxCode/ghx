@@ -92,6 +92,7 @@
     error: '',
     detail: null,
     refreshing: {},
+    repoFilter: '',
     palette: {
       open: false,
       query: '',
@@ -367,9 +368,41 @@
   }
 
   function closeDropdown() {
+    state.repoFilter = '';
     if (document.activeElement && document.activeElement.blur) {
       document.activeElement.blur();
     }
+  }
+
+  // filteredRepos narrows the repository dropdown to the entries matching every
+  // whitespace-separated term in the filter, against host/owner/repo.
+  function filteredRepos() {
+    const terms = state.repoFilter.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return state.repos;
+    return state.repos.filter((r) => {
+      const haystack = (r.host + '/' + r.owner + '/' + r.repo).toLowerCase();
+      return terms.every((term) => haystack.includes(term));
+    });
+  }
+
+  // focusRepoFilter moves focus into the filter input when the dropdown opens,
+  // so it can be typed in without a second click.
+  function focusRepoFilter() {
+    nextTick(() => {
+      const el = document.querySelector('.repo-filter');
+      if (el) el.focus();
+    });
+  }
+
+  function switchRepo(r) {
+    closeDropdown();
+    go('#/' + encodeURIComponent(r.owner) + '/' + encodeURIComponent(r.repo));
+  }
+
+  // selectFirstRepo opens the first repository matching the current filter.
+  function selectFirstRepo() {
+    const first = filteredRepos()[0];
+    if (first) switchRepo(first);
   }
 
   // --- Root component -----------------------------------------------------------
@@ -434,13 +467,13 @@
         toggleScope,
         toggleTheme,
         closeDropdown,
+        filteredRepos,
+        focusRepoFilter,
+        selectFirstRepo,
+        switchRepo,
         isCurrentRepo(r) {
           const repo = currentRepo();
           return !!repo && repo.owner === r.owner && repo.repo === r.repo;
-        },
-        switchRepo(r) {
-          closeDropdown();
-          go('#/' + encodeURIComponent(r.owner) + '/' + encodeURIComponent(r.repo));
         },
         stateLabel(item) {
           if (item.state === 'merged') return 'Merged';
@@ -489,18 +522,30 @@
     <div class="flex items-center gap-2 flex-wrap px-4 py-2">
       <a class="btn btn-ghost btn-sm text-base font-bold px-2 text-neutral-content" href="#/">ghx</a>
       <div class="dropdown" v-if="state.repos.length" @keydown.escape="closeDropdown">
-        <div tabindex="0" role="button" class="repo-select btn btn-sm btn-ghost text-neutral-content max-w-64 gap-2 font-normal">
+        <div tabindex="0" role="button" class="repo-select btn btn-sm btn-ghost text-neutral-content max-w-64 gap-2 font-normal" @focus="focusRepoFilter()">
           <span class="truncate">{{ repoSelectValue() }}</span>
           <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg>
         </div>
-        <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box border border-base-300 z-50 w-72 p-2 shadow-xl">
-          <li v-for="r in state.repos" :key="repoKey(r)">
-            <a :class="{ 'menu-active': isCurrentRepo(r) }" @click="switchRepo(r)" class="justify-between gap-2">
-              <span class="truncate">{{ r.owner }}/{{ r.repo }}</span>
-              <span class="text-xs opacity-60 flex-none">{{ r.issueCount }} issues · {{ r.prCount }} PRs</span>
-            </a>
-          </li>
-        </ul>
+        <div class="dropdown-content bg-base-100 text-base-content rounded-box border border-base-300 z-50 w-72 p-2 shadow-xl">
+          <input
+            class="repo-filter input input-sm input-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-full mb-1"
+            v-model="state.repoFilter"
+            type="search"
+            placeholder="Filter repositories..."
+            autocomplete="off"
+            spellcheck="false"
+            @keydown.enter.prevent="selectFirstRepo()"
+          />
+          <ul class="menu p-0 w-full max-h-72 overflow-auto">
+            <li v-for="r in filteredRepos()" :key="repoKey(r)">
+              <a :class="{ 'menu-active': isCurrentRepo(r) }" @click="switchRepo(r)" class="justify-between gap-2">
+                <span class="truncate">{{ r.owner }}/{{ r.repo }}</span>
+                <span class="text-xs opacity-60 flex-none">{{ r.issueCount }} issues · {{ r.prCount }} PRs</span>
+              </a>
+            </li>
+            <li v-if="!filteredRepos().length" class="px-2 py-1.5 text-sm opacity-60">No repositories match</li>
+          </ul>
+        </div>
       </div>
       <nav class="join ml-2" v-if="state.route.name === 'list' || state.route.name === 'detail'">
         <button class="btn btn-sm join-item text-neutral-content" :class="activeTab() === 'issues' ? 'btn-neutral' : 'btn-ghost'" @click="setTab('issues')">
