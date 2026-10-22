@@ -16,6 +16,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 // JSON-RPC 2.0 error codes.
@@ -71,24 +74,29 @@ const maxBodyBytes = 16 << 20
 // ServeHTTP handles one JSON-RPC request, or a batch of them. Notifications
 // (requests without an id) are executed but produce no response body.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
+		logging.Info("rpc request", "method", "", "status", "method_not_allowed", "error", "JSON-RPC requests must use POST", "duration", time.Since(start))
 		http.Error(w, "JSON-RPC requests must use POST", http.StatusMethodNotAllowed)
 		return
 	}
 	if !s.authorized(r) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="ghx"`)
+		logging.Info("rpc request", "method", "", "status", "unauthorized", "error", "unauthorized", "duration", time.Since(start))
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 	if err != nil {
+		logging.Info("rpc request", "method", "", "status", "parse_error", "error", err.Error(), "duration", time.Since(start))
 		writeResponse(w, errorResponse(nil, CodeParseError, "reading request body: %v", err))
 		return
 	}
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
+		logging.Info("rpc request", "method", "", "status", "parse_error", "error", "empty request body", "duration", time.Since(start))
 		writeResponse(w, errorResponse(nil, CodeParseError, "empty request body"))
 		return
 	}
@@ -129,36 +137,47 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // handleRequest decodes and executes one request. It returns nil for a
 // notification.
 func (s *Server) handleRequest(ctx context.Context, raw json.RawMessage) *Response {
+	start := time.Now()
 	var req Request
 	if err := json.Unmarshal(raw, &req); err != nil {
+		logging.Info("rpc request", "method", "", "params", string(raw), "status", "parse_error", "error", err.Error(), "duration", time.Since(start))
 		return errorResponse(nil, CodeParseError, "invalid JSON: %v", err)
 	}
 	if req.JSONRPC != "2.0" {
+		logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "invalid_request", "error", `jsonrpc must be "2.0"`, "duration", time.Since(start))
 		return errorResponse(req.ID, CodeInvalidRequest, `jsonrpc must be "2.0"`)
 	}
 	if strings.TrimSpace(req.Method) == "" {
+		logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "invalid_request", "error", "method is required", "duration", time.Since(start))
 		return errorResponse(req.ID, CodeInvalidRequest, "method is required")
 	}
 
 	method, ok := s.methods[req.Method]
 	if !ok {
 		if isNotification(req.ID) {
+			logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "method_not_found", "duration", time.Since(start))
 			return nil
 		}
+		logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "method_not_found", "duration", time.Since(start))
 		return errorResponse(req.ID, CodeMethodNotFound, "method %q not found", req.Method)
 	}
 
 	result, err := method.handler(ctx, req.Params)
 	if isNotification(req.ID) {
+		logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "ok", "duration", time.Since(start))
 		return nil
 	}
 	if err != nil {
 		var rpcErr *Error
 		if errors.As(err, &rpcErr) {
+			logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "error", "error", rpcErr.Message, "duration", time.Since(start))
 			return &Response{JSONRPC: "2.0", ID: normalizeID(req.ID), Error: rpcErr}
 		}
+		logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "error", "error", err.Error(), "duration", time.Since(start))
 		return errorResponse(req.ID, CodeApplication, "%s", err.Error())
 	}
+	logging.Info("rpc request", "method", req.Method, "params", string(req.Params), "status", "ok", "duration", time.Since(start))
+	_ = result
 	return &Response{JSONRPC: "2.0", ID: normalizeID(req.ID), Result: result}
 }
 

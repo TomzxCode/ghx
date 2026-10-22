@@ -19,6 +19,7 @@ import (
 
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 //go:embed assets
@@ -100,7 +101,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/search", s.handleSearch)
 	mux.HandleFunc("/assets/", s.handleAssets)
 	mux.HandleFunc("/", s.handleIndex)
-	return mux
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		mux.ServeHTTP(rec, r)
+		logging.Info("page request", "method", r.Method, "path", r.URL.RequestURI(), "status", rec.status, "duration", time.Since(start))
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -676,6 +683,35 @@ func (s *Server) hasRepo(host, owner, repo string) bool {
 		}
 	}
 	return false
+}
+
+// statusRecorder captures the response status code written by a handler so the
+// request logger can report it.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Write(b []byte) (int, error) {
+	if r.status == 0 {
+		r.status = http.StatusOK
+	}
+	return r.ResponseWriter.Write(b)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

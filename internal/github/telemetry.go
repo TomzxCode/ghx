@@ -42,29 +42,45 @@ func (c *Client) SetTelemetry(rec telemetry.Recorder) {
 // it so every recorded call is attributable to a kind.
 func (c *Client) QueryCtx(ctx CallContext, query string, variables map[string]interface{}, result interface{}) error {
 	start := time.Now()
-	err := c.Query(query, variables, result)
+	reqBytes := requestBytes(query, variables)
+	stats, err := c.queryWithStats(query, variables, result)
 	d := time.Since(start)
-	c.recordCall(ctx, start, d, requestBytes(query, variables))
-	logCall(ctx, d, err)
+	c.recordCall(ctx, start, d, reqBytes, stats)
+	logCall(ctx, d, reqBytes, stats, err)
 	return err
 }
 
 // logCall emits one debug line per GraphQL request so individual fetches (one
 // per page, typically) are visible instead of only the command-level totals.
-// Only request-local data is logged: the client's last-call counters are shared
-// across concurrent calls (for example the parallel cache backfill), so they
-// cannot be trusted per line.
-func logCall(ctx CallContext, d time.Duration, err error) {
+// Every field describes this call alone, so lines stay correct even while the
+// cache backfill fetches several pages in parallel.
+func logCall(ctx CallContext, d time.Duration, reqBytes int, stats callStats, err error) {
 	args := []any{
 		"operation", ctx.Operation,
+		"kind", ctx.Kind,
+		"repo", ctx.Repo,
 		"page_size", ctx.PageSize,
 		"cursor", ctx.Cursor,
+		"status", stats.status,
+		"attempts", stats.attemptCount(),
+		"items", returnedItems(ctx, stats),
+		"request_bytes", reqBytes,
+		"response_bytes", stats.responseBytes,
 		"duration", d,
 	}
 	if err != nil {
 		args = append(args, "error", err)
 	}
 	logging.Debug("github request", args...)
+}
+
+// returnedItems reports how many nodes the response carried, preferring the
+// caller's own count when it set one.
+func returnedItems(ctx CallContext, stats callStats) int {
+	if ctx.ReturnedItems > 0 {
+		return ctx.ReturnedItems
+	}
+	return stats.items
 }
 
 // requestBytes estimates the marshalled request size without re-marshalling on
@@ -80,7 +96,7 @@ func requestBytes(query string, variables map[string]interface{}) int {
 
 // recordCall emits one telemetry event for a completed call. It is best-effort:
 // a disabled recorder drops it, and nothing here can fail the call.
-func (c *Client) recordCall(ctx CallContext, start time.Time, d time.Duration, reqBytes int) {
+func (c *Client) recordCall(ctx CallContext, start time.Time, d time.Duration, reqBytes int, stats callStats) {
 	rec := c.recorder
 	if rec == nil || !rec.Enabled() {
 		return
@@ -89,31 +105,21 @@ func (c *Client) recordCall(ctx CallContext, start time.Time, d time.Duration, r
 	if kind == "" {
 		kind = telemetry.KindUnknown
 	}
-	attempts := c.lastAttempts.Load()
-	if attempts < 1 {
-		attempts = 1
-	}
-	returned := ctx.ReturnedItems
-	if returned == 0 {
-		if n := c.lastItems.Load(); n > 0 {
-			returned = int(n)
-		}
-	}
 	rec.Record(telemetry.Event{
 		Timestamp:     start,
 		Kind:          kind,
 		Operation:     ctx.Operation,
 		Host:          c.host,
 		Repo:          ctx.Repo,
-		Status:        int(c.lastStatus.Load()),
+		Status:        stats.status,
 		Duration:      d,
 		PageSize:      ctx.PageSize,
-		ReturnedItems: returned,
+		ReturnedItems: returnedItems(ctx, stats),
 		RequestBytes:  reqBytes,
-		ResponseBytes: int(c.lastResponseBytes.Load()),
+		ResponseBytes: stats.responseBytes,
 		Cursor:        ctx.Cursor,
-		Attempts:      int(attempts),
-		RateRemaining: c.RateLimitRemaining(),
-		Failed:        c.lastErr.Load() != 0,
+		Attempts:      stats.attemptCount(),
+		RateRemaining: stats.rateRemaining,
+		Failed:        stats.failed,
 	})
 }

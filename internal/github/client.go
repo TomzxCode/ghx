@@ -32,27 +32,19 @@ const (
 
 // Client is a minimal GitHub GraphQL client.
 type Client struct {
-	token          string
-	host           string
-	endpointURL    string
-	httpClient     *http.Client
+	token            string
+	host             string
+	endpointURL      string
+	httpClient       *http.Client
 	maxRetries       int
 	initialBackoff   time.Duration
 	transientBackoff time.Duration
 	maxBackoff       time.Duration
-	sleep          func(time.Duration)
-	lastRemaining  atomic.Int64 // x-ratelimit-remaining of the last response, -1 = unknown
+	sleep            func(time.Duration)
+	lastRemaining    atomic.Int64 // x-ratelimit-remaining of the last response, -1 = unknown
 
 	// recorder, when enabled, receives one event per Query call.
 	recorder telemetry.Recorder
-	// lastAttempts, lastStatus, lastErr, lastResponseBytes, and lastItems
-	// describe the most recent Query call so recordCall can label its event
-	// without threading state through Query.
-	lastAttempts      atomic.Int64
-	lastStatus        atomic.Int64
-	lastErr           atomic.Int64
-	lastResponseBytes atomic.Int64
-	lastItems         atomic.Int64
 }
 
 type gqlRequest struct {
@@ -164,24 +156,49 @@ func (c *Client) endpoint() string {
 	return fmt.Sprintf("https://%s/api/graphql", c.host)
 }
 
+// callStats describes one Query call's own outcome. It is returned by value so
+// concurrent calls (the parallel cache backfill) never read each other's
+// counters, which matters because the debug log and the telemetry event report
+// these fields per call.
+type callStats struct {
+	attempts      int
+	status        int
+	responseBytes int
+	items         int
+	rateRemaining int // -1 when no response carried the header
+	failed        bool
+}
+
+// attemptCount is the number of attempts made, never zero so a call that failed
+// before reaching the network still reports a single attempt.
+func (s callStats) attemptCount() int {
+	if s.attempts < 1 {
+		return 1
+	}
+	return s.attempts
+}
+
 // Query executes a GraphQL query and unmarshals the data field into result.
 // It retries transient failures using exponential backoff: GitHub rate limit
 // responses (HTTP 429 and secondary rate limit 403s, honouring the Retry-After
 // header) and transient server errors (5xx, for example an HTML 502 from a
 // proxy). Other errors are returned immediately.
 func (c *Client) Query(query string, variables map[string]interface{}, result interface{}) error {
+	_, err := c.queryWithStats(query, variables, result)
+	return err
+}
+
+// queryWithStats is Query plus the per-call facts callers need for logging and
+// telemetry.
+func (c *Client) queryWithStats(query string, variables map[string]interface{}, result interface{}) (callStats, error) {
 	body, err := json.Marshal(gqlRequest{Query: query, Variables: variables})
 	if err != nil {
-		return fmt.Errorf("marshaling request: %w", err)
+		return callStats{failed: true}, fmt.Errorf("marshaling request: %w", err)
 	}
 
 	maxAttempts := c.maxRetries + 1
+	stats := callStats{rateRemaining: -1}
 	var lastErr error
-	c.lastErr.Store(0)
-	c.lastStatus.Store(0)
-	c.lastAttempts.Store(int64(maxAttempts))
-	c.lastResponseBytes.Store(0)
-	c.lastItems.Store(0)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			wait := c.nextBackoff(lastErr, attempt-1)
@@ -189,19 +206,18 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 			c.sleep(wait)
 		}
 
-		lastErr = c.queryOnce(body, result)
+		stats, lastErr = c.queryOnce(body, result)
+		stats.attempts = attempt + 1
 		if lastErr == nil {
-			c.lastAttempts.Store(int64(attempt + 1))
-			return nil
+			return stats, nil
 		}
 
 		if !retryable(lastErr) {
-			c.lastAttempts.Store(int64(attempt + 1))
-			c.lastErr.Store(1)
-			return lastErr // not retryable
+			stats.failed = true
+			return stats, lastErr // not retryable
 		}
 	}
-	c.lastErr.Store(1)
+	stats.failed = true
 
 	var rle *RateLimitError
 	if errors.As(lastErr, &rle) {
@@ -211,7 +227,7 @@ func (c *Client) Query(query string, variables map[string]interface{}, result in
 	if errors.As(lastErr, &te) {
 		te.Attempts = maxAttempts
 	}
-	return lastErr
+	return stats, lastErr
 }
 
 // retryable reports whether an error from queryOnce should trigger another
@@ -232,10 +248,11 @@ func retryReason(err error) string {
 }
 
 // queryOnce performs a single GraphQL request attempt and parses the response.
-func (c *Client) queryOnce(body []byte, result interface{}) error {
+func (c *Client) queryOnce(body []byte, result interface{}) (callStats, error) {
+	stats := callStats{rateRemaining: -1}
 	req, err := http.NewRequest("POST", c.endpoint(), bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("creating request: %w", err)
+		return stats, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Authorization", "bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
@@ -245,33 +262,34 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 	if err != nil {
 		// Transport failures (DNS, connection reset, HTTP/2 stream cancel)
 		// are transient: retry with backoff like server-side 5xx.
-		return &TransientError{Message: "executing request: " + err.Error()}
+		return stats, &TransientError{Message: "executing request: " + err.Error()}
 	}
 	defer resp.Body.Close()
 
-	c.lastStatus.Store(int64(resp.StatusCode))
+	stats.status = resp.StatusCode
 	if v := resp.Header.Get("X-RateLimit-Remaining"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			c.lastRemaining.Store(int64(n))
+			stats.rateRemaining = n
 		}
 	}
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return &TransientError{Message: "reading response body: " + err.Error()}
+		return stats, &TransientError{Message: "reading response body: " + err.Error()}
 	}
-	c.lastResponseBytes.Store(int64(len(respBody)))
+	stats.responseBytes = len(respBody)
 
 	if rle, ok := parseRateLimit(resp, respBody); ok {
-		return rle
+		return stats, rle
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		body := truncateBody(respBody)
 		if isTransientStatus(resp.StatusCode) {
-			return &TransientError{Status: resp.StatusCode, Message: body}
+			return stats, &TransientError{Status: resp.StatusCode, Message: body}
 		}
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
+		return stats, fmt.Errorf("HTTP %d: %s", resp.StatusCode, body)
 	}
 
 	var gqlResp gqlResponse
@@ -281,11 +299,11 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 			// Empty or truncated body: the request succeeded but the
 			// response was cut off mid-stream, the flaky-edge variant of a
 			// transient failure. Retry it like a 5xx.
-			return &TransientError{Message: "parsing GraphQL response: " + err.Error()}
+			return stats, &TransientError{Message: "parsing GraphQL response: " + err.Error()}
 		}
 		// A complete body that is not valid JSON is deterministic (broken
 		// proxy, encoding bug): fail fast so it gets diagnosed.
-		return fmt.Errorf("parsing GraphQL response: %w", err)
+		return stats, fmt.Errorf("parsing GraphQL response: %w", err)
 	}
 
 	if len(gqlResp.Errors) > 0 {
@@ -293,18 +311,18 @@ func (c *Client) queryOnce(body []byte, result interface{}) error {
 		for i, e := range gqlResp.Errors {
 			msgs[i] = e.Message
 		}
-		return fmt.Errorf("GraphQL errors: %s", strings.Join(msgs, "; "))
+		return stats, fmt.Errorf("GraphQL errors: %s", strings.Join(msgs, "; "))
 	}
 
 	if result != nil {
 		// The envelope parsed, so the body is complete; a data parse failure
 		// here is deterministic, not transient.
 		if err := json.Unmarshal(gqlResp.Data, result); err != nil {
-			return fmt.Errorf("parsing response data: %w", err)
+			return stats, fmt.Errorf("parsing response data: %w", err)
 		}
 	}
-	c.lastItems.Store(int64(countNodes(gqlResp.Data)))
-	return nil
+	stats.items = countNodes(gqlResp.Data)
+	return stats, nil
 }
 
 // countNodes counts the nodes in the first `nodes` array found in the response

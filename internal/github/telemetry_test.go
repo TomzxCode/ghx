@@ -2,10 +2,13 @@ package github
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,14 +34,27 @@ func newStubClient(t *testing.T, rec telemetry.Recorder, h http.HandlerFunc) *Cl
 	return c
 }
 
-// fakeRecorder captures events in memory for assertions.
+// fakeRecorder captures events in memory for assertions. Recording is
+// mutex-protected so tests can drive concurrent calls through it.
 type fakeRecorder struct {
+	mu     sync.Mutex
 	events []telemetry.Event
 }
 
-func (f *fakeRecorder) Record(e telemetry.Event) { f.events = append(f.events, e) }
-func (f *fakeRecorder) Enabled() bool            { return true }
-func (f *fakeRecorder) Flush(_ time.Duration)    {}
+func (f *fakeRecorder) Record(e telemetry.Event) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, e)
+}
+
+func (f *fakeRecorder) snapshot() []telemetry.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]telemetry.Event(nil), f.events...)
+}
+
+func (f *fakeRecorder) Enabled() bool         { return true }
+func (f *fakeRecorder) Flush(_ time.Duration) {}
 
 // TC-1/TC-11: one call records exactly one event with the caller's labels.
 func TestQueryRecordsOneEvent(t *testing.T) {
@@ -240,6 +256,7 @@ func TestQueryCtxLogsEachRequest(t *testing.T) {
 	if err := c.QueryCtx(CallContext{
 		Operation: "list_issues",
 		Kind:      telemetry.KindIssueList,
+		Repo:      "acme/platform",
 		PageSize:  2,
 		Cursor:    true,
 	}, `query { ok }`, nil, nil); err != nil {
@@ -250,12 +267,77 @@ func TestQueryCtxLogsEachRequest(t *testing.T) {
 	for _, want := range []string{
 		"github request",
 		"operation=list_issues",
+		"kind=issue_list",
+		"repo=acme/platform",
 		"page_size=2",
 		"cursor=true",
+		"status=200",
+		"attempts=1",
+		"items=2",
+		"request_bytes=",
+		"response_bytes=",
 		"duration=",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("debug log missing %q; got:\n%s", want, out)
+		}
+	}
+}
+
+// Each concurrent call reports its own item count and status rather than
+// whatever the most recent response happened to be, which the shared counters
+// it replaced could not guarantee during the parallel cache backfill.
+func TestQueryStatsArePerCall(t *testing.T) {
+	rec := &fakeRecorder{}
+	c := newStubClient(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Variables map[string]interface{} `json:"variables"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		n := int(req.Variables["n"].(float64))
+		nodes := make([]string, 0, n)
+		for i := 1; i <= n; i++ {
+			nodes = append(nodes, fmt.Sprintf(`{"number":%d}`, i))
+		}
+		fmt.Fprintf(w, `{"data":{"repository":{"pullRequests":{"nodes":[%s]}}}}`, strings.Join(nodes, ","))
+	})
+
+	const calls = 6
+	var wg sync.WaitGroup
+	for n := 1; n <= calls; n++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			err := c.QueryCtx(CallContext{
+				Operation: "fetch_pr_full_page",
+				Kind:      telemetry.KindPRFullPage,
+				Repo:      "acme/platform",
+				PageSize:  25,
+			}, `query($n: Int) { ok }`, map[string]interface{}{"n": n}, nil)
+			if err != nil {
+				t.Errorf("QueryCtx(n=%d): %v", n, err)
+			}
+		}(n)
+	}
+	wg.Wait()
+
+	events := rec.snapshot()
+	if len(events) != calls {
+		t.Fatalf("got %d events, want %d", len(events), calls)
+	}
+	got := make(map[int]bool, calls)
+	for _, e := range events {
+		got[e.ReturnedItems] = true
+		if e.Status != http.StatusOK {
+			t.Errorf("status = %d, want 200", e.Status)
+		}
+	}
+	for n := 1; n <= calls; n++ {
+		if !got[n] {
+			t.Errorf("no event reported %d items; got counts %v", n, got)
 		}
 	}
 }
