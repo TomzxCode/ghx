@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     body            TEXT    NOT NULL,
     comment_count   INTEGER NOT NULL,
     comments        TEXT    NOT NULL,
+    reviews         TEXT    NOT NULL DEFAULT '[]',
+    timeline        TEXT    NOT NULL DEFAULT '[]',
     review_decision TEXT,
     row_mtime       TEXT    NOT NULL,
     PRIMARY KEY (host, owner, repo, number)

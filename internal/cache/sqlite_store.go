@@ -97,6 +97,16 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN head_ref_oid TEXT NOT NULL DEFAULT ''",
 		},
 		{
+			table:  "pull_requests",
+			column: "reviews",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN reviews TEXT NOT NULL DEFAULT '[]'",
+		},
+		{
+			table:  "pull_requests",
+			column: "timeline",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN timeline TEXT NOT NULL DEFAULT '[]'",
+		},
+		{
 			table:  "cache_meta",
 			column: "issues_cached_at",
 			ddl:    "ALTER TABLE cache_meta ADD COLUMN issues_cached_at TEXT",
@@ -373,7 +383,7 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 
 const prCols = `number, title, state, is_draft, author_login, assignees, labels, milestone,
 	base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
-	url, body, comment_count, comments, review_decision, row_mtime`
+	url, body, comment_count, comments, reviews, timeline, review_decision, row_mtime`
 
 // SavePR writes a single pull request to the database.
 func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
@@ -392,13 +402,14 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 	_, err = s.db.Exec(`INSERT OR REPLACE INTO pull_requests
 		(host, owner, repo, number, title, state, is_draft, author_login, assignees, labels, milestone,
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
-		 url, body, comment_count, comments, review_decision, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 url, body, comment_count, comments, reviews, timeline, review_decision, row_mtime)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
 		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
-		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), reviewDecision, tstr(time.Now()),
+		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), mustJSON(pr.Reviews), mustJSON(pr.Timeline),
+		reviewDecision, tstr(time.Now()),
 	)
 	if err != nil {
 		return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
@@ -418,13 +429,14 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		createdAtS, updatedAtS    string
 		mergedAtS, closedAtS      sql.NullString
 		url, body, commentsJSON   string
+		reviewsJSON, timelineJSON string
 		commentCount              int
 		reviewDecision            sql.NullString
 		rowMtimeS                 string
 	)
 	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &assigneesJSON, &labelsJSON, &milestoneJSON,
 		&baseRef, &headRef, &headRefOid, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
-		&url, &body, &commentCount, &commentsJSON, &reviewDecision, &rowMtimeS); err != nil {
+		&url, &body, &commentCount, &commentsJSON, &reviewsJSON, &timelineJSON, &reviewDecision, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
 
@@ -453,6 +465,12 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		return nil, time.Time{}, err
 	}
 	if err := decodeJSON(commentsJSON, &pr.Comments); err != nil {
+		return nil, time.Time{}, err
+	}
+	if err := decodeJSON(reviewsJSON, &pr.Reviews); err != nil {
+		return nil, time.Time{}, err
+	}
+	if err := decodeJSON(timelineJSON, &pr.Timeline); err != nil {
 		return nil, time.Time{}, err
 	}
 	if milestoneJSON.Valid && milestoneJSON.String != "" {

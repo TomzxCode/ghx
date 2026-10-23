@@ -107,6 +107,12 @@ func richPR(n int) *github.PullRequest {
 		CommentCount:   1,
 		Comments:       []github.Comment{{ID: "pc1", Author: github.Actor{Login: "bob"}, Body: "lgtm", CreatedAt: utc(2024, 3, 2, 0, 0), UpdatedAt: utc(2024, 3, 2, 0, 0)}},
 		ReviewDecision: "APPROVED",
+		Reviews: []github.PRReview{
+			{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: utc(2024, 3, 2, 1, 0)},
+		},
+		Timeline: []github.TimelineEvent{
+			{Kind: github.TimelineReviewRequested, Actor: github.Actor{Login: "alice"}, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: utc(2024, 3, 1, 3, 0)},
+		},
 	}
 }
 
