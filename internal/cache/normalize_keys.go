@@ -127,6 +127,14 @@ func normalizeFileDirLevel(dir string, depth int) {
 // A file with the same name in dst is overwritten, matching the cache's
 // last-write-wins semantics for a single item.
 func mergeDir(src, dst string) error {
+	if srcInfo, err := os.Stat(src); err == nil {
+		if dstInfo, err := os.Stat(dst); err == nil && os.SameFile(srcInfo, dstInfo) {
+			// A case-insensitive filesystem resolves src and dst to the same
+			// directory. Merging it into itself would delete its contents, so
+			// rename it to record the lower-case spelling instead.
+			return os.Rename(src, dst)
+		}
+	}
 	if err := os.MkdirAll(dst, 0755); err != nil {
 		return err
 	}
