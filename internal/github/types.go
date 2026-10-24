@@ -86,9 +86,12 @@ type Comment struct {
 	URL       string    `json:"url"`
 }
 
-// Actor is a GitHub user or bot.
+// Actor is a GitHub user or bot. Type is the GraphQL __typename of the
+// account (User, Bot, Organization, Mannequin or EnterpriseUserAccount) and is
+// empty for data cached before the type was requested.
 type Actor struct {
 	Login string `json:"login"`
+	Type  string `json:"type,omitempty"`
 }
 
 // Label is a GitHub label.

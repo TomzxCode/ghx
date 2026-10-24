@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS issues (
     title         TEXT    NOT NULL,
     state         TEXT    NOT NULL,
     author_login  TEXT    NOT NULL,
+    author_type   TEXT    NOT NULL DEFAULT '',
     assignees     TEXT    NOT NULL,
     labels        TEXT    NOT NULL,
     milestone     TEXT,
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     state           TEXT    NOT NULL,
     is_draft        INTEGER NOT NULL,
     author_login    TEXT    NOT NULL,
+    author_type     TEXT    NOT NULL DEFAULT '',
     assignees       TEXT    NOT NULL,
     labels          TEXT    NOT NULL,
     milestone       TEXT,
@@ -56,6 +58,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     reviews         TEXT    NOT NULL DEFAULT '[]',
     timeline        TEXT    NOT NULL DEFAULT '[]',
     review_decision TEXT,
+    additions       INTEGER NOT NULL DEFAULT 0,
+    deletions       INTEGER NOT NULL DEFAULT 0,
     row_mtime       TEXT    NOT NULL,
     PRIMARY KEY (host, owner, repo, number)
 );

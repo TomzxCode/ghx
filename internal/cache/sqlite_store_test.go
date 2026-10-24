@@ -107,11 +107,16 @@ func richPR(n int) *github.PullRequest {
 		CommentCount:   1,
 		Comments:       []github.Comment{{ID: "pc1", Author: github.Actor{Login: "bob"}, Body: "lgtm", CreatedAt: utc(2024, 3, 2, 0, 0), UpdatedAt: utc(2024, 3, 2, 0, 0)}},
 		ReviewDecision: "APPROVED",
+		Additions:      42,
+		Deletions:      7,
 		Reviews: []github.PRReview{
 			{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: utc(2024, 3, 2, 1, 0)},
+			{Author: github.Actor{Login: "carol"}, State: "CHANGES_REQUESTED", SubmittedAt: utc(2024, 3, 1, 5, 0)},
 		},
 		Timeline: []github.TimelineEvent{
-			{Kind: github.TimelineReviewRequested, Actor: github.Actor{Login: "alice"}, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: utc(2024, 3, 1, 3, 0)},
+			{Kind: github.TimelineConvertedToDraft, Actor: github.Actor{Login: "alice"}, CreatedAt: utc(2024, 3, 1, 3, 0)},
+			{Kind: github.TimelineReadyForReview, Actor: github.Actor{Login: "alice"}, CreatedAt: utc(2024, 3, 1, 6, 0)},
+			{Kind: github.TimelineReviewRequested, Actor: github.Actor{Login: "alice"}, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: utc(2024, 3, 1, 6, 5)},
 		},
 	}
 }
@@ -272,6 +277,54 @@ func comparePRs(t *testing.T, label string, want, got map[int]*github.PullReques
 		if !reflect.DeepEqual(w, g) {
 			t.Errorf("%s: #%d differs\nwant: %+v\ngot:  %+v", label, n, w, g)
 		}
+	}
+}
+
+// TestSQLiteRoundTripsActorType asserts the account type captured from
+// GraphQL survives the SQLite round trip for the PR author (stored as a
+// column) and for comment, review and timeline actors (stored as JSON).
+func TestSQLiteRoundTripsActorType(t *testing.T) {
+	dir := t.TempDir()
+	sq, err := NewSQLiteStore(dir)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	defer sq.Close()
+
+	const host, owner, repo = "github.com", "owner", "repo"
+	pr := richPR(10)
+	pr.Author = github.Actor{Login: "dependabot", Type: "Bot"}
+	pr.Comments[0].Author = github.Actor{Login: "shopify-bumperbot", Type: "Bot"}
+	pr.Reviews[0].Author = github.Actor{Login: "graphite-app", Type: "Bot"}
+	pr.Timeline = append(pr.Timeline, github.TimelineEvent{
+		Kind:              github.TimelineReviewRequested,
+		Actor:             github.Actor{Login: "alice", Type: "User"},
+		RequestedReviewer: github.Actor{Login: "binks-code-reviewer", Type: "Bot"},
+		CreatedAt:         utc(2024, 3, 1, 7, 0),
+	})
+	if err := sq.SavePR(host, owner, repo, pr); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+
+	loaded, _, err := sq.LoadPR(host, owner, repo, pr.Number)
+	if err != nil {
+		t.Fatalf("LoadPR: %v", err)
+	}
+	if got, want := loaded.Author, (github.Actor{Login: "dependabot", Type: "Bot"}); got != want {
+		t.Errorf("author = %+v, want %+v", got, want)
+	}
+	if got := loaded.Comments[0].Author.Type; got != "Bot" {
+		t.Errorf("comment author type = %q, want Bot", got)
+	}
+	if got := loaded.Reviews[0].Author.Type; got != "Bot" {
+		t.Errorf("review author type = %q, want Bot", got)
+	}
+	last := loaded.Timeline[len(loaded.Timeline)-1]
+	if got := last.Actor.Type; got != "User" {
+		t.Errorf("timeline actor type = %q, want User", got)
+	}
+	if got := last.RequestedReviewer.Type; got != "Bot" {
+		t.Errorf("requested reviewer type = %q, want Bot", got)
 	}
 }
 
@@ -503,6 +556,12 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 		VALUES ('github.com', 'acme', 'old', 1, 'legacy issue', 'OPEN', 'alice', '[]', '[]', ?, ?, 'https://github.com/acme/old/issues/1', 'body', 0, '[]', ?)`, legacyAt, legacyAt, legacyAt); err != nil {
 		t.Fatalf("seed legacy issue: %v", err)
 	}
+	// A legacy pull request predates the review, timeline and size columns;
+	// opening the database must add them with defaults rather than fail.
+	if _, err := db.Exec(`INSERT INTO pull_requests (host, owner, repo, number, title, state, is_draft, author_login, assignees, labels, milestone, base_ref_name, head_ref_name, created_at, updated_at, merged_at, closed_at, url, body, comment_count, comments, review_decision, row_mtime)
+		VALUES ('github.com', 'acme', 'old', 7, 'legacy pr', 'MERGED', 0, 'alice', '[]', '[]', NULL, 'main', 'feat/old', ?, ?, NULL, NULL, 'https://github.com/acme/old/pull/7', 'body', 0, '[]', NULL, ?)`, legacyAt, legacyAt, legacyAt); err != nil {
+		t.Fatalf("seed legacy PR: %v", err)
+	}
 	if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
 		t.Fatalf("set legacy version: %v", err)
 	}
@@ -528,6 +587,18 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 	}
 	if r.Info == nil || r.Info.CachedAt.IsZero() || r.Info.Duration != 30 || !r.Info.Complete {
 		t.Fatalf("legacy metadata lost in migration: %+v", r.Info)
+	}
+
+	// The migrated PR columns load with defaults, and the row is still usable.
+	legacyPR, _, err := sq.LoadPR("github.com", "acme", "old", 7)
+	if err != nil {
+		t.Fatalf("LoadPR on migrated db: %v", err)
+	}
+	if legacyPR.Number != 7 || legacyPR.Additions != 0 || legacyPR.Deletions != 0 {
+		t.Errorf("legacy PR: got %+v, want defaults for the added columns", legacyPR)
+	}
+	if len(legacyPR.Reviews) != 0 || len(legacyPR.Timeline) != 0 {
+		t.Errorf("legacy PR: got reviews=%v timeline=%v, want empty", legacyPR.Reviews, legacyPR.Timeline)
 	}
 
 	// The migrated columns are NULL: per-type freshness falls back to CachedAt.

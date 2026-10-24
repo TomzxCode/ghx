@@ -34,7 +34,8 @@ repositories during a period.
 Repositories are given as positional [HOST/]OWNER/REPO arguments (defaulting to
 the current repository or --repo). The report includes an author x reviewer
 matrix counting how many PRs each combination appears in, together with the
-median and average time from PR creation to the reviewer's first comment.
+median and average time from PR creation to the reviewer's first response (an
+issue comment or a submitted review).
 
 Data is served from the local cache when available (run ` + "`ghx cache`" + ` first
 for full history); it falls back to the GitHub API when nothing is cached.`,
@@ -43,7 +44,7 @@ for full history); it falls back to the GitHub API when nothing is cached.`,
 
 func init() {
 	statsCmd.Flags().StringSliceVarP(&statsAuthors, "author", "A", nil, "Only count PRs authored by these users")
-	statsCmd.Flags().StringSliceVar(&statsReviewers, "reviewer", nil, "Only count comments by these reviewers")
+	statsCmd.Flags().StringSliceVar(&statsReviewers, "reviewer", nil, "Only count responses by these reviewers")
 	statsCmd.Flags().StringVar(&statsFrom, "from", "", "Period start (YYYY-MM-DD or RFC3339)")
 	statsCmd.Flags().StringVar(&statsTo, "to", "", "Period end, inclusive (YYYY-MM-DD or RFC3339)")
 	statsCmd.Flags().StringVarP(&statsState, "state", "s", "all", "Filter by PR state: {open|closed|merged|all}")

@@ -50,8 +50,17 @@ type PRListOptions struct {
 // Internal API response node types
 // ---------------------------------------------------------------------------
 
+// actorNode is a GraphQL Actor. Typename is the interface's concrete type
+// (User, Bot, Organization, Mannequin, EnterpriseUserAccount) and is the only
+// reliable way to tell an application's account from a person's.
 type actorNode struct {
-	Login string `json:"login"`
+	Login    string `json:"login"`
+	Typename string `json:"__typename"`
+}
+
+// actor converts an API actor node into the normalized Actor.
+func (a actorNode) actor() Actor {
+	return Actor{Login: a.Login, Type: a.Typename}
 }
 
 type labelNode struct {
@@ -174,7 +183,7 @@ func nodeToIssue(n *issueNode) *Issue {
 		Number:       n.Number,
 		Title:        n.Title,
 		State:        n.State,
-		Author:       Actor{Login: n.Author.Login},
+		Author:       n.Author.actor(),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
 		ClosedAt:     n.ClosedAt,
@@ -183,7 +192,7 @@ func nodeToIssue(n *issueNode) *Issue {
 		CommentCount: n.Comments.TotalCount,
 	}
 	for _, a := range n.Assignees.Nodes {
-		issue.Assignees = append(issue.Assignees, Actor{Login: a.Login})
+		issue.Assignees = append(issue.Assignees, a.actor())
 	}
 	for _, l := range n.Labels.Nodes {
 		issue.Labels = append(issue.Labels, Label{Name: l.Name, Color: l.Color})
@@ -204,7 +213,7 @@ func nodeToPR(n *prNode) *PullRequest {
 		State:          n.State,
 		IsDraft:        n.IsDraft,
 		ReviewDecision: n.ReviewDecision,
-		Author:         Actor{Login: n.Author.Login},
+		Author:         n.Author.actor(),
 		BaseRefName:    n.BaseRefName,
 		HeadRefName:    n.HeadRefName,
 		HeadRefOid:     n.HeadRefOid,
@@ -218,7 +227,7 @@ func nodeToPR(n *prNode) *PullRequest {
 	}
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	for _, a := range n.Assignees.Nodes {
-		pr.Assignees = append(pr.Assignees, Actor{Login: a.Login})
+		pr.Assignees = append(pr.Assignees, a.actor())
 	}
 	for _, l := range n.Labels.Nodes {
 		pr.Labels = append(pr.Labels, Label{Name: l.Name, Color: l.Color})
@@ -239,7 +248,7 @@ func applyPRExtras(pr *PullRequest, additions, deletions int, reviews []reviewNo
 	pr.Deletions = deletions
 	for _, r := range reviews {
 		pr.Reviews = append(pr.Reviews, PRReview{
-			Author:      Actor{Login: r.Author.Login},
+			Author:      r.Author.actor(),
 			State:       r.State,
 			SubmittedAt: r.SubmittedAt,
 		})
@@ -249,9 +258,9 @@ func applyPRExtras(pr *PullRequest, additions, deletions int, reviews []reviewNo
 		if !ok {
 			continue
 		}
-		ev := TimelineEvent{Kind: kind, Actor: Actor{Login: t.Actor.Login}, CreatedAt: t.CreatedAt}
+		ev := TimelineEvent{Kind: kind, Actor: t.Actor.actor(), CreatedAt: t.CreatedAt}
 		if t.RequestedReviewer != nil {
-			ev.RequestedReviewer = Actor{Login: t.RequestedReviewer.Login}
+			ev.RequestedReviewer = t.RequestedReviewer.actor()
 		}
 		pr.Timeline = append(pr.Timeline, ev)
 	}
@@ -280,7 +289,7 @@ func searchNodeToIssue(n *searchNode) *Issue {
 		Number:       n.Number,
 		Title:        n.Title,
 		State:        n.State,
-		Author:       Actor{Login: n.Author.Login},
+		Author:       n.Author.actor(),
 		CreatedAt:    n.CreatedAt,
 		UpdatedAt:    n.UpdatedAt,
 		ClosedAt:     n.ClosedAt,
@@ -289,7 +298,7 @@ func searchNodeToIssue(n *searchNode) *Issue {
 		CommentCount: n.Comments.TotalCount,
 	}
 	for _, a := range n.Assignees.Nodes {
-		issue.Assignees = append(issue.Assignees, Actor{Login: a.Login})
+		issue.Assignees = append(issue.Assignees, a.actor())
 	}
 	for _, l := range n.Labels.Nodes {
 		issue.Labels = append(issue.Labels, Label{Name: l.Name, Color: l.Color})
@@ -310,7 +319,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 		State:          n.State,
 		IsDraft:        n.IsDraft,
 		ReviewDecision: n.ReviewDecision,
-		Author:         Actor{Login: n.Author.Login},
+		Author:         n.Author.actor(),
 		BaseRefName:    n.BaseRefName,
 		HeadRefName:    n.HeadRefName,
 		HeadRefOid:     n.HeadRefOid,
@@ -324,7 +333,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 	}
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	for _, a := range n.Assignees.Nodes {
-		pr.Assignees = append(pr.Assignees, Actor{Login: a.Login})
+		pr.Assignees = append(pr.Assignees, a.actor())
 	}
 	for _, l := range n.Labels.Nodes {
 		pr.Labels = append(pr.Labels, Label{Name: l.Name, Color: l.Color})
@@ -341,7 +350,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 func commentNodeToComment(c commentNode) Comment {
 	return Comment{
 		ID:        c.ID,
-		Author:    Actor{Login: c.Author.Login},
+		Author:    c.Author.actor(),
 		Body:      c.Body,
 		CreatedAt: c.CreatedAt,
 		UpdatedAt: c.UpdatedAt,
@@ -360,7 +369,7 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [IssueState!], $fi
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
@@ -376,13 +385,13 @@ query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     issue(number: $number) {
       number title state
-      author { login }
+      author { __typename login }
       assignees(first: 10) { nodes { login } }
       labels(first: 20) { nodes { name color } }
       milestone { number title }
       createdAt updatedAt closedAt url body
       comments(first: 100) {
-        nodes { id author { login } body createdAt updatedAt url }
+        nodes { id author { __typename login } body createdAt updatedAt url }
       }
     }
   }
@@ -396,7 +405,7 @@ query($query: String!, $first: Int!, $after: String) {
       __typename
       ... on Issue {
         number title state
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
@@ -415,14 +424,14 @@ query($owner: String!, $repo: String!, $after: String, $since: DateTime) {
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
         createdAt updatedAt closedAt url body
         comments(first: 100) {
           totalCount
-          nodes { id author { login } body createdAt updatedAt url }
+          nodes { id author { __typename login } body createdAt updatedAt url }
         }
       }
     }
@@ -705,7 +714,7 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state isDraft reviewDecision
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
@@ -719,15 +728,16 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
 
 // prTimelineSelection is the timelineItems selection shared by the
 // cache-facing queries. PullRequestTimelineItems is a union, so member fields
-// require inline fragments; RequestedReviewer is a union of User, Team and
-// Mannequin, so only User logins are read.
+// require inline fragments; RequestedReviewer is a union of User, Bot, Team,
+// EnterpriseTeam and Mannequin, of which User and Bot logins are read (Team
+// and EnterpriseTeam have no login and Mannequin accounts cannot review).
 const prTimelineSelection = `
 timelineItems(first: 250, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_EVENT, REVIEW_REQUESTED_EVENT]) {
   nodes {
     __typename
-    ... on ReadyForReviewEvent { actor { login } createdAt }
-    ... on ConvertToDraftEvent { actor { login } createdAt }
-    ... on ReviewRequestedEvent { actor { login } createdAt requestedReviewer { ... on User { login } } }
+    ... on ReadyForReviewEvent { actor { __typename login } createdAt }
+    ... on ConvertToDraftEvent { actor { __typename login } createdAt }
+    ... on ReviewRequestedEvent { actor { __typename login } createdAt requestedReviewer { ... on User { __typename login } ... on Bot { __typename login } } }
   }
 }`
 
@@ -736,7 +746,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       number title state isDraft reviewDecision
-      author { login }
+      author { __typename login }
       assignees(first: 10) { nodes { login } }
       labels(first: 20) { nodes { name color } }
       milestone { number title }
@@ -744,11 +754,11 @@ query($owner: String!, $repo: String!, $number: Int!) {
       createdAt updatedAt mergedAt closedAt url body
       additions deletions
       reviews(first: 100) {
-        nodes { author { login } state submittedAt }
+        nodes { author { __typename login } state submittedAt }
       }
       ` + prTimelineSelection + `
       comments(first: 100) {
-        nodes { id author { login } body createdAt updatedAt url }
+        nodes { id author { __typename login } body createdAt updatedAt url }
       }
     }
   }
@@ -762,7 +772,7 @@ query($query: String!, $first: Int!, $after: String) {
       __typename
       ... on PullRequest {
         number title state isDraft reviewDecision
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
@@ -782,7 +792,7 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
       pageInfo { hasNextPage endCursor }
       nodes {
         number title state isDraft reviewDecision
-        author { login }
+        author { __typename login }
         assignees(first: 10) { nodes { login } }
         labels(first: 20) { nodes { name color } }
         milestone { number title }
@@ -790,12 +800,12 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
         createdAt updatedAt mergedAt closedAt url body
         additions deletions
         reviews(first: 100) {
-          nodes { author { login } state submittedAt }
+          nodes { author { __typename login } state submittedAt }
         }
 ` + prTimelineSelection + `
         comments(first: 100) {
           totalCount
-          nodes { id author { login } body createdAt updatedAt url }
+          nodes { id author { __typename login } body createdAt updatedAt url }
         }
       }
     }

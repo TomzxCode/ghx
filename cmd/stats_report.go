@@ -39,7 +39,7 @@ type MatrixCell struct {
 	Count  int
 	Avg    string
 	Median string
-	Pct    string       // share of the reviewer's total reviewed PRs
+	Pct    string       // share of the row author's PRs the reviewer responded to
 	Bg     template.CSS // generated heat colour, safe for style attributes
 }
 
@@ -53,9 +53,9 @@ type MatrixRow struct {
 
 // MatrixCol is one reviewer column header of the matrix.
 type MatrixCol struct {
-	Reviewer   string
-	Total      int
-	NoComments bool
+	Reviewer  string
+	Total     int
+	NoReviews bool
 }
 
 // Matrix is the author (rows) x reviewer (columns) table at the heart of the
@@ -67,15 +67,16 @@ type Matrix struct {
 
 // AuthorSummary aggregates one author's PRs for the per-author table.
 type AuthorSummary struct {
-	Login              string
-	PRs                int
-	Merged             int
-	MedianFirstComment string
-	AvgFirstComment    string
+	Login               string
+	PRs                 int
+	Merged              int
+	MedianFirstResponse string
+	AvgFirstResponse    string
 }
 
-// ReviewerSummary aggregates one reviewer's activity for the per-reviewer
-// table.
+// ReviewerSummary aggregates one reviewer's review activity for the
+// per-reviewer table. PRsReviewed counts PRs where the reviewer submitted a
+// review, not every PR they responded to with an issue comment.
 type ReviewerSummary struct {
 	Login       string
 	PRsReviewed int
@@ -316,15 +317,16 @@ type reviewActivity struct {
 	SubmittedAt time.Time
 }
 
-// statReviewerAllowed reports whether a reviewer login participates in the
-// report: bots are excluded unless requested, and an explicit reviewer filter
-// restricts the set.
-func statReviewerAllowed(login string, pr *github.PullRequest, f statsFilters) bool {
-	lower := strings.ToLower(login)
+// statReviewerAllowed reports whether a reviewer participates in the report:
+// bot accounts are excluded unless requested, and an explicit reviewer filter
+// restricts the set. Bot detection uses the account type GitHub reports, so
+// automation under a human account still counts as human.
+func statReviewerAllowed(a github.Actor, pr *github.PullRequest, f statsFilters) bool {
+	lower := strings.ToLower(a.Login)
 	if lower == "" || lower == strings.ToLower(pr.Author.Login) {
 		return false
 	}
-	if !f.IncludeBots && isBotLogin(login) {
+	if !f.IncludeBots && a.Type == "Bot" {
 		return false
 	}
 	if len(f.Reviewers) > 0 && !f.Reviewers[lower] {
@@ -419,8 +421,11 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 
 	// Per-PR bookkeeping.
 	type prEntry struct {
-		item      *repoPR
-		reviewers map[string]time.Time // reviewer login -> first comment time
+		item *repoPR
+		// reviewers maps a reviewer login to their first response time, the
+		// earlier of their first issue comment and their first submitted
+		// review.
+		reviewers map[string]time.Time
 		// commentCounts counts non-author issue comments per reviewer login.
 		commentCounts map[string]int
 		// reviews holds the PR's submitted reviews (author and bots excluded,
@@ -440,8 +445,13 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		hasNewData          bool // PR carries review, size or timeline data
 	}
 	var entries []*prEntry
-	firstCommentAll := []time.Duration{}
-	reviewerFirst := map[string][]time.Duration{}
+	firstResponseAll := []time.Duration{}
+	// reviewerReviewed and reviewerReviewFirst are review-only, for the
+	// per-reviewer table: PRs where the reviewer submitted a review, and the
+	// first response time on those PRs. Issue-comment activity is kept
+	// separate in the engagement table.
+	reviewerReviewed := map[string]int{}
+	reviewerReviewFirst := map[string][]time.Duration{}
 
 	for _, rp := range repoPRs {
 		pr := rp.PR
@@ -459,21 +469,17 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			requestTimes:  map[string][]time.Time{},
 		}
 		for _, c := range pr.Comments {
-			login := c.Author.Login
-			lower := strings.ToLower(login)
-			if lower == strings.ToLower(pr.Author.Login) {
-				continue // the author's own comments are not reviews
-			}
-			if !statReviewerAllowed(login, pr, f) {
+			if !statReviewerAllowed(c.Author, pr, f) {
 				continue
 			}
+			lower := strings.ToLower(c.Author.Login)
 			e.commentCounts[lower]++
 			if _, ok := e.reviewers[lower]; !ok || c.CreatedAt.Before(e.reviewers[lower]) {
 				e.reviewers[lower] = c.CreatedAt
 			}
 		}
 		for _, rev := range pr.Reviews {
-			if !statReviewerAllowed(rev.Author.Login, pr, f) {
+			if !statReviewerAllowed(rev.Author, pr, f) {
 				continue
 			}
 			switch strings.ToUpper(rev.State) {
@@ -482,6 +488,13 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 				continue // DISMISSED, PENDING and unknown states are not activity
 			}
 			e.reviews = append(e.reviews, reviewActivity{Login: strings.ToLower(rev.Author.Login), State: strings.ToUpper(rev.State), SubmittedAt: rev.SubmittedAt})
+			// A submitted review is reviewer activity even when the reviewer
+			// left no issue comment: approvals, change requests and inline
+			// review comments all arrive as review objects, not comments.
+			login := strings.ToLower(rev.Author.Login)
+			if first, ok := e.reviewers[login]; !ok || rev.SubmittedAt.Before(first) {
+				e.reviewers[login] = rev.SubmittedAt
+			}
 			if e.firstReviewAt.IsZero() || rev.SubmittedAt.Before(e.firstReviewAt) {
 				e.firstReviewAt = rev.SubmittedAt
 			}
@@ -498,7 +511,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			if ev.Kind != github.TimelineReviewRequested {
 				continue
 			}
-			if !statReviewerAllowed(ev.RequestedReviewer.Login, pr, f) {
+			if !statReviewerAllowed(ev.RequestedReviewer, pr, f) {
 				continue
 			}
 			login := strings.ToLower(ev.RequestedReviewer.Login)
@@ -539,13 +552,13 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	matrixCombos := map[string]*combo{} // author\x00reviewer
 	authorTotals := map[string]int{}    // author -> PRs in period
 	reviewerTotals := map[string]int{}  // reviewer -> PRs reviewed
-	noCommentCounts := map[string]int{} // author -> PRs without reviewer comments
+	noReviewCounts := map[string]int{}  // author -> PRs without reviewer activity
 
 	for _, e := range entries {
 		author := strings.ToLower(e.item.PR.Author.Login)
 		authorTotals[author]++
 		if len(e.reviewers) == 0 {
-			noCommentCounts[author]++
+			noReviewCounts[author]++
 		}
 		for reviewer, first := range e.reviewers {
 			c, ok := matrixCombos[author+"\x00"+reviewer]
@@ -556,15 +569,27 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			c.count++
 			c.durations = append(c.durations, durationSince(e.item.PR.CreatedAt, first))
 			reviewerTotals[reviewer]++
-			reviewerFirst[reviewer] = append(reviewerFirst[reviewer], durationSince(e.item.PR.CreatedAt, first))
+		}
+		// Review-only counts for the per-reviewer table: one per PR, even
+		// when the reviewer submitted several reviews on it.
+		reviewedBy := map[string]bool{}
+		for _, rev := range e.reviews {
+			if reviewedBy[rev.Login] {
+				continue
+			}
+			reviewedBy[rev.Login] = true
+			reviewerReviewed[rev.Login]++
+			if first, ok := e.reviewers[rev.Login]; ok {
+				reviewerReviewFirst[rev.Login] = append(reviewerReviewFirst[rev.Login], durationSince(e.item.PR.CreatedAt, first))
+			}
 		}
 		if len(e.reviewers) > 0 {
-			d := earliestFirstComment(e.reviewers, e.item.PR.CreatedAt)
-			firstCommentAll = append(firstCommentAll, d)
+			d := earliestResponse(e.reviewers, e.item.PR.CreatedAt)
+			firstResponseAll = append(firstResponseAll, d)
 		}
 	}
 
-	// Column order: reviewers sorted by PRs reviewed desc, then login.
+	// Column order: reviewers sorted by PRs responded to desc, then login.
 	reviewers := make([]string, 0, len(reviewerTotals))
 	for reviewer := range reviewerTotals {
 		reviewers = append(reviewers, reviewer)
@@ -599,7 +624,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	r.ReviewerCount = len(reviewers)
 
 	r.Matrix.Cols = make([]*MatrixCol, 0, len(reviewers)+1)
-	r.Matrix.Cols = append(r.Matrix.Cols, &MatrixCol{Reviewer: "(no comments)", Total: 0, NoComments: true})
+	r.Matrix.Cols = append(r.Matrix.Cols, &MatrixCol{Reviewer: "(no reviews)", Total: 0, NoReviews: true})
 	for _, reviewer := range reviewers {
 		r.Matrix.Cols = append(r.Matrix.Cols, &MatrixCol{Reviewer: reviewer, Total: reviewerTotals[reviewer]})
 	}
@@ -607,7 +632,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	r.Matrix.Rows = make([]*MatrixRow, 0, len(authors))
 	for _, author := range authors {
 		row := &MatrixRow{Author: author, Total: authorTotals[author]}
-		row.Cells = append(row.Cells, &MatrixCell{Count: noCommentCounts[author]})
+		row.Cells = append(row.Cells, &MatrixCell{Count: noReviewCounts[author]})
 		for _, reviewer := range reviewers {
 			c := matrixCombos[author+"\x00"+reviewer]
 			cell := &MatrixCell{}
@@ -615,7 +640,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 				cell.Count = c.count
 				cell.Avg = formatStatDuration(avgDuration(c.durations))
 				cell.Median = formatStatDuration(medianDuration(c.durations))
-				cell.Pct = formatReviewPct(c.count, reviewerTotals[reviewer])
+				cell.Pct = formatReviewPct(c.count, row.Total)
 				cell.Bg = heatColor(c.count, maxCount)
 			}
 			row.Cells = append(row.Cells, cell)
@@ -639,29 +664,43 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		var ds []time.Duration
 		for _, e := range entries {
 			if strings.ToLower(e.item.PR.Author.Login) == author && len(e.reviewers) > 0 {
-				ds = append(ds, earliestFirstComment(e.reviewers, e.item.PR.CreatedAt))
+				ds = append(ds, earliestResponse(e.reviewers, e.item.PR.CreatedAt))
 			}
 		}
 		if len(ds) > 0 {
-			row.MedianFirstComment = formatStatDuration(medianDuration(ds))
-			row.AvgFirstComment = formatStatDuration(avgDuration(ds))
+			row.MedianFirstResponse = formatStatDuration(medianDuration(ds))
+			row.AvgFirstResponse = formatStatDuration(avgDuration(ds))
 		}
 		r.AuthorRows = append(r.AuthorRows, row)
 	}
 
-	// Per-reviewer table.
-	r.ReviewerRows = make([]*ReviewerSummary, 0, len(reviewers))
-	for _, reviewer := range reviewers {
-		ds := reviewerFirst[reviewer]
-		row := &ReviewerSummary{Login: reviewer, PRsReviewed: reviewerTotals[reviewer]}
-		row.Median = formatStatDuration(medianDuration(ds))
-		row.Avg = formatStatDuration(avgDuration(ds))
+	// Per-reviewer table: review-only, so it does not duplicate the
+	// comment-based figures in the engagement table. Comment-only responders
+	// keep their matrix column but get no row here.
+	reviewedLogins := make([]string, 0, len(reviewerReviewed))
+	for reviewer := range reviewerReviewed {
+		reviewedLogins = append(reviewedLogins, reviewer)
+	}
+	sort.Slice(reviewedLogins, func(i, j int) bool {
+		if reviewerReviewed[reviewedLogins[i]] != reviewerReviewed[reviewedLogins[j]] {
+			return reviewerReviewed[reviewedLogins[i]] > reviewerReviewed[reviewedLogins[j]]
+		}
+		return reviewedLogins[i] < reviewedLogins[j]
+	})
+	r.ReviewerRows = make([]*ReviewerSummary, 0, len(reviewedLogins))
+	for _, reviewer := range reviewedLogins {
+		ds := reviewerReviewFirst[reviewer]
+		row := &ReviewerSummary{Login: reviewer, PRsReviewed: reviewerReviewed[reviewer]}
+		if len(ds) > 0 {
+			row.Median = formatStatDuration(medianDuration(ds))
+			row.Avg = formatStatDuration(avgDuration(ds))
+		}
 		r.ReviewerRows = append(r.ReviewerRows, row)
 	}
 
-	if len(firstCommentAll) > 0 {
-		r.OverallMedian = formatStatDuration(medianDuration(firstCommentAll))
-		r.OverallAvg = formatStatDuration(avgDuration(firstCommentAll))
+	if len(firstResponseAll) > 0 {
+		r.OverallMedian = formatStatDuration(medianDuration(firstResponseAll))
+		r.OverallAvg = formatStatDuration(avgDuration(firstResponseAll))
 	} else {
 		r.OverallMedian = "-"
 		r.OverallAvg = "-"
@@ -744,7 +783,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		}
 		agg.opened++
 		agg.commentsRcv += e.commentsReceived
-		if len(e.reviewers) == 0 && len(e.reviews) == 0 {
+		if len(e.reviewers) == 0 {
 			agg.noReview++
 		}
 		if e.sizeKnown {
@@ -811,11 +850,15 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			monthMergeDurs[mm] = append(monthMergeDurs[mm], e.mergeDuration)
 		}
 
-		// Reviewer engagement on this PR.
-		for login := range e.reviewers {
+		// Comment-based engagement: issue comments only. A reviewer who only
+		// submitted a formal review must not be counted as a commenter.
+		for login, count := range e.commentCounts {
+			if count == 0 {
+				continue
+			}
 			g := ensureEng(login)
 			g.prsCommented++
-			g.comments += e.commentCounts[login]
+			g.comments += count
 		}
 		perReviewer := map[string][]reviewActivity{}
 		for _, rev := range e.reviews {
@@ -1065,7 +1108,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		base := func(value string) *NotablePR {
 			return &NotablePR{Repo: e.item.Repo, Number: pr.Number, Title: pr.Title, URL: pr.URL, Author: pr.Author.Login, Value: value}
 		}
-		if strings.EqualFold(pr.State, "OPEN") && len(e.reviewers) == 0 && len(e.reviews) == 0 {
+		if strings.EqualFold(pr.State, "OPEN") && len(e.reviewers) == 0 {
 			age := now.Sub(pr.CreatedAt)
 			if age < 0 {
 				age = 0
@@ -1164,12 +1207,6 @@ func prMatchesState(pr *github.PullRequest, state string) bool {
 	return strings.EqualFold(pr.State, state)
 }
 
-// isBotLogin reports whether a login looks like a GitHub App bot, whose
-// comments should not count as human reviews.
-func isBotLogin(login string) bool {
-	return strings.HasSuffix(login, "[bot]") || strings.HasSuffix(login, "-bot") || strings.EqualFold(login, "github-actions")
-}
-
 // durationSince returns the non-negative duration from created to at.
 func durationSince(created, at time.Time) time.Duration {
 	d := at.Sub(created)
@@ -1179,9 +1216,9 @@ func durationSince(created, at time.Time) time.Duration {
 	return d
 }
 
-// earliestFirstComment returns the shortest time from PR creation to any
-// reviewer's first comment.
-func earliestFirstComment(reviewers map[string]time.Time, createdAt time.Time) time.Duration {
+// earliestResponse returns the shortest time from PR creation to any
+// reviewer's first response (issue comment or submitted review).
+func earliestResponse(reviewers map[string]time.Time, createdAt time.Time) time.Duration {
 	best := time.Duration(0)
 	first := true
 	for _, at := range reviewers {
@@ -1320,8 +1357,8 @@ func formatStatDuration(d time.Duration) string {
 	}
 }
 
-// formatReviewPct renders a cell's share of a reviewer's total reviewed PRs
-// as a percentage (e.g. "33%"), or "<1%" for small non-zero shares.
+// formatReviewPct renders a cell's share of the row author's PRs as a
+// percentage (e.g. "33%"), or "<1%" for small non-zero shares.
 func formatReviewPct(count, total int) string {
 	if total <= 0 || count <= 0 {
 		return ""
@@ -1611,8 +1648,8 @@ const reportTemplate = `<!DOCTYPE html>
   <div class="card"><div class="value">{{.Closed}}</div><div class="label">Closed (unmerged)</div></div>
   <div class="card"><div class="value">{{.AuthorCount}}</div><div class="label">Authors</div></div>
   <div class="card"><div class="value">{{.ReviewerCount}}</div><div class="label">Reviewers</div></div>
-  <div class="card"><div class="value">{{.OverallMedian}}</div><div class="label">Median first comment</div></div>
-  <div class="card"><div class="value">{{.OverallAvg}}</div><div class="label">Average first comment</div></div>
+  <div class="card"><div class="value">{{.OverallMedian}}</div><div class="label">Median first response</div></div>
+  <div class="card"><div class="value">{{.OverallAvg}}</div><div class="label">Average first response</div></div>
   <div class="card"><div class="value">{{.MedianMerge}}</div><div class="label">Median time to merge</div></div>
   <div class="card"><div class="value">{{.TotalReviews}}</div><div class="label">Reviews submitted</div></div>
 </div>
@@ -1731,9 +1768,12 @@ the window of being opened; percentiles describe the author's time-to-merge dist
 {{end}}
 
 <h2 id="matrix">Author × reviewer matrix</h2>
-<p class="meta">Each cell counts the PRs authored by the row author that the column reviewer commented on,
-with the share of that reviewer's total reviewed PRs, and the average and median time from PR creation
-to that reviewer's first comment.
+<p class="meta">Each cell counts the PRs authored by the row author that the column reviewer responded to,
+with the share of that author's PRs the reviewer responded to (cell count divided by the row Total),
+and the average and median time from PR creation to that reviewer's first response.
+A response is an issue comment or a submitted review (approval, change request or review comment).
+Because a PR can have several reviewers, a row's shares can add up to more than 100%.
+The <code>(no reviews)</code> column counts PRs no reviewer responded to.
 Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.</p>
 {{if .Matrix.Rows}}
 <div class="matrix-filters">
@@ -1743,7 +1783,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
   </select>
   <label for="reviewer-filter">Reviewers</label>
   <select id="reviewer-filter" multiple placeholder="Filter reviewers" autocomplete="off">
-    {{range .Matrix.Cols}}{{if not .NoComments}}<option value="{{.Reviewer}}">{{.Reviewer}}</option>{{end}}{{end}}
+    {{range .Matrix.Cols}}{{if not .NoReviews}}<option value="{{.Reviewer}}">{{.Reviewer}}</option>{{end}}{{end}}
   </select>
   <span id="matrix-filter-hint"></span>
 </div>
@@ -1751,7 +1791,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
   <thead>
     <tr>
       <th class="author">Author</th>
-      {{range .Matrix.Cols}}{{if .NoComments}}<th class="num" data-role="nocomments">{{.Reviewer}}</th>{{else}}<th class="num" data-reviewer="{{.Reviewer}}">{{.Reviewer}} ({{.Total}})</th>{{end}}{{end}}
+      {{range .Matrix.Cols}}{{if .NoReviews}}<th class="num" data-role="noreview">{{.Reviewer}}</th>{{else}}<th class="num" data-reviewer="{{.Reviewer}}">{{.Reviewer}} ({{.Total}})</th>{{end}}{{end}}
       <th class="num">Total</th>
     </tr>
   </thead>
@@ -1764,8 +1804,8 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
         {{if .Count}}
           <span class="count">{{.Count}}</span>
           {{if .Pct}}<span class="dur">reviewed {{.Pct}}</span>{{end}}
-          <span class="dur">avg {{.Avg}}</span>
-          <span class="dur">med {{.Median}}</span>
+          {{if .Avg}}<span class="dur">avg {{.Avg}}</span>{{end}}
+          {{if .Median}}<span class="dur">med {{.Median}}</span>{{end}}
         {{else}}
           <span class="empty">·</span>
         {{end}}
@@ -1784,7 +1824,7 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
 {{if .AuthorRows}}
 <table>
   <thead>
-    <tr><th>Author</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Median first comment</th><th class="num">Average first comment</th></tr>
+    <tr><th>Author</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Median first response</th><th class="num">Average first response</th></tr>
   </thead>
   <tbody>
     {{range .AuthorRows}}
@@ -1792,8 +1832,8 @@ Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.<
       <td>{{.Login}}</td>
       <td class="num">{{.PRs}}</td>
       <td class="num">{{.Merged}}</td>
-      <td class="num">{{if .MedianFirstComment}}{{.MedianFirstComment}}{{else}}<span class="empty">-</span>{{end}}</td>
-      <td class="num">{{if .AvgFirstComment}}{{.AvgFirstComment}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianFirstResponse}}{{.MedianFirstResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .AvgFirstResponse}}{{.AvgFirstResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
     </tr>
     {{end}}
   </tbody>
@@ -1859,7 +1899,7 @@ A dash means the underlying events were not recorded.</p>
 {{if .ReviewerRows}}
 <table>
   <thead>
-    <tr><th>Reviewer</th><th class="num">PRs reviewed</th><th class="num">Median first comment</th><th class="num">Average first comment</th></tr>
+    <tr><th>Reviewer</th><th class="num">PRs reviewed</th><th class="num">Median first response</th><th class="num">Average first response</th></tr>
   </thead>
   <tbody>
     {{range .ReviewerRows}}
@@ -1872,8 +1912,11 @@ A dash means the underlying events were not recorded.</p>
     {{end}}
   </tbody>
 </table>
+<p class="meta">"PRs reviewed" counts PRs where the reviewer submitted a review
+(approval, change request or review comment); issue comments alone are counted
+under Reviewer engagement.</p>
 {{else}}
-<p class="empty">No reviewer comments matched.</p>
+<p class="empty">No submitted reviews matched.</p>
 {{end}}
 
 {{if .EngagementRows}}

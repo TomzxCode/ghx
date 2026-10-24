@@ -116,6 +116,26 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			column: "prs_cached_at",
 			ddl:    "ALTER TABLE cache_meta ADD COLUMN prs_cached_at TEXT",
 		},
+		{
+			table:  "pull_requests",
+			column: "additions",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN additions INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table:  "pull_requests",
+			column: "deletions",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN deletions INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table:  "issues",
+			column: "author_type",
+			ddl:    "ALTER TABLE issues ADD COLUMN author_type TEXT NOT NULL DEFAULT ''",
+		},
+		{
+			table:  "pull_requests",
+			column: "author_type",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN author_type TEXT NOT NULL DEFAULT ''",
+		},
 	} {
 		has, err := columnExists(db, m.table, m.column)
 		if err != nil {
@@ -241,7 +261,7 @@ type rowScanner interface {
 // Issues
 // ---------------------------------------------------------------------------
 
-const issueCols = `number, title, state, author_login, assignees, labels, milestone,
+const issueCols = `number, title, state, author_login, author_type, assignees, labels, milestone,
 	created_at, updated_at, closed_at, url, body, comment_count, comments, row_mtime`
 
 // SaveIssue writes a single issue to the database.
@@ -251,10 +271,10 @@ func (s *sqliteStore) SaveIssue(host, owner, repo string, issue *github.Issue) e
 		return err
 	}
 	_, err = s.db.Exec(`INSERT OR REPLACE INTO issues
-		(host, owner, repo, number, title, state, author_login, assignees, labels, milestone,
+		(host, owner, repo, number, title, state, author_login, author_type, assignees, labels, milestone,
 		 created_at, updated_at, closed_at, url, body, comment_count, comments, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		host, owner, repo, issue.Number, issue.Title, issue.State, issue.Author.Login,
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		host, owner, repo, issue.Number, issue.Title, issue.State, issue.Author.Login, issue.Author.Type,
 		mustJSON(issue.Assignees), mustJSON(issue.Labels), milestone,
 		tstr(issue.CreatedAt), tstr(issue.UpdatedAt), nullTime(issue.ClosedAt),
 		issue.URL, issue.Body, issue.CommentCount, mustJSON(issue.Comments), tstr(time.Now()),
@@ -267,16 +287,16 @@ func (s *sqliteStore) SaveIssue(host, owner, repo string, issue *github.Issue) e
 
 func scanIssue(row rowScanner) (*github.Issue, time.Time, error) {
 	var (
-		number                             int
-		title, state, authorLogin          string
-		assigneesJSON, labelsJSON          string
-		milestoneJSON                      sql.NullString
-		createdAtS, updatedAtS             string
-		closedAtS                          sql.NullString
-		url, body, commentsJSON, rowMtimeS string
-		commentCount                       int
+		number                                int
+		title, state, authorLogin, authorType string
+		assigneesJSON, labelsJSON             string
+		milestoneJSON                         sql.NullString
+		createdAtS, updatedAtS                string
+		closedAtS                             sql.NullString
+		url, body, commentsJSON, rowMtimeS    string
+		commentCount                          int
 	)
-	if err := row.Scan(&number, &title, &state, &authorLogin, &assigneesJSON, &labelsJSON, &milestoneJSON,
+	if err := row.Scan(&number, &title, &state, &authorLogin, &authorType, &assigneesJSON, &labelsJSON, &milestoneJSON,
 		&createdAtS, &updatedAtS, &closedAtS, &url, &body, &commentCount, &commentsJSON, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -285,7 +305,7 @@ func scanIssue(row rowScanner) (*github.Issue, time.Time, error) {
 		Number:       number,
 		Title:        title,
 		State:        state,
-		Author:       github.Actor{Login: authorLogin},
+		Author:       github.Actor{Login: authorLogin, Type: authorType},
 		URL:          url,
 		Body:         body,
 		CommentCount: commentCount,
@@ -381,9 +401,9 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 // Pull requests
 // ---------------------------------------------------------------------------
 
-const prCols = `number, title, state, is_draft, author_login, assignees, labels, milestone,
+const prCols = `number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 	base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
-	url, body, comment_count, comments, reviews, timeline, review_decision, row_mtime`
+	url, body, comment_count, comments, reviews, timeline, review_decision, additions, deletions, row_mtime`
 
 // SavePR writes a single pull request to the database.
 func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
@@ -400,16 +420,16 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 		reviewDecision = pr.ReviewDecision
 	}
 	_, err = s.db.Exec(`INSERT OR REPLACE INTO pull_requests
-		(host, owner, repo, number, title, state, is_draft, author_login, assignees, labels, milestone,
+		(host, owner, repo, number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
-		 url, body, comment_count, comments, reviews, timeline, review_decision, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login,
+		 url, body, comment_count, comments, reviews, timeline, review_decision, additions, deletions, row_mtime)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login, pr.Author.Type,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
 		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
 		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), mustJSON(pr.Reviews), mustJSON(pr.Timeline),
-		reviewDecision, tstr(time.Now()),
+		reviewDecision, pr.Additions, pr.Deletions, tstr(time.Now()),
 	)
 	if err != nil {
 		return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
@@ -421,6 +441,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 	var (
 		number                    int
 		title, state, authorLogin string
+		authorType                string
 		isDraft                   bool
 		assigneesJSON, labelsJSON string
 		milestoneJSON             sql.NullString
@@ -432,11 +453,13 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		reviewsJSON, timelineJSON string
 		commentCount              int
 		reviewDecision            sql.NullString
+		additions, deletions      int
 		rowMtimeS                 string
 	)
-	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &assigneesJSON, &labelsJSON, &milestoneJSON,
+	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &authorType, &assigneesJSON, &labelsJSON, &milestoneJSON,
 		&baseRef, &headRef, &headRefOid, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
-		&url, &body, &commentCount, &commentsJSON, &reviewsJSON, &timelineJSON, &reviewDecision, &rowMtimeS); err != nil {
+		&url, &body, &commentCount, &commentsJSON, &reviewsJSON, &timelineJSON, &reviewDecision,
+		&additions, &deletions, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
 
@@ -445,7 +468,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		Title:        title,
 		State:        state,
 		IsDraft:      isDraft,
-		Author:       github.Actor{Login: authorLogin},
+		Author:       github.Actor{Login: authorLogin, Type: authorType},
 		BaseRefName:  baseRef,
 		HeadRefName:  headRef,
 		HeadRefOid:   headRefOid,
@@ -454,6 +477,8 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		URL:          url,
 		Body:         body,
 		CommentCount: commentCount,
+		Additions:    additions,
+		Deletions:    deletions,
 	}
 	if reviewDecision.Valid {
 		pr.ReviewDecision = reviewDecision.String

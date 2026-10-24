@@ -30,19 +30,19 @@ nothing is cached.
 | Flag | Description |
 | ---- | ----------- |
 | `--author`, `-A` | Only count PRs authored by these users (comma-separated) |
-| `--reviewer` | Only count comments by these reviewers (comma-separated) |
+| `--reviewer` | Only count responses (comments and reviews) by these reviewers (comma-separated) |
 | `--from` | Period start (`YYYY-MM-DD` or RFC3339) |
 | `--to` | Period end, inclusive (`YYYY-MM-DD` or RFC3339) |
 | `--state`, `-s` | Filter by PR state: `open`, `closed`, `merged`, `all` (default `all`) |
 | `--output`, `-o` | Output HTML file path (default `stats-report.html`) |
-| `--include-bots` | Include bot accounts (`*[[bot]]`) as reviewers |
+| `--include-bots` | Include accounts GitHub reports as bots (`Bot` account type) as reviewers |
 | `--top` | Number of pull requests per notable-PRs list (default `5`) |
 | `--list-prs` | Include the table of individual pull requests (can be large) |
 
 ## Report contents
 
 - **Summary cards**: total PRs, merged/open/closed counts, author and reviewer
-  counts, median/average time to first comment, median time to merge, and the
+  counts, median/average time to first response, median time to merge, and the
   total number of submitted reviews.
 - **Monthly trend chart**: PRs opened and merged per month plus the median
   time from opening to merge (Chart.js, loaded from the jsDelivr CDN).
@@ -62,18 +62,23 @@ nothing is cached.
   empty for all past), and From/To date fields limiting the displayed period
   (Chart.js, loaded from the jsDelivr CDN).
 - **Author × reviewer matrix**: authors as rows, reviewers as columns. Each
-  cell shows how many PRs the combination appears in, the share of that
-  reviewer's total reviewed PRs (column headers show the reviewer total in
-  parentheses), plus the average and median time from PR creation to that
-  reviewer's first comment. Cells are
-  shaded by count, and a `(no comments)` column tracks PRs that nobody
-  reviewed. Two dropdown filters above the table (Tom Select, loaded from the
+  cell shows how many PRs the combination appears in, the share of the row
+  author's PRs that the reviewer responded to (cell count divided by the row
+  `Total`), plus the average and median time from PR creation to that
+  reviewer's first response. Because a PR can have several reviewers, a row's
+  shares can add up to more than 100%. Column headers show the reviewer's
+  overall PR total in parentheses. A response is an issue comment or a
+  submitted review (approval, change request or review comment), so a reviewer
+  who approved without commenting still has a column. Cells are
+  shaded by count, and a `(no reviews)` column tracks PRs no reviewer
+  responded to, matching the contribution table's "PRs w/o review". Two
+  dropdown filters above the table (Tom Select, loaded from the
   jsDelivr CDN) narrow the matrix to a subset of authors (rows) and reviewers
   (columns) with type-ahead autocompletion and multi-select; the
-  `(no comments)` and `Total` columns always stay visible, and a hint reports
+  `(no reviews)` and `Total` columns always stay visible, and a hint reports
   how many authors and reviewers are shown.
 - **Per-author summary**: PRs authored, merged count, and time to first
-  comment received.
+  response received.
 - **Lead time** (merged PRs only): per author, the median and average time
   from opening to merge, plus median time in draft, median time to first
   review, median time to approve, and median time from approval to merge
@@ -83,8 +88,11 @@ nothing is cached.
   without any review activity, comments received, total additions/deletions,
   and the distribution of PR sizes (xs/s/m/l/xl by changed lines: xs <100,
   s <500, m <1000, l <2000, xl >=2000).
-- **Per-reviewer summary**: PRs reviewed and time to first comment given.
-- **Reviewer engagement**: per reviewer, comment and review counts, approvals,
+- **Per-reviewer summary**: PRs where the reviewer submitted a review, and
+  their time to first response on those PRs (an earlier issue comment counts
+  as the response).
+- **Reviewer engagement**: per reviewer, comment and review counts tracked
+  separately (PRs commented, PRs reviewed), approvals,
   changes requested, comment-only reviews, median time from PR opening to the
   reviewer's first review, and median time from a review request (and
   re-request) to that reviewer's review.
@@ -105,6 +113,10 @@ nothing is cached.
 
 Reviewers are derived from PR comments and reviews written by someone other
 than the PR author; bot accounts are excluded unless `--include-bots` is set.
+Bot status comes from the account type GitHub reports, not from the login, so
+an app whose login looks human is excluded and a person whose login ends in
+`-bot` is kept. Because the type is stored in the cache, old entries classify as
+human until they are re-fetched with `ghx cache --force`.
 
 ## Cache data requirements
 

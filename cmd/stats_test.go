@@ -123,9 +123,9 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 		t.Errorf("alice Total: got %d, want 2", aliceRow.Total)
 	}
 
-	// Column order: (no comments) first, then reviewers by total desc.
+	// Column order: (no reviews) first, then reviewers by total desc.
 	cols := report.Matrix.Cols
-	if cols[0].Reviewer != "(no comments)" {
+	if cols[0].Reviewer != "(no reviews)" {
 		t.Errorf("first column: got %q", cols[0].Reviewer)
 	}
 	if cols[1].Reviewer != "bob" || cols[1].Total != 2 {
@@ -136,7 +136,7 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 	}
 
 	// alice x bob: 2 PRs, durations 2h and 4h => median 3h, avg 3h.
-	// Cells are ordered: (no comments), bob, carol.
+	// Cells are ordered: (no reviews), bob, carol.
 	bobIdx := 1
 	cell := aliceRow.Cells[bobIdx]
 	if cell.Count != 2 {
@@ -161,11 +161,11 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 	if cell.Count != 1 || cell.Median != "1d 0h" {
 		t.Errorf("alice/carol: got count=%d median=%q, want 1/1d 0h", cell.Count, cell.Median)
 	}
-	if cell.Pct != "100%" {
-		t.Errorf("alice/carol pct: got %q, want %q", cell.Pct, "100%")
+	if cell.Pct != "50%" {
+		t.Errorf("alice/carol pct: got %q, want %q (1 of alice's 2 PRs)", cell.Pct, "50%")
 	}
 
-	// bob has one PR without reviewer comments.
+	// bob has one PR without reviewer activity.
 	var bobRow *MatrixRow
 	for _, row := range report.Matrix.Rows {
 		if row.Author == "bob" {
@@ -176,7 +176,137 @@ func TestBuildReport_MatrixCounts(t *testing.T) {
 		t.Fatal("bob row missing from matrix")
 	}
 	if bobRow.Cells[0].Count != 1 {
-		t.Errorf("bob no-comment count: got %d, want 1", bobRow.Cells[0].Count)
+		t.Errorf("bob no-review count: got %d, want 1", bobRow.Cells[0].Count)
+	}
+}
+
+func TestBuildReport_MatrixCountsReviews(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+	// alice's PR with both a comment (2h) and an approval (3h) from bob: the
+	// earlier response (the comment) sets the cell duration.
+	pr1 := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(2 * time.Hour)},
+	})
+	pr1.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: base.Add(3 * time.Hour)},
+	}
+	// Review-only PR: no issue comments, approved 1h after opening.
+	pr2 := statsTestPR(2, "alice", base, "OPEN", nil)
+	pr2.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: base.Add(time.Hour)},
+	}
+	// Dismissed reviews are not reviewer activity.
+	pr3 := statsTestPR(3, "alice", base, "OPEN", nil)
+	pr3.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "carol"}, State: "DISMISSED", SubmittedAt: base.Add(time.Hour)},
+	}
+	// Reviews by the author and by bots are ignored.
+	pr4 := statsTestPR(4, "alice", base, "OPEN", nil)
+	pr4.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "alice"}, State: "COMMENTED", SubmittedAt: base.Add(time.Hour)},
+		{Author: github.Actor{Login: "dependabot", Type: "Bot"}, State: "APPROVED", SubmittedAt: base.Add(30 * time.Minute)},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{
+			{Repo: "org/repo1", PR: pr1},
+			{Repo: "org/repo1", PR: pr2},
+			{Repo: "org/repo1", PR: pr3},
+			{Repo: "org/repo1", PR: pr4},
+		},
+		statsFilters{State: "all"},
+	)
+
+	if report.ReviewerCount != 1 || len(report.Matrix.Cols) != 2 {
+		t.Fatalf("reviewers: got count=%d cols=%+v; want bob only", report.ReviewerCount, report.Matrix.Cols)
+	}
+	if report.Matrix.Cols[1].Reviewer != "bob" || report.Matrix.Cols[1].Total != 2 {
+		t.Errorf("bob column: got %+v, want bob/2", report.Matrix.Cols[1])
+	}
+
+	alice := report.Matrix.Rows[0]
+	if alice.Author != "alice" || alice.Total != 4 {
+		t.Fatalf("alice row: got %+v", alice)
+	}
+	// pr3 (dismissed) and pr4 (author/bot reviews) have no reviewer activity.
+	if got := alice.Cells[0].Count; got != 2 {
+		t.Errorf("alice no-review count: got %d, want 2", got)
+	}
+	bob := alice.Cells[1]
+	if bob.Count != 2 {
+		t.Errorf("alice/bob count: got %d, want 2", bob.Count)
+	}
+	// Durations 2h (comment before review) and 1h => median and average 1h30m.
+	if bob.Median != "1h 30m" || bob.Avg != "1h 30m" {
+		t.Errorf("alice/bob timing: got median=%q avg=%q, want 1h 30m", bob.Median, bob.Avg)
+	}
+	// bob responded to 2 of alice's 4 PRs: the share is row-relative.
+	if bob.Pct != "50%" {
+		t.Errorf("alice/bob pct: got %q, want 50%% of the row total", bob.Pct)
+	}
+
+	// The per-reviewer table is review-only: bob reviewed 2 PRs, one of which
+	// he also commented on, so the comment sets his earlier response.
+	if len(report.ReviewerRows) != 1 || report.ReviewerRows[0].PRsReviewed != 2 {
+		t.Fatalf("reviewer rows: got %+v", report.ReviewerRows)
+	}
+	if report.ReviewerRows[0].Median != "1h 30m" {
+		t.Errorf("reviewer median: got %q, want 1h 30m", report.ReviewerRows[0].Median)
+	}
+	if report.OverallMedian != "1h 30m" {
+		t.Errorf("overall median: got %q, want 1h 30m", report.OverallMedian)
+	}
+
+	// Contribution's "PRs w/o review" agrees with the matrix column.
+	if got := report.ContributionRows[0].NoReview; got != 2 {
+		t.Errorf("alice PRs w/o review: got %d, want 2", got)
+	}
+}
+
+func TestBuildReport_PerReviewerTableCountsReviewsOnly(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+	// bob only leaves issue comments, on two PRs. carol submits one review.
+	pr1 := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+	})
+	pr2 := statsTestPR(2, "alice", base, "OPEN", []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(2 * time.Hour)},
+	})
+	pr2.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "carol"}, State: "APPROVED", SubmittedAt: base.Add(3 * time.Hour)},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{
+			{Repo: "org/repo1", PR: pr1},
+			{Repo: "org/repo1", PR: pr2},
+		},
+		statsFilters{State: "all"},
+	)
+
+	// The per-reviewer table lists only people who submitted a review.
+	if len(report.ReviewerRows) != 1 || report.ReviewerRows[0].Login != "carol" {
+		t.Fatalf("reviewer rows: got %+v, want carol only", report.ReviewerRows)
+	}
+	if report.ReviewerRows[0].PRsReviewed != 1 {
+		t.Errorf("carol PRsReviewed: got %d, want 1", report.ReviewerRows[0].PRsReviewed)
+	}
+
+	// Engagement keeps bob as a commenter with no reviews, and carol as a
+	// reviewer with no comments.
+	eng := map[string]*ReviewerEngagementRow{}
+	for _, row := range report.EngagementRows {
+		eng[row.Login] = row
+	}
+	if bob := eng["bob"]; bob == nil || bob.PRsCommented != 2 || bob.Comments != 2 || bob.PRsReviewed != 0 {
+		t.Errorf("bob engagement: got %+v", bob)
+	}
+	if carol := eng["carol"]; carol == nil || carol.PRsCommented != 0 || carol.Comments != 0 || carol.PRsReviewed != 1 {
+		t.Errorf("carol engagement: got %+v", carol)
 	}
 }
 
@@ -269,7 +399,7 @@ func TestBuildReport_Filters(t *testing.T) {
 		})},
 		{Repo: "org/repo1", PR: statsTestPR(2, "carol", base, "OPEN", []github.Comment{
 			{Author: github.Actor{Login: "dave"}, CreatedAt: base.Add(time.Hour)},
-			{Author: github.Actor{Login: "renovate[bot]"}, CreatedAt: base.Add(30 * time.Minute)},
+			{Author: github.Actor{Login: "renovate", Type: "Bot"}, CreatedAt: base.Add(30 * time.Minute)},
 		})},
 	}
 
@@ -300,7 +430,7 @@ func TestBuildReport_Filters(t *testing.T) {
 		statsFilters{State: "all"},
 	)
 	for _, col := range report.Matrix.Cols {
-		if strings.Contains(col.Reviewer, "[bot]") {
+		if col.Reviewer == "renovate" {
 			t.Errorf("bot excluded by default but found column %q", col.Reviewer)
 		}
 	}
@@ -311,12 +441,12 @@ func TestBuildReport_Filters(t *testing.T) {
 	)
 	found := false
 	for _, col := range report.Matrix.Cols {
-		if col.Reviewer == "renovate[bot]" {
+		if col.Reviewer == "renovate" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("IncludeBots: want renovate[bot] column")
+		t.Error("IncludeBots: want renovate column")
 	}
 
 	// State filter.
@@ -330,13 +460,58 @@ func TestBuildReport_Filters(t *testing.T) {
 	}
 }
 
-func TestBuildReport_SummaryTablesAndPRList(t *testing.T) {
+// TestBuildReport_BotDetectionUsesActorType locks in that bot status comes from
+// the account type GitHub reports, not from the login: an app whose login looks
+// human is still a bot, and a person whose login ends in -bot is still a person.
+func TestBuildReport_BotDetectionUsesActorType(t *testing.T) {
 	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
 
 	prs := []*repoPR{
-		{Repo: "org/repo1", PR: statsTestPR(1, "alice", base, "MERGED", []github.Comment{
-			{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+		{Repo: "org/repo1", PR: statsTestPR(1, "alice", base, "OPEN", []github.Comment{
+			{Author: github.Actor{Login: "binks-code-reviewer", Type: "Bot"}, CreatedAt: base.Add(time.Hour)},
+			{Author: github.Actor{Login: "robotperson", Type: "User"}, CreatedAt: base.Add(2 * time.Hour)},
 		})},
+	}
+
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all"},
+	)
+	var cols []string
+	for _, col := range report.Matrix.Cols {
+		cols = append(cols, col.Reviewer)
+	}
+	if len(cols) != 2 || cols[1] != "robotperson" {
+		t.Fatalf("default reviewers: got %v, want the bot excluded and robotperson kept", cols)
+	}
+
+	report = buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		prs,
+		statsFilters{State: "all", IncludeBots: true},
+	)
+	cols = nil
+	for _, col := range report.Matrix.Cols {
+		cols = append(cols, col.Reviewer)
+	}
+	if len(cols) != 3 || cols[1] != "binks-code-reviewer" || cols[2] != "robotperson" {
+		t.Fatalf("IncludeBots reviewers: got %v, want both", cols)
+	}
+}
+
+func TestBuildReport_SummaryTablesAndPRList(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+
+	pr1 := statsTestPR(1, "alice", base, "MERGED", []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: base.Add(time.Hour)},
+	})
+	// bob comments first, then submits a review: the comment is his response.
+	pr1.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: base.Add(2 * time.Hour)},
+	}
+	prs := []*repoPR{
+		{Repo: "org/repo1", PR: pr1},
 		{Repo: "org/repo2", PR: statsTestPR(2, "carol", base, "OPEN", nil)},
 	}
 
@@ -355,11 +530,24 @@ func TestBuildReport_SummaryTablesAndPRList(t *testing.T) {
 	if report.AuthorRows[0].Login != "alice" || report.AuthorRows[0].Merged != 1 {
 		t.Errorf("alice summary: got %+v", report.AuthorRows[0])
 	}
-	if report.AuthorRows[0].MedianFirstComment != "1h 0m" {
-		t.Errorf("alice median: got %q", report.AuthorRows[0].MedianFirstComment)
+	if report.AuthorRows[0].MedianFirstResponse != "1h 0m" {
+		t.Errorf("alice median: got %q", report.AuthorRows[0].MedianFirstResponse)
 	}
 	if len(report.ReviewerRows) != 1 || report.ReviewerRows[0].Login != "bob" || report.ReviewerRows[0].PRsReviewed != 1 {
 		t.Errorf("reviewer rows: got %+v", report.ReviewerRows)
+	}
+	// The per-reviewer response time is bob's first response on the PR he
+	// reviewed, which was his comment an hour in.
+	if report.ReviewerRows[0].Median != "1h 0m" {
+		t.Errorf("reviewer median: got %q, want 1h 0m", report.ReviewerRows[0].Median)
+	}
+	// Engagement keeps comments and reviews apart: bob did both here.
+	if len(report.EngagementRows) != 1 {
+		t.Fatalf("engagement rows: got %+v", report.EngagementRows)
+	}
+	bob := report.EngagementRows[0]
+	if bob.PRsCommented != 1 || bob.Comments != 1 || bob.PRsReviewed != 1 || bob.Reviews != 1 {
+		t.Errorf("bob engagement: got %+v", bob)
 	}
 
 	if report.ShowPRs || report.PRs != nil {
@@ -714,6 +902,10 @@ func TestBuildReport_ReviewerEngagement(t *testing.T) {
 	if bobRow.Reviews != 2 || bobRow.Approvals != 1 || bobRow.ChangesRequested != 1 || bobRow.CommentOnly != 0 {
 		t.Errorf("bob engagement: got %+v", bobRow)
 	}
+	// bob only submitted reviews on this PR, so he is not a commenter.
+	if bobRow.PRsCommented != 0 || bobRow.Comments != 0 || bobRow.PRsReviewed != 1 {
+		t.Errorf("bob comment/review split: got %+v", bobRow)
+	}
 	// bob's first review came 3h after opening; his re-request at +6h was
 	// answered by the +8h approval (2h later).
 	if bobRow.MedianOpenResponse != "3h 0m" {
@@ -728,6 +920,25 @@ func TestBuildReport_ReviewerEngagement(t *testing.T) {
 	}
 	if carolRow.PRsCommented != 1 || carolRow.Comments != 1 || carolRow.CommentOnly != 1 {
 		t.Errorf("carol engagement: got %+v", carolRow)
+	}
+	// The per-reviewer table counts PRs (one each), not review objects.
+	if len(report.ReviewerRows) != 2 {
+		t.Fatalf("reviewer rows: got %+v", report.ReviewerRows)
+	}
+	for _, row := range report.ReviewerRows {
+		if row.PRsReviewed != 1 {
+			t.Errorf("%s PRsReviewed: got %d, want 1", row.Login, row.PRsReviewed)
+		}
+		switch row.Login {
+		case "bob":
+			if row.Median != "3h 0m" {
+				t.Errorf("bob reviewer median: got %q, want 3h 0m", row.Median)
+			}
+		case "carol":
+			if row.Median != "2h 0m" {
+				t.Errorf("carol reviewer median: got %q, want 2h 0m", row.Median)
+			}
+		}
 	}
 
 	// Author-side lead time: first review at +3h, first approval at +8h.
@@ -989,11 +1200,18 @@ func TestRenderReport(t *testing.T) {
 		`id="matrix-table"`,
 		`data-author="alice"`,
 		`data-reviewer="bob"`,
-		`data-role="nocomments"`,
+		`data-role="noreview"`,
 		"reviewed 100%",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered HTML missing matrix filter marker %q", want)
+		}
+	}
+	// The no-review cell carries a count but no timings; it must not render
+	// dangling "avg" / "med" labels with empty values.
+	for _, unwanted := range []string{"avg </span>", "med </span>"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("rendered HTML contains empty timing label %q", unwanted)
 		}
 	}
 

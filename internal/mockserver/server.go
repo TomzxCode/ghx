@@ -465,14 +465,20 @@ func (s *Server) paginatePRsFull(indices []int, pageSize int, vars map[string]in
 // Node conversion helpers (produce maps matching GitHub GraphQL JSON shape)
 // ---------------------------------------------------------------------------
 
-func actorNode(login string) map[string]interface{} {
-	return map[string]interface{}{"login": login}
+// actorNode renders a GraphQL Actor. The concrete type defaults to User when
+// the fixture leaves Actor.Type empty; set Type to "Bot" to model an app.
+func actorNode(a github.Actor) map[string]interface{} {
+	typename := a.Type
+	if typename == "" {
+		typename = "User"
+	}
+	return map[string]interface{}{"__typename": typename, "login": a.Login}
 }
 
 func assigneesNode(assignees []github.Actor) map[string]interface{} {
 	nodes := make([]interface{}, len(assignees))
 	for i, a := range assignees {
-		nodes[i] = actorNode(a.Login)
+		nodes[i] = actorNode(a)
 	}
 	return map[string]interface{}{"nodes": nodes}
 }
@@ -497,7 +503,7 @@ func commentNodes(comments []github.Comment) map[string]interface{} {
 	for i, c := range comments {
 		nodes[i] = map[string]interface{}{
 			"id":        c.ID,
-			"author":    actorNode(c.Author.Login),
+			"author":    actorNode(c.Author),
 			"body":      c.Body,
 			"createdAt": c.CreatedAt,
 			"updatedAt": c.UpdatedAt,
@@ -526,7 +532,7 @@ func issueToNodeSummary(issue *github.Issue) map[string]interface{} {
 		"number":    issue.Number,
 		"title":     issue.Title,
 		"state":     issue.State,
-		"author":    actorNode(issue.Author.Login),
+		"author":    actorNode(issue.Author),
 		"assignees": assigneesNode(issue.Assignees),
 		"labels":    labelsNode(issue.Labels),
 		"milestone": milestoneNode(issue.Milestone),
@@ -544,7 +550,7 @@ func issueToNodeFull(issue *github.Issue) map[string]interface{} {
 		"number":    issue.Number,
 		"title":     issue.Title,
 		"state":     issue.State,
-		"author":    actorNode(issue.Author.Login),
+		"author":    actorNode(issue.Author),
 		"assignees": assigneesNode(issue.Assignees),
 		"labels":    labelsNode(issue.Labels),
 		"milestone": milestoneNode(issue.Milestone),
@@ -568,7 +574,7 @@ func prToNodeSummary(pr *github.PullRequest) map[string]interface{} {
 		"state":          pr.State,
 		"isDraft":        pr.IsDraft,
 		"reviewDecision": pr.ReviewDecision,
-		"author":         actorNode(pr.Author.Login),
+		"author":         actorNode(pr.Author),
 		"assignees":      assigneesNode(pr.Assignees),
 		"labels":         labelsNode(pr.Labels),
 		"milestone":      milestoneNode(pr.Milestone),
@@ -592,7 +598,7 @@ func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 		"state":          pr.State,
 		"isDraft":        pr.IsDraft,
 		"reviewDecision": pr.ReviewDecision,
-		"author":         actorNode(pr.Author.Login),
+		"author":         actorNode(pr.Author),
 		"assignees":      assigneesNode(pr.Assignees),
 		"labels":         labelsNode(pr.Labels),
 		"milestone":      milestoneNode(pr.Milestone),
@@ -623,7 +629,7 @@ func searchNodeFromIssue(issue *github.Issue) map[string]interface{} {
 		"number":     issue.Number,
 		"title":      issue.Title,
 		"state":      issue.State,
-		"author":     actorNode(issue.Author.Login),
+		"author":     actorNode(issue.Author),
 		"assignees":  assigneesNode(issue.Assignees),
 		"labels":     labelsNode(issue.Labels),
 		"milestone":  milestoneNode(issue.Milestone),
@@ -648,7 +654,7 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		"state":          pr.State,
 		"isDraft":        pr.IsDraft,
 		"reviewDecision": pr.ReviewDecision,
-		"author":         actorNode(pr.Author.Login),
+		"author":         actorNode(pr.Author),
 		"assignees":      assigneesNode(pr.Assignees),
 		"labels":         labelsNode(pr.Labels),
 		"milestone":      milestoneNode(pr.Milestone),
@@ -675,7 +681,7 @@ func reviewNodes(reviews []github.PRReview) map[string]interface{} {
 	nodes := make([]map[string]interface{}, 0, len(reviews))
 	for _, r := range reviews {
 		nodes = append(nodes, map[string]interface{}{
-			"author":      actorNode(r.Author.Login),
+			"author":      actorNode(r.Author),
 			"state":       r.State,
 			"submittedAt": r.SubmittedAt,
 		})
@@ -697,11 +703,11 @@ func timelineNodes(events []github.TimelineEvent) map[string]interface{} {
 	for _, e := range events {
 		node := map[string]interface{}{
 			"__typename": typenames[e.Kind],
-			"actor":      actorNode(e.Actor.Login),
+			"actor":      actorNode(e.Actor),
 			"createdAt":  e.CreatedAt,
 		}
 		if e.RequestedReviewer.Login != "" {
-			node["requestedReviewer"] = actorNode(e.RequestedReviewer.Login)
+			node["requestedReviewer"] = actorNode(e.RequestedReviewer)
 		}
 		nodes = append(nodes, node)
 	}
