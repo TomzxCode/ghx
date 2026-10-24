@@ -86,21 +86,27 @@ func init() {
 func parseSinceDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	layouts := []struct {
-		layout string
-		utc    bool
+		layout   string
+		location *time.Location
 	}{
-		{time.RFC3339, false},
-		{"2006-01-02", true},
-		{"2006-01-02 15:04:05", false},
-		{"2006-01-02 15:04", false},
-		{"2006-01-02T15:04:05", false},
-		{"2006-01-02T15:04", false},
+		{time.RFC3339, nil}, // the string carries its own offset
+		{"2006-01-02", time.UTC},
+		{"2006-01-02 15:04:05", time.Local},
+		{"2006-01-02 15:04", time.Local},
+		{"2006-01-02T15:04:05", time.Local},
+		{"2006-01-02T15:04", time.Local},
 	}
 	for _, l := range layouts {
-		if t, err := time.Parse(l.layout, s); err == nil {
-			if l.utc {
-				t = t.UTC()
-			}
+		var (
+			t   time.Time
+			err error
+		)
+		if l.location == nil {
+			t, err = time.Parse(l.layout, s)
+		} else {
+			t, err = time.ParseInLocation(l.layout, s, l.location)
+		}
+		if err == nil {
 			return t, nil
 		}
 	}
