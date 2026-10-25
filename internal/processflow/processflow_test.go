@@ -512,6 +512,16 @@ func TestFromIssueMapsStates(t *testing.T) {
 	if closed.Station != Closed || closed.ExitedAt == nil || !closed.ExitedAt.Equal(closedAt) {
 		t.Errorf("closed issue = %+v", closed)
 	}
+	// Cache rows store the GraphQL enum verbatim ("CLOSED"), so the state
+	// comparison must ignore case.
+	upper := FromIssue(&github.Issue{Number: 4, State: "CLOSED", CreatedAt: at(31), ClosedAt: &closedAt})
+	if upper.Station != Closed || upper.ExitedAt == nil {
+		t.Errorf("uppercase-state closed issue = %+v", upper)
+	}
+	upperOpen := FromIssue(&github.Issue{Number: 5, State: "OPEN", CreatedAt: at(31)})
+	if upperOpen.Station != Open {
+		t.Errorf("uppercase-state open issue = %+v", upperOpen)
+	}
 	// A closed issue without a close time keeps a nil exit: inventory yes,
 	// cycle time no.
 	orphan := FromIssue(&github.Issue{Number: 3, State: "closed", CreatedAt: at(31)})

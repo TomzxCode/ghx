@@ -2,6 +2,7 @@ package processflow
 
 import (
 	"strconv"
+	"strings"
 
 	"github.com/tomzxcode/ghx/internal/github"
 )
@@ -22,7 +23,9 @@ func FromIssue(issue *github.Issue) Item {
 		CreatedAt: issue.CreatedAt,
 		Station:   Open,
 	}
-	if issue.State == "closed" {
+	// The cached state is the GraphQL enum verbatim ("OPEN"/"CLOSED") in
+	// older cache rows, so compare case-insensitively.
+	if strings.EqualFold(issue.State, "closed") {
 		item.Station = Closed
 		if issue.ClosedAt != nil {
 			exited := *issue.ClosedAt
@@ -61,7 +64,7 @@ func FromPR(pr *github.PullRequest) Item {
 		item.Station = Merged
 		exited := *pr.MergedAt
 		item.ExitedAt = &exited
-	case pr.State == "closed":
+	case strings.EqualFold(pr.State, "closed"):
 		item.Station = Discarded
 		if pr.ClosedAt != nil {
 			exited := *pr.ClosedAt
