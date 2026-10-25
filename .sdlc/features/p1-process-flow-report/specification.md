@@ -26,12 +26,15 @@ UI and the CLI convert the same way.
 An `Item` reduces one issue or PR to what the flow computation needs:
 `ID`, `Kind` (issue/pr), `Title`, `URL`, `CreatedAt`, `Station`, `ExitedAt`
 (the close/merge/discard time, nil while active or unknown), and `Moves`
-(observed draft/ready flips from cached timeline events, oldest first).
+(draft/ready flips from cached timeline events and review turns from cached
+reviews, oldest first).
 
-Stations: `Open`, `Draft`, `Ready` are active; `Closed`, `Merged` are
-completions; `Discarded` is scrap. The `Line` type orders a kind's stations
-(issues: Open, Closed; PRs: Draft, Ready, Merged, Discarded), names them, and
-names the completion station.
+Stations: `Open`, `Draft`, `AwaitingReview`, `AwaitingAuthor`, and
+`AwaitingMerge` are active; `Closed`, `Merged` are completions; `Discarded`
+is scrap. The `Line` type orders a kind's stations (issues: Open, Closed;
+PRs: Draft, Awaiting review, Waiting on author, Waiting on merge, Merged,
+Discarded), names them, and names the completion station. PRs opened
+directly as ready start in the review-wait station.
 
 ## Timeline walk
 
@@ -41,9 +44,7 @@ current station and happens after the previous entry (duplicate or stale
 timeline events cannot corrupt the walk); a recorded `ExitedAt` is appended as
 the final move so merged/closed items show their real finish moment; and a
 walk that ends off the current station is corrected to it, entering at the
-last known move. A merged PR whose cache holds no flip events counts as Ready
-immediately before the merge (GitHub merges ready PRs), so missing flip
-events do not attribute its whole trip to the draft station. This one rule
+last known move. This one rule
 set backs inventory ages, per-day station lookups (cumulative flow, weekly
 WIP), and station waits.
 
@@ -69,8 +70,9 @@ doubles as "now" so a report for a past window stays reproducible.
   moves into the station; departures are moves out (including exits to
   Merged/Closed/Discarded). Net gives the trend. Weekly WIP samples inventory
   at each week's end from the timelines.
-- **Cumulative flow**: one sample per day (inclusive) of OpenIssues, DraftPRs,
-  ReadyPRs, and cumulative completions (closed issues plus merged PRs).
+- **Cumulative flow**: one sample per day (inclusive) of open issues, the
+  three PR review-wait stations (draft, reviewer, author, merge), and
+  cumulative completions (closed issues plus merged PRs).
 - **Forecast**: 500 simulations draw one week's completions at a time from the
   window's weekly history (with replacement, `rand.PCG` seeded 0, 520-week
   cap) until the active count is exhausted; p50/p85 become weeks and dates.
@@ -140,7 +142,7 @@ ignored, and the form's date inputs pre-fill with the covered bounds.
 | FR-08 | `TestWipItemsSortLongestWaitFirst` |
 | FR-09 | `TestForecastResamplesWeeklyHistory` |
 | FR-10 | `TestOutcomesSplitWindowArrivalsByDisposition` |
-| FR-11 | `TestWaitSharesRankTheBottleneck`, `TestMergedPRWithoutFlipHistoryCountsAsReady`, `TestWaitSharesBucketFliplessTripsSeparately` |
+| FR-11 | `TestWaitSharesRankTheBottleneck`, `TestMergedPRWithoutFlipHistoryCountsAsReviewWait`, `TestWaitSharesBucketFliplessTripsSeparately`, `TestFromPRReviewTurnsDriveStations`, `TestFromPRWithoutAnyHistoryStaysUnsplit` |
 | FR-12, FR-13 | command covered by the loaders' reuse of the tested stats loaders; report rendering by `TestRenderProducesTheSections` |
 | FR-14, FR-15 | `TestProcessEndpoint`, `TestProcessEndpoint_ValidationAndAvailability`, `TestAPIProcess`, `TestAPIProcess_DefaultsToAllCachedRepos`, `TestServeProcessFunc_RendersReport`, `TestServeProcessFunc_RejectsUncachedRepo` |
 | FR-17 | `TestRenderProducesTheSections` (capped table renders), cap constant unit-enforced |

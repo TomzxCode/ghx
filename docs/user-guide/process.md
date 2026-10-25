@@ -13,8 +13,13 @@ nothing is cached.
 
 - **Issues**: an open issue sits in the *Open* station; closing it moves it to *Closed*.
 - **Pull requests**: a PR is *Draft* until it is marked ready for review, then
-  *Ready*. Merging moves it to *Merged*; closing without merging moves it to
-  *Discarded*, which counts as scrap rather than as a completion.
+  *Waiting on reviewer*. An approval moves it to *Waiting on merge*; changes
+  requested move it to *Waiting on author*. Merging moves it to *Merged*;
+  closing without merging moves it to *Discarded*, which counts as scrap
+  rather than as a completion. PRs opened directly as ready for review skip
+  the draft station. The review stations come from cached reviews, so a cache
+  collected before reviews were persisted shows those PRs in one unsplit
+  bucket until you refresh.
 
 Cycle time is measured from creation to the completion station (close for
 issues, merge for pull requests). Draft/ready history comes from cached
@@ -27,12 +32,12 @@ their open PRs at the station their current state implies.
   items currently there, and the moves observed in the window as arrows.
 - **Cumulative flow**: one stacked band per active station per day, with
   cumulative completions on top; a widening band is a queue forming.
-- **Bottlenecks**: where completed PR time went (draft versus ready, per
-  recorded draft/ready flips), and each station's queue pressure (arrived,
-  departed, net, and a weekly WIP sparkline). PRs merged without flip events
-  (automation merges, or caches without timeline data) are reported as one
-  "no draft/ready history" bucket, since their split is not known. A filling
-  queue receives items faster than it passes them on.
+- **Bottlenecks**: where completed PR time went (draft, waiting on reviewer,
+  waiting on author, waiting on merge, per recorded flips and reviews), and
+  each station's queue pressure (arrived, departed, net, and a weekly WIP
+  sparkline). PRs merged without any recorded flips or reviews are reported
+  as one "no draft/ready history" bucket, since their split is not known. A
+  filling queue receives items faster than it passes them on.
 - **On the line now**: the aging list of every open issue and open PR, longest
   wait first (the rendered page caps the table; the JSON API lists them all).
 - **Cycle time**: median, p90, and mean per line with a histogram.

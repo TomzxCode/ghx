@@ -24,7 +24,7 @@ func TestRenderProducesTheSections(t *testing.T) {
 		reportItem("#1", processflow.KindIssue, created, processflow.Closed, &closed),
 		reportItem("#2", processflow.KindIssue, created.Add(48*time.Hour), processflow.Open, nil),
 		reportItem("#10", processflow.KindPR, created, processflow.Merged, &merged),
-		reportItem("#11", processflow.KindPR, created.Add(48*time.Hour), processflow.Ready, nil),
+		reportItem("#11", processflow.KindPR, created.Add(48*time.Hour), processflow.AwaitingReview, nil),
 	}, created.Add(30*24*time.Hour), 30)
 
 	html, err := Render(&report, Meta{Repos: []string{"acme/repo1"}})

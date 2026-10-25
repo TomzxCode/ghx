@@ -123,8 +123,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     {{.CFD}}
     <div class="legend">
       <span><span class="dot" style="background:#64748b"></span>Open issues</span>
-      <span><span class="dot" style="background:#d97706"></span>Draft PRs</span>
-      <span><span class="dot" style="background:#2563eb"></span>Ready PRs</span>
+      <span><span class="dot" style="background:#9333ea"></span>Draft PRs</span>
+      <span><span class="dot" style="background:#2563eb"></span>Waiting on reviewer</span>
+      <span><span class="dot" style="background:#d97706"></span>Waiting on author</span>
+      <span><span class="dot" style="background:#0d9488"></span>Waiting on merge</span>
       <span><span class="dot" style="background:#16a34a"></span>Completed (closed issues + merged PRs, cumulative)</span>
     </div>
   </section>

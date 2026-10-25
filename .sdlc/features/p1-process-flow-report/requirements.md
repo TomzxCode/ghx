@@ -28,7 +28,7 @@ Order rows by priority: Must first, then Should, then May.
 
 | ID | Priority | Requirement |
 |---|---|---|
-| FR-01 | Must | The system shall map issues onto a line of stations (Open, Closed) and pull requests onto a line (Draft, Ready, Merged, Discarded), with closed-unmerged PRs counting as discarded rather than completed |
+| FR-01 | Must | The system shall map issues onto a line of stations (Open, Closed) and pull requests onto a line (Draft, Waiting on reviewer, Waiting on author, Waiting on merge, Merged, Discarded): draft/ready flips come from the cached timeline, review turns from cached reviews (approval -> merge wait, changes requested -> author wait), PRs opened directly as ready skip the draft station, and closed-unmerged PRs count as discarded rather than completed |
 | FR-02 | Must | The system shall report each station's inventory (count) and the waiting time of the items currently there (oldest, median, newest) |
 | FR-03 | Must | The system shall report, per line, cycle time from creation to the completion station (close for issues, merge for PRs) as a distribution (mean, median, p10, p90, fastest, slowest) over the window's completions, with a fixed hour-bucket histogram |
 | FR-04 | Must | The system shall report weekly arrivals and completions per line, anchored at the window start, plus total arrivals and completions |
@@ -38,7 +38,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-08 | Must | The system shall report an aging work-in-progress list of every open issue and open PR, longest wait first, with item id, title, URL, station, and age |
 | FR-09 | Must | The system shall report a Monte Carlo forecast per line of when the items currently on the line clear, resampling the window's weekly completion counts (500 simulations, deterministic seed), with p50/p85 as weeks and dates |
 | FR-10 | Must | The system shall report where the window's arrivals stand now per line (done, discarded, still active) |
-| FR-11 | Must | The system shall report where completed PR cycle time went as station wait shares (draft versus ready), computed from cached draft/ready timeline events |
+| FR-11 | Must | The system shall report where completed PR cycle time went as station wait shares (draft, reviewer, author, merge), computed from cached timeline flips and reviews, with a separate bucket for completed PRs that have neither |
 | FR-12 | Must | The system shall accept `[HOST/]OWNER/REPO]` arguments (default current repository or --repo), a `--days` window (1-730, default 90), and write a self-contained HTML report (inline CSS/SVG, no external assets) to `--output` |
 | FR-13 | Must | The system shall serve the report from the cache, warning on stale cache and falling back to the GitHub API when nothing is cached (CLI command), matching the stats loader |
 | FR-14 | Must | The system shall serve the same report in the web UI at `/process` (cache-only, repo and days query params, repeatable repo, omit repo for all cached repositories) |

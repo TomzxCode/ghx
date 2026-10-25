@@ -35,9 +35,9 @@ func scenarioItems() []Item {
 		issueItem("#3", at(61), Open, nil), // Oct 1: 24 days open
 		issueItem("#4", at(75), Open, nil), // Oct 15: 10 days open
 		// PR #10: drafted Sep 1, ready Sep 3, merged Sep 10: 2d draft, 7d review.
-		prItem("#10", at(31), Merged, tp(at(40)), []Move{{At: at(33), To: Ready}}),
-		prItem("#11", at(80), Draft, nil, nil),                             // Oct 20, still a draft
-		prItem("#12", at(65), Ready, nil, []Move{{At: at(68), To: Ready}}), // Oct 8
+		prItem("#10", at(31), Merged, tp(at(40)), []Move{{At: at(33), From: Draft, To: AwaitingReview}}),
+		prItem("#11", at(80), Draft, nil, nil), // Oct 20, still a draft
+		prItem("#12", at(65), AwaitingReview, nil, []Move{{At: at(68), From: Draft, To: AwaitingReview}}), // Oct 8
 		// PR #13: drafted Sep 15, discarded Sep 20 without merging.
 		prItem("#13", at(45), Discarded, tp(at(50)), nil),
 	}
@@ -75,14 +75,14 @@ func TestQuantileInterpolatesBetweenOrderStatistics(t *testing.T) {
 
 func TestTimelineWalksForwardAndCorrectsMissingHistory(t *testing.T) {
 	// A PR drafted Sep 1, made ready Sep 3, still open: two entries.
-	pr := prItem("#20", at(31), Ready, nil, []Move{{At: at(33), To: Ready}})
+	pr := prItem("#20", at(31), AwaitingReview, nil, []Move{{At: at(33), From: Draft, To: AwaitingReview}})
 	timeline := pr.Timeline()
-	if len(timeline) != 2 || timeline[0].Station != Draft || timeline[1].Station != Ready {
-		t.Fatalf("timeline = %v, want draft then ready", timeline)
+	if len(timeline) != 2 || timeline[0].Station != Draft || timeline[1].Station != AwaitingReview {
+		t.Fatalf("timeline = %v, want draft then review wait", timeline)
 	}
 	// A stale duplicate move (ready again) must not apply: the walk is
-	// already in Ready.
-	pr = prItem("#21", at(31), Ready, nil, []Move{{At: at(33), To: Ready}, {At: at(34), To: Ready}})
+	// already in the review-wait station.
+	pr = prItem("#21", at(31), AwaitingReview, nil, []Move{{At: at(33), From: Draft, To: AwaitingReview}, {At: at(34), From: Draft, To: AwaitingReview}})
 	if timeline = pr.Timeline(); len(timeline) != 2 {
 		t.Fatalf("duplicate move applied: %v", timeline)
 	}
@@ -97,8 +97,9 @@ func TestTimelineWalksForwardAndCorrectsMissingHistory(t *testing.T) {
 
 func TestTimelineIncludesRecordedExit(t *testing.T) {
 	// The merge moment is part of the walk, so historical lookups put the PR
-	// in Ready until the merge, not in Merged from its last flip.
-	pr := prItem("#10", at(31), Merged, tp(at(40)), []Move{{At: at(33), To: Ready}})
+	// in the review-wait station until the merge, not in Merged from its last
+	// flip.
+	pr := prItem("#10", at(31), Merged, tp(at(40)), []Move{{At: at(33), From: Draft, To: AwaitingReview}})
 	timeline := pr.Timeline()
 	if len(timeline) != 3 {
 		t.Fatalf("timeline = %v, want three entries", timeline)
@@ -107,8 +108,8 @@ func TestTimelineIncludesRecordedExit(t *testing.T) {
 	if last.Station != Merged || !last.At.Equal(at(40)) {
 		t.Fatalf("exit entry = %v, want merged at merge time", last)
 	}
-	if station, ok := stationAt(timeline, at(35)); !ok || station != Ready {
-		t.Fatalf("station at day 35 = %v, want ready", station)
+	if station, ok := stationAt(timeline, at(35)); !ok || station != AwaitingReview {
+		t.Fatalf("station at day 35 = %v, want awaiting review", station)
 	}
 }
 
@@ -137,9 +138,9 @@ func TestStageInventoryCountsAndAges(t *testing.T) {
 	if draft.Count != 1 {
 		t.Errorf("draft PR count = %d, want 1", draft.Count)
 	}
-	ready := lineOf(report.PRs, Ready)
-	if ready.Count != 1 || *ready.OldestHours != 17*24 {
-		t.Errorf("ready PR count/age = %d/%vh, want 1/408h", ready.Count, *ready.OldestHours)
+	review := lineOf(report.PRs, AwaitingReview)
+	if review.Count != 1 || *review.OldestHours != 17*24 {
+		t.Errorf("review-wait PR count/age = %d/%vh, want 1/408h", review.Count, *review.OldestHours)
 	}
 	if lineOf(report.PRs, Merged).Count != 1 || lineOf(report.PRs, Discarded).Count != 1 {
 		t.Error("merged and discarded PRs are missing from the inventory")
@@ -177,6 +178,78 @@ func TestCycleTimeDistributionAndHistogram(t *testing.T) {
 	}
 }
 
+// TestFromPRReviewTurnsDriveStations verifies reviews move a PR between the
+// review-wait stations: approval means waiting on merge, changes requested
+// means waiting on the author, and plain comments do not change the turn.
+func TestFromPRReviewTurnsDriveStations(t *testing.T) {
+	mergedAt := at(50) // merged after five days approved
+	pr := &github.PullRequest{Number: 60, State: "closed", CreatedAt: at(31), MergedAt: &mergedAt}
+	pr.Reviews = []github.PRReview{
+		{State: "COMMENTED", SubmittedAt: at(33)},         // does not change the turn
+		{State: "CHANGES_REQUESTED", SubmittedAt: at(35)}, // now waiting on the author
+		{State: "APPROVED", SubmittedAt: at(45)},          // now waiting on merge
+	}
+	item := FromPR(pr)
+	if item.Station != Merged || item.ExitedAt == nil {
+		t.Fatalf("merged PR = %+v", item)
+	}
+	want := []Move{
+		{At: at(35), From: AwaitingReview, To: AwaitingAuthor},
+		{At: at(45), From: AwaitingAuthor, To: AwaitingMerge},
+	}
+	if len(item.Moves) != len(want) {
+		t.Fatalf("moves = %+v, want %d turns", item.Moves, len(want))
+	}
+	for i, m := range item.Moves {
+		if m != want[i] {
+			t.Errorf("move %d = %+v, want %+v", i, m, want[i])
+		}
+	}
+
+	// The wait shares split the trip across the review-wait stations:
+	// 4d review, 10d author, 5d merge.
+	report := Build([]Item{item}, now, 90)
+	byStation := map[Station]WaitShare{}
+	for _, share := range report.PRs.WaitShares {
+		byStation[share.Station] = share
+	}
+	for station, wantHours := range map[Station]float64{
+		AwaitingReview: 4 * 24,
+		AwaitingAuthor: 10 * 24,
+		AwaitingMerge:  5 * 24,
+	} {
+		share := byStation[station]
+		if share.Count != 1 || math.Abs(*share.MeanHours-wantHours) > 1e-9 {
+			t.Errorf("%s wait = %+v, want one %.0fh wait", station, share, wantHours)
+		}
+	}
+	if byStation[Unsplit].Count != 0 {
+		t.Errorf("recorded reviews should leave the unsplit bucket empty, got %+v", byStation[Unsplit])
+	}
+}
+
+// TestFromPRWithoutAnyHistoryStaysUnsplit verifies a merged PR with neither
+// flips nor reviews (a cache collected before that data was persisted) has
+// no station attribution: its whole trip is unsplit.
+func TestFromPRWithoutAnyHistoryStaysUnsplit(t *testing.T) {
+	mergedAt := at(40)
+	pr := &github.PullRequest{Number: 61, State: "closed", CreatedAt: at(31), MergedAt: &mergedAt}
+	item := FromPR(pr)
+	report := Build([]Item{item}, now, 90)
+	byStation := map[Station]WaitShare{}
+	for _, share := range report.PRs.WaitShares {
+		byStation[share.Station] = share
+	}
+	if byStation[Unsplit].Count != 1 || byStation[Unsplit].Share != 1 {
+		t.Errorf("unsplit = %+v, want the single trip", byStation[Unsplit])
+	}
+	for _, station := range []Station{Draft, AwaitingReview, AwaitingAuthor, AwaitingMerge} {
+		if byStation[station].Count != 0 {
+			t.Errorf("%s should have no recorded trips, got %+v", station, byStation[station])
+		}
+	}
+}
+
 func TestWaitSharesRankTheBottleneck(t *testing.T) {
 	report := Build(scenarioItems(), now, 90)
 	total := 0.0
@@ -190,8 +263,8 @@ func TestWaitSharesRankTheBottleneck(t *testing.T) {
 	for _, share := range report.PRs.WaitShares {
 		byStation[share.Station] = share
 	}
-	if got := byStation[Ready].Share; math.Abs(got-7.0/9.0) > 1e-9 {
-		t.Errorf("ready share = %v, want 7/9", got)
+	if got := byStation[AwaitingReview].Share; math.Abs(got-7.0/9.0) > 1e-9 {
+		t.Errorf("review-wait share = %v, want 7/9", got)
 	}
 	if got := byStation[Draft].Share; math.Abs(got-2.0/9.0) > 1e-9 {
 		t.Errorf("draft share = %v, want 2/9", got)
@@ -208,7 +281,7 @@ func TestWaitSharesBucketFliplessTripsSeparately(t *testing.T) {
 	// One merged PR with recorded flips (2d draft, 7d ready) and one without
 	// any (9d trip): the recorded stations split the first trip, and the
 	// second lands whole in the unsplit bucket.
-	flipped := prItem("#50", at(31), Merged, tp(at(40)), []Move{{At: at(33), To: Ready}})
+	flipped := prItem("#50", at(31), Merged, tp(at(40)), []Move{{At: at(33), From: Draft, To: AwaitingReview}})
 	flipless := prItem("#51", at(31), Merged, tp(at(40)), nil)
 	report := Build([]Item{flipped, flipless}, now, 90)
 
@@ -224,8 +297,8 @@ func TestWaitSharesBucketFliplessTripsSeparately(t *testing.T) {
 	if got := byStation[Draft].Share; math.Abs(got-2.0/18.0) > 1e-9 {
 		t.Errorf("draft share = %v, want 2/18", got)
 	}
-	if got := byStation[Ready].Share; math.Abs(got-7.0/18.0) > 1e-9 {
-		t.Errorf("ready share = %v, want 7/18", got)
+	if got := byStation[AwaitingReview].Share; math.Abs(got-7.0/18.0) > 1e-9 {
+		t.Errorf("review-wait share = %v, want 7/18", got)
 	}
 	unsplit := byStation[Unsplit]
 	if unsplit.Count != 1 {
@@ -285,26 +358,32 @@ func TestLittlesLawIntegratesWorkInProcess(t *testing.T) {
 
 func TestQueuePressureReadsNetFlow(t *testing.T) {
 	report := Build(scenarioItems(), now, 90)
-	if len(report.PRs.Queue) != 2 {
-		t.Fatalf("PR queue stations = %d, want 2 (draft, ready)", len(report.PRs.Queue))
+	if len(report.PRs.Queue) != 4 {
+		t.Fatalf("PR queue stations = %d, want 4 (draft, review, author, merge)", len(report.PRs.Queue))
 	}
 	byStation := map[Station]QueuePressure{}
 	for _, pressure := range report.PRs.Queue {
 		byStation[pressure.Station] = pressure
 	}
 	draft := byStation[Draft]
-	// Arrived: four PR creations. Departed: two ready flips (#10, #12) and
-	// one discard (#13).
-	if draft.Arrived != 4 || draft.Departed != 3 || draft.Net != 1 || draft.Trend != TrendFilling {
-		t.Errorf("draft pressure = %+v, want arrived 4, departed 3, net +1 filling", draft)
+	// Arrived: four PR creations. Departed: the two ready flips (#10, #12).
+	// #13 never flipped, so its discard departs from the review-wait station.
+	if draft.Arrived != 4 || draft.Departed != 2 || draft.Net != 2 || draft.Trend != TrendFilling {
+		t.Errorf("draft pressure = %+v, want arrived 4, departed 2, net +2 filling", draft)
 	}
 	if len(draft.WeeklyWIP) != 13 {
 		t.Errorf("draft weekly WIP samples = %d, want 13", len(draft.WeeklyWIP))
 	}
-	ready := byStation[Ready]
-	// Arrived: two flips. Departed: one merge.
-	if ready.Arrived != 2 || ready.Departed != 1 || ready.Trend != TrendFilling {
-		t.Errorf("ready pressure = %+v, want arrived 2, departed 1, filling", ready)
+	review := byStation[AwaitingReview]
+	// Arrived: two flips. Departed: one merge (#10) and one discard (#13,
+	// which was opened ready and so left the line from this station).
+	if review.Arrived != 2 || review.Departed != 2 || review.Trend != TrendSteady {
+		t.Errorf("review-wait pressure = %+v, want arrived 2, departed 2, steady", review)
+	}
+	for _, station := range []Station{AwaitingAuthor, AwaitingMerge} {
+		if p := byStation[station]; p.Arrived != 0 || p.Departed != 0 || p.Trend != TrendSteady {
+			t.Errorf("%s pressure = %+v, want untouched", station, p)
+		}
 	}
 	issueOpen := report.Issues.Queue[0]
 	if issueOpen.Station != Open || issueOpen.Arrived != 4 || issueOpen.Departed != 1 || issueOpen.Net != 3 {
@@ -322,14 +401,14 @@ func TestLineFlowsCountObservedMoves(t *testing.T) {
 		}
 		return 0
 	}
-	if got := count(Draft, Ready); got != 2 {
-		t.Errorf("draft->ready moves = %d, want 2", got)
+	if got := count(Draft, AwaitingReview); got != 2 {
+		t.Errorf("draft->review moves = %d, want 2", got)
 	}
-	if got := count(Ready, Merged); got != 1 {
-		t.Errorf("ready->merged moves = %d, want 1", got)
+	if got := count(AwaitingReview, Merged); got != 1 {
+		t.Errorf("review->merged moves = %d, want 1", got)
 	}
-	if got := count(Draft, Discarded); got != 1 {
-		t.Errorf("draft->discarded moves = %d, want 1", got)
+	if got := count(AwaitingReview, Discarded); got != 1 {
+		t.Errorf("review->discarded moves = %d, want 1", got)
 	}
 	if got := len(report.Issues.Flows); got != 1 {
 		t.Fatalf("issue flows = %d, want 1", got)
@@ -361,8 +440,8 @@ func TestFlowSamplesSnapshotEveryDay(t *testing.T) {
 		t.Errorf("last sample has %d completed, want 2", completed[len(completed)-1])
 	}
 	final := report.Samples[len(report.Samples)-1]
-	if final.OpenIssues != 3 || final.DraftPRs != 1 || final.ReadyPRs != 1 {
-		t.Errorf("final sample = %+v, want 3 open issues, 1 draft, 1 ready", final)
+	if final.OpenIssues != 3 || final.DraftPRs != 1 || final.ReviewPRs != 1 {
+		t.Errorf("final sample = %+v, want 3 open issues, 1 draft, 1 waiting on reviewer", final)
 	}
 }
 
@@ -404,15 +483,15 @@ func TestForecastResamplesWeeklyHistory(t *testing.T) {
 	}
 }
 
-func TestMergedPRWithoutFlipHistoryCountsAsReady(t *testing.T) {
-	// Automation merges PRs without anyone flipping them to ready, so the
-	// cache has no draft/ready events: the trip must still read as Ready
-	// immediately before the merge, not as a full lifetime in Draft.
+func TestMergedPRWithoutFlipHistoryCountsAsReviewWait(t *testing.T) {
+	// Automation merges PRs without anyone flipping them to ready, and PRs
+	// opened directly as ready have no draft stage at all: such a PR waits
+	// for review from creation.
 	pr := prItem("#30", at(31), Merged, tp(at(40)), nil)
 	report := Build([]Item{pr}, now, 90)
 
-	if got := activeStationAtExit(pr); got != Ready {
-		t.Errorf("exit station = %v, want ready", got)
+	if got := activeStationAtExit(pr); got != AwaitingReview {
+		t.Errorf("exit station = %v, want awaiting review", got)
 	}
 	count := func(from, to Station) int {
 		for _, flow := range report.PRs.Flows {
@@ -422,8 +501,8 @@ func TestMergedPRWithoutFlipHistoryCountsAsReady(t *testing.T) {
 		}
 		return 0
 	}
-	if count(Ready, Merged) != 1 || count(Draft, Merged) != 0 {
-		t.Errorf("flows = %+v, want ready->merged x1", report.PRs.Flows)
+	if count(AwaitingReview, Merged) != 1 || count(Draft, Merged) != 0 {
+		t.Errorf("flows = %+v, want review-wait->merged x1", report.PRs.Flows)
 	}
 	// The wait shares report the trip as unsplit instead of claiming the
 	// review station held all of it.
@@ -434,14 +513,14 @@ func TestMergedPRWithoutFlipHistoryCountsAsReady(t *testing.T) {
 	if got := byStation[Unsplit]; got.Count != 1 || got.Share != 1 {
 		t.Errorf("unsplit bucket = %+v, want one trip holding the whole share", got)
 	}
-	for _, station := range []Station{Draft, Ready} {
+	for _, station := range []Station{Draft, AwaitingReview} {
 		if byStation[station].Count != 0 || byStation[station].Share != 0 {
 			t.Errorf("%s wait share = %+v, want no recorded trips", station, byStation[station])
 		}
 	}
-	// Before the merge, the PR sits in the ready band of the cumulative flow.
-	if station, _ := stationAt(pr.Timeline(), at(35)); station != Ready {
-		t.Errorf("station mid-trip = %v, want ready", station)
+	// Before the merge, the PR sits in the review-wait band of the flow.
+	if station, _ := stationAt(pr.Timeline(), at(35)); station != AwaitingReview {
+		t.Errorf("station mid-trip = %v, want awaiting review", station)
 	}
 }
 
@@ -509,21 +588,21 @@ func TestBuildRangeCoversAnExplicitWindow(t *testing.T) {
 
 func TestBuildRangeCountsItemsAsOfTheEnd(t *testing.T) {
 	// A PR merged after the range end was still open work during the range:
-	// it must sit in Ready as of the end, not in Merged, and its exit must
-	// not count as a completion.
-	pr := prItem("#40", at(31), Merged, tp(at(80)), []Move{{At: at(33), To: Ready}})
+	// it must sit in the review-wait station as of the end, not in Merged,
+	// and its exit must not count as a completion.
+	pr := prItem("#40", at(31), Merged, tp(at(80)), []Move{{At: at(33), From: Draft, To: AwaitingReview}})
 	report := BuildRange([]Item{pr}, at(40), at(50))
 	if got := lineOf(report.PRs, Merged).Count; got != 0 {
 		t.Errorf("merged count = %d, want 0 (the merge happened after the range)", got)
 	}
-	if got := lineOf(report.PRs, Ready).Count; got != 1 {
-		t.Errorf("ready count = %d, want 1 (as of the range end the PR was in review)", got)
+	if got := lineOf(report.PRs, AwaitingReview).Count; got != 1 {
+		t.Errorf("review-wait count = %d, want 1 (as of the range end the PR was in review)", got)
 	}
 	if report.PRs.Completions != 0 {
 		t.Errorf("completions = %d, want 0", report.PRs.Completions)
 	}
-	if len(report.WIP) != 1 || report.WIP[0].Station != Ready {
-		t.Errorf("WIP = %+v, want the PR on the line in Ready", report.WIP)
+	if len(report.WIP) != 1 || report.WIP[0].Station != AwaitingReview {
+		t.Errorf("WIP = %+v, want the PR on the line awaiting review", report.WIP)
 	}
 }
 
@@ -582,8 +661,11 @@ func TestFromPRMapsStatesAndMoves(t *testing.T) {
 	merged := &github.PullRequest{Number: 10, State: "closed", CreatedAt: at(31), MergedAt: &mergedAt}
 	merged.Timeline = []github.TimelineEvent{{Kind: github.TimelineReadyForReview, CreatedAt: at(33)}}
 	item := FromPR(merged)
-	if item.Station != Merged || item.ExitedAt == nil || len(item.Moves) != 1 || item.Moves[0].To != Ready {
-		t.Errorf("merged PR = %+v", item)
+	if item.Station != Merged || item.ExitedAt == nil || len(item.Moves) != 1 {
+		t.Fatalf("merged PR = %+v", item)
+	}
+	if item.Moves[0].To != AwaitingReview || item.Moves[0].From != Draft {
+		t.Errorf("flip move = %+v, want draft -> awaiting review", item.Moves[0])
 	}
 
 	closedAt := at(50)
@@ -598,7 +680,7 @@ func TestFromPRMapsStatesAndMoves(t *testing.T) {
 	}
 
 	ready := &github.PullRequest{Number: 12, State: "open", CreatedAt: at(65)}
-	if item = FromPR(ready); item.Station != Ready {
+	if item = FromPR(ready); item.Station != AwaitingReview {
 		t.Errorf("ready PR = %+v", item)
 	}
 

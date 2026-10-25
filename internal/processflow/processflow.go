@@ -36,9 +36,14 @@ type Station string
 
 const (
 	// Active stations: unfinished work, the queues the flow metrics are about.
-	Open  Station = "open"  // issue: open
-	Draft Station = "draft" // PR: open, still a draft
-	Ready Station = "ready" // PR: open, marked ready for review
+	Open Station = "open" // issue: open
+	// The PR review pipeline: a PR is drafted, waits for review, then waits
+	// alternately on the author (changes requested) and on merge (approved)
+	// until it ships.
+	Draft          Station = "draft"           // PR: open, still a draft
+	AwaitingReview Station = "awaiting_review" // PR: open, waiting for a reviewer
+	AwaitingAuthor Station = "awaiting_author" // PR: changes requested, waiting on the author
+	AwaitingMerge  Station = "awaiting_merge"  // PR: approved, waiting for the merge
 
 	// Completed stations: finished goods.
 	Closed Station = "closed" // issue: closed
@@ -72,13 +77,20 @@ var IssuesLine = Line{
 	Labels:   map[Station]string{Open: "Open", Closed: "Closed"},
 }
 
-// PRsLine is the pull-request line: drafts, ready-for-review PRs, merged PRs,
-// and discarded PRs.
+// PRsLine is the pull-request line: drafts, the review-wait stations,
+// merged PRs, and discarded PRs.
 var PRsLine = Line{
 	Kind:     KindPR,
 	Label:    "Pull requests",
-	Stations: []Station{Draft, Ready, Merged, Discarded},
-	Labels:   map[Station]string{Draft: "Draft", Ready: "Ready", Merged: "Merged", Discarded: "Discarded"},
+	Stations: []Station{Draft, AwaitingReview, AwaitingAuthor, AwaitingMerge, Merged, Discarded},
+	Labels: map[Station]string{
+		Draft:          "Draft",
+		AwaitingReview: "Waiting on reviewer",
+		AwaitingAuthor: "Waiting on author",
+		AwaitingMerge:  "Waiting on merge",
+		Merged:         "Merged",
+		Discarded:      "Discarded",
+	},
 }
 
 // ActiveStations are the unfinished-work stations of a line, in flow order.
@@ -91,6 +103,12 @@ func (l Line) ActiveStations() []Station {
 		active = append(active, station)
 	}
 	return active
+}
+
+// IsReviewWaitStation reports whether a station is one of the PR review-wait
+// stages (as opposed to the draft stage).
+func isReviewStation(station Station) bool {
+	return station == AwaitingReview || station == AwaitingAuthor || station == AwaitingMerge
 }
 
 // DoneStation is the station that counts as a completion for a line.
@@ -158,10 +176,13 @@ func histogramBuckets() []HistogramBucket {
 	return buckets
 }
 
-// Move is one observed intermediate station change (PR draft/ready flips).
+// Move is one observed station change: PR draft/ready flips from the cached
+// timeline, and review-driven turns (approved, changes requested) derived
+// from the cached reviews.
 type Move struct {
-	At time.Time `json:"at"`
-	To Station   `json:"to"`
+	At   time.Time `json:"at"`
+	From Station   `json:"from"`
+	To   Station   `json:"to"`
 }
 
 // Item is one work item reduced to what the flow computation needs.
@@ -185,7 +206,7 @@ func (it Item) LineOf() Line { return LineFor(it.Kind) }
 
 // IsActive reports whether the item is unfinished work.
 func (it Item) IsActive() bool {
-	return it.Station == Open || it.Station == Draft || it.Station == Ready
+	return it.Station == Open || it.Station == Draft || isReviewStation(it.Station)
 }
 
 // IsDone reports whether the item reached its line's completion station.
@@ -202,20 +223,20 @@ type TimelineEntry struct {
 // Timeline walks the item's history from creation to now, oldest first.
 //
 // Every item starts in its line's first station at creation (issues in Open,
-// PRs in Draft). A move applies only when it actually changes the station the
-// walk is in and happens after the previous entry, so duplicate or stale
-// moves cannot corrupt the walk. A recorded finish (exit time) is appended as
-// the final move, so completed items' histories show the real merge or close
-// moment. A merged PR with no recorded flips counts as Ready immediately
-// before the merge (GitHub merges ready PRs), so missing flip events do not
-// attribute its whole trip to the draft station. When the walk still ends
-// somewhere other than the item's current station (history is missing), the
-// last entry is corrected to the current station: the item has been there
-// since its last known move.
+// PRs in Draft unless they were opened directly as ready for review). A move
+// applies only when it actually changes the station the walk is in and
+// happens after the previous entry, so duplicate or stale moves cannot
+// corrupt the walk. A recorded finish (exit time) is appended as the final
+// move, so completed items' histories show the real merge or close moment.
+// When the walk still ends somewhere other than the item's current station
+// (history is missing), the last entry is corrected to the current station:
+// the item has been there since its last known move.
 func (it Item) Timeline() []TimelineEntry {
 	first := Open
-	if it.Kind == KindPR {
+	if it.Kind == KindPR && it.startsAsDraft() {
 		first = Draft
+	} else if it.Kind == KindPR {
+		first = AwaitingReview
 	}
 	timeline := []TimelineEntry{{At: it.CreatedAt, Station: first}}
 	for _, move := range it.Moves {
@@ -227,11 +248,6 @@ func (it Item) Timeline() []TimelineEntry {
 	if it.ExitedAt != nil {
 		last := timeline[len(timeline)-1]
 		if it.ExitedAt.After(last.At) && it.Station != last.Station {
-			if it.Station == Merged && len(it.Moves) == 0 {
-				// No flip events at all: the PR was in Ready before the merge
-				// even though the transition was never captured.
-				timeline[len(timeline)-1] = TimelineEntry{At: last.At, Station: Ready}
-			}
 			timeline = append(timeline, TimelineEntry{At: *it.ExitedAt, Station: it.Station})
 		}
 	}
@@ -240,6 +256,25 @@ func (it Item) Timeline() []TimelineEntry {
 		timeline[len(timeline)-1] = TimelineEntry{At: last.At, Station: it.Station}
 	}
 	return timeline
+}
+
+// startsAsDraft reports whether a PR's history says it went through the draft
+// stage: either it is a draft now, or its moves record draft/ready flips. A
+// PR with no flip events was opened directly as ready for review, so it has
+// never been in the draft station.
+func (it Item) startsAsDraft() bool {
+	if it.Kind != KindPR {
+		return false
+	}
+	if it.Station == Draft {
+		return true
+	}
+	for _, move := range it.Moves {
+		if move.From == Draft || move.To == Draft {
+			return true
+		}
+	}
+	return false
 }
 
 // EnteredCurrentAt returns when the item entered the station it sits in now.
@@ -369,7 +404,9 @@ type FlowSample struct {
 	At         time.Time `json:"at"`
 	OpenIssues int       `json:"openIssues"`
 	DraftPRs   int       `json:"draftPrs"`
-	ReadyPRs   int       `json:"readyPrs"`
+	ReviewPRs  int       `json:"reviewPrs"`
+	AuthorPRs  int       `json:"authorPrs"`
+	MergePRs   int       `json:"mergePrs"`
 	Completed  int       `json:"completed"`
 }
 
@@ -623,10 +660,12 @@ func histogramFor(durations []float64) []HistogramBucket {
 // to a station by assumption.
 const Unsplit Station = "unsplit"
 
-// hasFlipHistory reports whether a completed PR's draft/review split is
-// recorded. GitHub merges ready PRs, so a merged PR with no flip events at
-// all (automation merges, or a cache without timeline data) has none.
-func hasFlipHistory(it Item) bool {
+// hasMoveHistory reports whether a completed PR's intermediate stations were
+// recorded (draft/ready flips or review turns). A merged PR with no moves at
+// all (automation merges into a cache without timeline and review data) has
+// none, so its trip is reported as one unsplit duration instead of being
+// attributed to a station by assumption.
+func hasMoveHistory(it Item) bool {
 	return it.Kind != KindPR || len(it.Moves) > 0
 }
 
@@ -638,7 +677,7 @@ func hasFlipHistory(it Item) bool {
 func stageWaits(done []completion) map[Station][]float64 {
 	waits := map[Station][]float64{}
 	for _, entry := range done {
-		if !hasFlipHistory(entry.item) {
+		if !hasMoveHistory(entry.item) {
 			continue
 		}
 		timeline := entry.item.Timeline()
@@ -689,7 +728,7 @@ func stageWaitShares(line Line, waits map[Station][]float64, done []completion) 
 	unsplitTotal := 0.0
 	if line.Kind == KindPR {
 		for _, entry := range done {
-			if !hasFlipHistory(entry.item) {
+			if !hasMoveHistory(entry.item) {
 				unsplitCount++
 				unsplitTotal += HoursBetween(entry.item.CreatedAt, entry.at)
 			}
@@ -848,7 +887,7 @@ func lineFlows(items []Item, line Line, start, end time.Time) []StationFlow {
 		for _, move := range it.Moves {
 			stillActive := it.ExitedAt == nil || move.At.Before(*it.ExitedAt)
 			if stillActive {
-				bump(move.At, oppositeOf(move.To), move.To)
+				bump(move.At, move.From, move.To)
 			}
 		}
 		if it.ExitedAt != nil {
@@ -881,18 +920,9 @@ func firstStation(kind Kind) Station {
 	return Draft
 }
 
-// oppositeOf names the station a draft/ready move came from.
-func oppositeOf(to Station) Station {
-	if to == Draft {
-		return Ready
-	}
-	return Draft
-}
-
 // activeStationAtExit names the active station an item sat in immediately
-// before it exited, from its timeline: issues leave Open, PRs leave Draft or
-// Ready depending on the recorded flips (a merged PR with no flips counts as
-// Ready, see Timeline).
+// before it exited, from its timeline: issues leave Open, PRs leave the
+// review-wait station they had reached.
 func activeStationAtExit(it Item) Station {
 	exit := firstStation(it.Kind)
 	if it.ExitedAt == nil {
@@ -903,7 +933,7 @@ func activeStationAtExit(it Item) Station {
 		if !entry.At.Before(*it.ExitedAt) {
 			break
 		}
-		if entry.Station == Open || entry.Station == Draft || entry.Station == Ready {
+		if entry.Station == Open || entry.Station == Draft || isReviewStation(entry.Station) {
 			station = entry.Station
 		}
 	}
@@ -959,7 +989,7 @@ func queuePressure(items []Item, line Line, start, end time.Time) []QueuePressur
 			}
 		}
 		for _, move := range it.Moves {
-			consider(move.At, oppositeOf(move.To), move.To)
+			consider(move.At, move.From, move.To)
 		}
 		if it.ExitedAt != nil {
 			consider(*it.ExitedAt, activeStationAtExit(it), it.Station)
@@ -1096,8 +1126,12 @@ func flowSamples(items []Item, start, end time.Time) []FlowSample {
 				sample.OpenIssues++
 			case Draft:
 				sample.DraftPRs++
-			case Ready:
-				sample.ReadyPRs++
+			case AwaitingReview:
+				sample.ReviewPRs++
+			case AwaitingAuthor:
+				sample.AuthorPRs++
+			case AwaitingMerge:
+				sample.MergePRs++
 			}
 			if (it.IsDone()) && it.ExitedAt != nil && !it.ExitedAt.After(day) {
 				sample.Completed++

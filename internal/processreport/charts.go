@@ -43,13 +43,15 @@ type Meta struct {
 // stationColors assigns one hue per station, shared by every chart so a
 // color always means the same station.
 var stationColors = map[processflow.Station]string{
-	processflow.Open:      "#64748b",
-	processflow.Draft:     "#d97706",
-	processflow.Ready:     "#2563eb",
-	processflow.Closed:    "#16a34a",
-	processflow.Merged:    "#15803d",
-	processflow.Discarded: "#94a3b8",
-	processflow.Unsplit:   "#6b7280",
+	processflow.Open:          "#64748b",
+	processflow.Draft:         "#9333ea",
+	processflow.AwaitingReview: "#2563eb",
+	processflow.AwaitingAuthor: "#d97706",
+	processflow.AwaitingMerge:  "#0d9488",
+	processflow.Closed:       "#16a34a",
+	processflow.Merged:       "#15803d",
+	processflow.Discarded:    "#94a3b8",
+	processflow.Unsplit:      "#6b7280",
 }
 
 func stationColor(station processflow.Station) string {
@@ -127,15 +129,19 @@ func stackedArea(samples []processflow.FlowSample) string {
 	// Stacked series, bottom to top.
 	s0 := make([]float64, len(samples)) // open issues
 	s1 := make([]float64, len(samples)) // + draft PRs
-	s2 := make([]float64, len(samples)) // + ready PRs
-	s3 := make([]float64, len(samples)) // + completions
+	s2 := make([]float64, len(samples)) // + PRs waiting on reviewer
+	s3 := make([]float64, len(samples)) // + PRs waiting on author
+	s4 := make([]float64, len(samples)) // + PRs waiting on merge
+	s5 := make([]float64, len(samples)) // + completions
 	maxY := 0.0
 	for i, s := range samples {
 		s0[i] = float64(s.OpenIssues)
 		s1[i] = s0[i] + float64(s.DraftPRs)
-		s2[i] = s1[i] + float64(s.ReadyPRs)
-		s3[i] = s2[i] + float64(s.Completed)
-		maxY = math.Max(maxY, s3[i])
+		s2[i] = s1[i] + float64(s.ReviewPRs)
+		s3[i] = s2[i] + float64(s.AuthorPRs)
+		s4[i] = s3[i] + float64(s.MergePRs)
+		s5[i] = s4[i] + float64(s.Completed)
+		maxY = math.Max(maxY, s5[i])
 	}
 	if maxY == 0 {
 		return "<div class=\"chart-empty\">No items in the window.</div>"
@@ -161,7 +167,7 @@ func stackedArea(samples []processflow.FlowSample) string {
 		if i > 0 {
 			doneLine.WriteString(" ")
 		}
-		fmt.Fprintf(&doneLine, "%.1f,%.1f", x(i), y(s2[i]))
+		fmt.Fprintf(&doneLine, "%.1f,%.1f", x(i), y(s4[i]))
 	}
 
 	var svg strings.Builder
@@ -173,8 +179,10 @@ func stackedArea(samples []processflow.FlowSample) string {
 	}
 	svg.WriteString(polygon(zero, s0, stationColor(processflow.Open)))
 	svg.WriteString(polygon(s0, s1, stationColor(processflow.Draft)))
-	svg.WriteString(polygon(s1, s2, stationColor(processflow.Ready)))
-	svg.WriteString(polygon(s2, s3, "#16a34a"))
+	svg.WriteString(polygon(s1, s2, stationColor(processflow.AwaitingReview)))
+	svg.WriteString(polygon(s2, s3, stationColor(processflow.AwaitingAuthor)))
+	svg.WriteString(polygon(s3, s4, stationColor(processflow.AwaitingMerge)))
+	svg.WriteString(polygon(s4, s5, "#16a34a"))
 	fmt.Fprintf(&svg, `<polyline points="%s" fill="none" stroke="#15803d" stroke-width="2"/>`, doneLine.String())
 	for _, i := range []int{0, len(samples) / 2, len(samples) - 1} {
 		fmt.Fprintf(&svg, `<text x="%.1f" y="%v" class="tick" text-anchor="middle">%s</text>`,
@@ -329,7 +337,9 @@ func lineDiagram(line *processflow.LineReport) string {
 
 // isActiveStation reports whether a station holds unfinished work.
 func isActiveStation(station processflow.Station) bool {
-	return station == processflow.Open || station == processflow.Draft || station == processflow.Ready
+	return station == processflow.Open || station == processflow.Draft ||
+		station == processflow.AwaitingReview || station == processflow.AwaitingAuthor ||
+		station == processflow.AwaitingMerge
 }
 
 func maxInt(values ...int) int {

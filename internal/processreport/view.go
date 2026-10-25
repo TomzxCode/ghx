@@ -55,7 +55,7 @@ func buildView(report *processflow.Report, meta Meta) *view {
 	}
 	if len(report.Samples) > 0 {
 		last := report.Samples[len(report.Samples)-1]
-		v.TotalOpen = last.OpenIssues + last.DraftPRs + last.ReadyPRs
+		v.TotalOpen = last.OpenIssues + last.DraftPRs + last.ReviewPRs + last.AuthorPRs + last.MergePRs
 	}
 	return v
 }
