@@ -68,6 +68,9 @@ curl -s "http://127.0.0.1:8080/stats?list-prs=true&include-bots=true&top=10"
 
 An invalid state, date, or `top` value answers `400`; a repository that is not cached fails with `500`.
 
+When the report is served by `ghx serve`, the page carries a period form (From, To, State) that reloads the report over the chosen range.
+Files written by `ghx stats` are static documents and have no form.
+
 ## Frontend note
 
 The UI is built with Vue 3 and styled with daisyUI (Tailwind CSS), both loaded from CDNs on first page load, so serving the UI requires internet access.

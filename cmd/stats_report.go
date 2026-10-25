@@ -234,7 +234,22 @@ type PRRow struct {
 
 // Report holds everything the HTML template renders.
 type Report struct {
-	Repos         []string
+	Repos []string
+	// RepoIDs holds host/owner/repo identifiers for the interactive period
+	// form's hidden inputs; empty unless the form is rendered.
+	RepoIDs []string
+	// Interactive marks a report served by the web UI: the template renders
+	// the period form that reloads /stats with new filters. CLI output stays
+	// a static document.
+	Interactive bool
+	// AllRepos reports whether the request covered every cached repository
+	// (no explicit repo list), so the period form can resubmit without
+	// pinning the repository set.
+	AllRepos bool
+	// FromValue and ToValue are the period bounds formatted for date inputs
+	// (YYYY-MM-DD, empty when unbounded).
+	FromValue     string
+	ToValue       string
 	Period        string
 	State         string
 	GeneratedAt   string
@@ -415,8 +430,10 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	}
 
 	r.Repos = make([]string, 0, len(repos))
+	r.RepoIDs = make([]string, 0, len(repos))
 	for _, repo := range repos {
 		r.Repos = append(r.Repos, repo.Owner+"/"+repo.Name)
+		r.RepoIDs = append(r.RepoIDs, repo.Host+"/"+repo.Owner+"/"+repo.Name)
 	}
 
 	// Per-PR bookkeeping.
@@ -1182,6 +1199,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	}
 
 	r.Period = formatPeriod(f.From, f.To)
+	if !f.From.IsZero() {
+		r.FromValue = f.From.Format("2006-01-02")
+	}
+	if !f.To.IsZero() {
+		r.ToValue = f.To.Format("2006-01-02")
+	}
 	r.GeneratedAt = time.Now().Format("2006-01-02 15:04")
 	return r
 }
@@ -1603,6 +1626,22 @@ const reportTemplate = `<!DOCTYPE html>
   .notable li { margin-bottom: 0.4rem; }
   .notable .value { color: var(--muted); font-size: 0.75rem; display: block; }
   h2 .section-hint { font-size: 0.75rem; color: var(--muted); font-weight: 400; margin-left: 0.5rem; }
+  .period-form {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    margin: -0.75rem 0 1.25rem; font-size: 0.8rem; color: var(--muted);
+  }
+  .period-form label { font-size: 0.8rem; }
+  .period-form input, .period-form select {
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.25rem 0.4rem; font-size: 0.8rem;
+  }
+  .period-form input:focus, .period-form select:focus { outline: none; border-color: var(--link); }
+  .period-form button {
+    background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.25rem 0.65rem; font-size: 0.8rem; cursor: pointer;
+  }
+  .period-form button:hover { border-color: var(--muted); }
+  html.dark .period-form input, html.dark .period-form select { color-scheme: dark; }
 </style>
 </head>
 <body>
@@ -1640,6 +1679,28 @@ const reportTemplate = `<!DOCTYPE html>
 <div class="meta">
   Repos: {{.ReposLabel}} &nbsp;•&nbsp; Period: {{.Period}} &nbsp;•&nbsp; State: {{.State}} &nbsp;•&nbsp; Generated: {{.GeneratedAt}}
 </div>
+
+{{if .Interactive}}
+<form class="period-form" method="get" action="/stats">
+  {{if not .AllRepos}}{{range .RepoIDs}}<input type="hidden" name="repo" value="{{.}}">
+{{end}}{{end}}
+  {{if .IncludeBots}}<input type="hidden" name="include-bots" value="true">{{end}}
+  {{if .ShowPRs}}<input type="hidden" name="list-prs" value="true">{{end}}
+  <input type="hidden" name="top" value="{{.TopN}}">
+  <label for="report-from">From</label>
+  <input type="date" id="report-from" name="from" value="{{.FromValue}}" autocomplete="off">
+  <label for="report-to">To</label>
+  <input type="date" id="report-to" name="to" value="{{.ToValue}}" autocomplete="off">
+  <label for="report-state">State</label>
+  <select id="report-state" name="state">
+    <option value="all"{{if or (eq .State "all") (eq .State "")}} selected{{end}}>All</option>
+    <option value="open"{{if eq .State "open"}} selected{{end}}>Open</option>
+    <option value="closed"{{if eq .State "closed"}} selected{{end}}>Closed</option>
+    <option value="merged"{{if eq .State "merged"}} selected{{end}}>Merged</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+{{end}}
 
 <div class="cards" id="summary">
   <div class="card"><div class="value">{{.TotalPRs}}</div><div class="label">Pull requests</div></div>

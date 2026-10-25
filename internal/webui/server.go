@@ -130,6 +130,12 @@ func (s *Server) SetStatsFunc(f StatsFunc) {
 	s.stats = f
 }
 
+// SetProcessFunc installs the process report renderer, served at /process.
+// Passing nil disables the endpoint. It must be called before Handler.
+func (s *Server) SetProcessFunc(f ProcessFunc) {
+	s.process = f
+}
+
 // Handler returns the root http.Handler, separately from ListenAndServe so
 // tests can exercise it without binding a port.
 func (s *Server) Handler() http.Handler {
@@ -140,7 +146,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/repos/", s.handleRepoPath)
 	mux.HandleFunc("/api/repos", s.handleRepos)
 	mux.HandleFunc("/api/search", s.handleSearch)
+	mux.HandleFunc("/api/process", s.handleAPIProcess)
 	mux.HandleFunc("/stats", s.handleStats)
+	mux.HandleFunc("/process", s.handleProcess)
 	mux.HandleFunc("/assets/", s.handleAssets)
 	mux.HandleFunc("/", s.handleIndex)
 

@@ -232,7 +232,7 @@ ghx repo delete octocat/hello-world
 
 ### Web UI
 
-Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette, stats report at `/stats`):
+Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette, stats report at `/stats`, process report at `/process`):
 
 ```bash
 ghx cache && ghx serve
@@ -370,6 +370,27 @@ table, peak-activity and size-distribution charts, notable PR lists, and an
 optional appendix of individual PRs (`--list-prs`).
 Run `ghx cache --force` once after upgrading so reports can use the review,
 timeline and size data collected during caching.
+
+### Process
+
+Generate an HTML production-line report of issue and PR flow for one or more
+repositories:
+
+```bash
+ghx cache                                            # populate the cache first
+ghx process                                          # current repository, last 90 days
+ghx process acme/widget --days 30 -o flow-report.html
+```
+
+The report reads issues and pull requests as two production lines: open issues
+flow to closed, and pull requests flow from draft to ready to merged (or
+discarded). It shows each line's station inventory with queue ages, a
+cumulative flow diagram, cycle-time distributions with histograms, weekly
+arrivals versus completions, Little's law (work in process, throughput, and
+the implied cycle time), a Monte Carlo forecast of when the current items
+clear, queue-pressure trends, and the aging list of everything still on the
+line. The same report is served by the web UI at `/process`, and the numbers
+are available as JSON at `/api/process` (see the serve guide).
 
 ### Performance telemetry
 

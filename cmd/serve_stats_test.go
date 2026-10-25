@@ -7,6 +7,7 @@ import (
 
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/webui"
 )
 
@@ -88,6 +89,94 @@ func TestServeStatsFunc_Filters(t *testing.T) {
 	}
 	if strings.Contains(html, "bob") {
 		t.Error("author filter did not exclude bob from the report")
+	}
+}
+
+// TestServeStatsFunc_PeriodForm verifies interactive reports carry the period
+// form that lets users refilter the report from the page.
+func TestServeStatsFunc_PeriodForm(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	store := seedStatsRepo(t, "github.com", "acme", "repo1", statsTestPR(1, "alice", base, "OPEN", nil))
+
+	stats := serveStatsFunc(store)
+	html, err := stats(webui.StatsQuery{From: "2026-03-01", To: "2026-03-31"})
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	for _, want := range []string{
+		`action="/stats"`,
+		`id="report-from"`,
+		`name="from" value="2026-03-01"`,
+		`name="to" value="2026-03-31"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("period form missing %q", want)
+		}
+	}
+	// All-cached-repo reports resubmit without pinning the repository set.
+	if strings.Contains(html, `name="repo"`) {
+		t.Error("all-repos report pins repositories in the period form")
+	}
+
+	html, err = stats(webui.StatsQuery{Repos: []string{"github.com/acme/repo1"}})
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if !strings.Contains(html, `name="repo" value="github.com/acme/repo1"`) {
+		t.Error("single-repo report lost its repo in the period form")
+	}
+}
+
+// TestRenderReport_PeriodFormIsInteractiveOnly verifies buildReport fills the
+// form inputs and that the CLI-written file stays static.
+func TestRenderReport_PeriodFormIsInteractiveOnly(t *testing.T) {
+	base := time.Date(2026, 3, 10, 12, 0, 0, 0, time.UTC)
+	report := buildReport(
+		[]*gitremote.Repo{{Host: "github.com", Owner: "org", Name: "repo1"}},
+		[]*repoPR{{Repo: "org/repo1", PR: statsTestPR(1, "alice", base, "OPEN", nil)}},
+		statsFilters{From: base.Add(-24 * time.Hour), To: base.Add(24 * time.Hour), State: "all"},
+	)
+	if len(report.RepoIDs) != 1 || report.RepoIDs[0] != "github.com/org/repo1" {
+		t.Fatalf("RepoIDs: got %v", report.RepoIDs)
+	}
+	if report.FromValue != "2026-03-09" || report.ToValue != "2026-03-11" {
+		t.Errorf("date values: got %q/%q", report.FromValue, report.ToValue)
+	}
+
+	html, err := renderReport(report)
+	if err != nil {
+		t.Fatalf("renderReport: %v", err)
+	}
+	if strings.Contains(html, `action="/stats"`) {
+		t.Error("CLI report must not render the period form")
+	}
+
+	report.Interactive = true
+	html, err = renderReport(report)
+	if err != nil {
+		t.Fatalf("renderReport interactive: %v", err)
+	}
+	for _, want := range []string{
+		`action="/stats"`,
+		`name="repo" value="github.com/org/repo1"`,
+		`name="from" value="2026-03-09"`,
+		`name="to" value="2026-03-11"`,
+		`name="top" value="5"`,
+		`id="report-state"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("interactive report missing %q", want)
+		}
+	}
+
+	// All-repos reports omit the hidden repository inputs.
+	report.AllRepos = true
+	html, err = renderReport(report)
+	if err != nil {
+		t.Fatalf("renderReport all repos: %v", err)
+	}
+	if strings.Contains(html, `name="repo"`) {
+		t.Error("AllRepos report pins repositories in the period form")
 	}
 }
 

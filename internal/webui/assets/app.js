@@ -508,6 +508,12 @@
             ? '/stats?repo=' + encodeURIComponent(repo.host + '/' + repo.owner + '/' + repo.repo)
             : '/stats';
         },
+        processUrl() {
+          const repo = currentRepo();
+          return repo
+            ? '/process?repo=' + encodeURIComponent(repo.host + '/' + repo.owner + '/' + repo.repo)
+            : '/process';
+        },
       };
     },
     methods: {
@@ -596,6 +602,9 @@
       <div class="flex-1" v-else></div>
       <a class="btn btn-sm btn-ghost text-neutral-content" :href="statsUrl()" title="Pull request activity report">
         Stats
+      </a>
+      <a class="btn btn-sm btn-ghost text-neutral-content" :href="processUrl()" title="Issue and PR flow report">
+        Process
       </a>
       <button class="btn btn-sm btn-ghost text-neutral-content" @click="toggleTheme()" :title="'Switch to ' + (state.theme === 'dark' ? 'light' : 'dark') + ' theme'">
         <svg v-if="state.theme === 'dark'" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M7 12a5 5 0 1 1 5 5 5 5 0 0 1-5-5zM11 3A1 1 0 0 1 13 3L13 4A1 1 0 0 1 11 4ZM17.66 4.93A1 1 0 0 1 19.07 6.34L18.36 7.05A1 1 0 0 1 16.95 5.64ZM21 11A1 1 0 0 1 21 13L20 13A1 1 0 0 1 20 11ZM19.07 17.66A1 1 0 0 1 17.66 19.07L16.95 18.36A1 1 0 0 1 18.36 16.95ZM13 21A1 1 0 0 1 11 21L11 20A1 1 0 0 1 13 20ZM6.34 19.07A1 1 0 0 1 4.93 17.66L5.64 16.95A1 1 0 0 1 7.05 18.36ZM3 13A1 1 0 0 1 3 11L4 11A1 1 0 0 1 4 13ZM4.93 6.34A1 1 0 0 1 6.34 4.93L7.05 5.64A1 1 0 0 1 5.64 7.05Z"></path></svg>

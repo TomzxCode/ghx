@@ -48,6 +48,7 @@ nav:
     - Reviews: user-guide/reviews.md
     - Repositories: user-guide/repositories.md
     - Stats: user-guide/stats.md
+    - Process: user-guide/process.md
     - Telemetry: user-guide/telemetry.md
     - Serve (Web UI): user-guide/serve.md
     - JSON-RPC API: user-guide/json-rpc.md
