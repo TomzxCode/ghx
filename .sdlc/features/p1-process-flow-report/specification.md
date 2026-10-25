@@ -41,8 +41,11 @@ current station and happens after the previous entry (duplicate or stale
 timeline events cannot corrupt the walk); a recorded `ExitedAt` is appended as
 the final move so merged/closed items show their real finish moment; and a
 walk that ends off the current station is corrected to it, entering at the
-last known move. This one rule set backs inventory ages, per-day station
-lookups (cumulative flow, weekly WIP), and station waits.
+last known move. A merged PR whose cache holds no flip events counts as Ready
+immediately before the merge (GitHub merges ready PRs), so missing flip
+events do not attribute its whole trip to the draft station. This one rule
+set backs inventory ages, per-day station lookups (cumulative flow, weekly
+WIP), and station waits.
 
 ## Report computation
 
@@ -112,7 +115,7 @@ answers 501.
 | FR-08 | `TestWipItemsSortLongestWaitFirst` |
 | FR-09 | `TestForecastResamplesWeeklyHistory` |
 | FR-10 | `TestOutcomesSplitWindowArrivalsByDisposition` |
-| FR-11 | `TestWaitSharesRankTheBottleneck` |
+| FR-11 | `TestWaitSharesRankTheBottleneck`, `TestMergedPRWithoutFlipHistoryCountsAsReady` |
 | FR-12, FR-13 | command covered by the loaders' reuse of the tested stats loaders; report rendering by `TestRenderProducesTheSections` |
 | FR-14, FR-15 | `TestProcessEndpoint`, `TestProcessEndpoint_ValidationAndAvailability`, `TestAPIProcess`, `TestAPIProcess_DefaultsToAllCachedRepos`, `TestServeProcessFunc_RendersReport`, `TestServeProcessFunc_RejectsUncachedRepo` |
 | FR-17 | `TestRenderProducesTheSections` (capped table renders), cap constant unit-enforced |

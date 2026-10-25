@@ -366,6 +366,41 @@ func TestForecastResamplesWeeklyHistory(t *testing.T) {
 	}
 }
 
+func TestMergedPRWithoutFlipHistoryCountsAsReady(t *testing.T) {
+	// Automation merges PRs without anyone flipping them to ready, so the
+	// cache has no draft/ready events: the trip must still read as Ready
+	// immediately before the merge, not as a full lifetime in Draft.
+	pr := prItem("#30", at(31), Merged, tp(at(40)), nil)
+	report := Build([]Item{pr}, now, 90)
+
+	if got := activeStationAtExit(pr); got != Ready {
+		t.Errorf("exit station = %v, want ready", got)
+	}
+	count := func(from, to Station) int {
+		for _, flow := range report.PRs.Flows {
+			if flow.From == from && flow.To == to {
+				return flow.Count
+			}
+		}
+		return 0
+	}
+	if count(Ready, Merged) != 1 || count(Draft, Merged) != 0 {
+		t.Errorf("flows = %+v, want ready->merged x1", report.PRs.Flows)
+	}
+	for _, share := range report.PRs.WaitShares {
+		if share.Station == Ready && share.Share != 1 {
+			t.Errorf("ready share = %v, want 1", share.Share)
+		}
+		if share.Station == Draft && share.Share != 0 {
+			t.Errorf("draft share = %v, want 0", share.Share)
+		}
+	}
+	// Before the merge, the PR sits in the ready band of the cumulative flow.
+	if station, _ := stationAt(pr.Timeline(), at(35)); station != Ready {
+		t.Errorf("station mid-trip = %v, want ready", station)
+	}
+}
+
 func TestOutcomesSplitWindowArrivalsByDisposition(t *testing.T) {
 	report := Build(scenarioItems(), now, 90)
 	if report.Issues.Outcomes.Created != 4 || report.Issues.Outcomes.Done != 1 || report.Issues.Outcomes.Active != 3 {

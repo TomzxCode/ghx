@@ -91,7 +91,7 @@ func newLittlesCards(l processflow.LittlesLaw) littlesCards {
 
 func newForecastCards(f processflow.Forecast) forecastCards {
 	if f.P50Weeks == nil {
-		return forecastCards{HasData: false, Items: f.Items, Sims: f.Sims}
+		return forecastCards{HasData: false, Items: f.Items, Sims: f.Sims, P50: "–", P85: "–"}
 	}
 	return forecastCards{
 		HasData: true,

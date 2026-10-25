@@ -206,9 +206,12 @@ type TimelineEntry struct {
 // walk is in and happens after the previous entry, so duplicate or stale
 // moves cannot corrupt the walk. A recorded finish (exit time) is appended as
 // the final move, so completed items' histories show the real merge or close
-// moment. When the walk still ends somewhere other than the item's current
-// station (history is missing), the last entry is corrected to the current
-// station: the item has been there since its last known move.
+// moment. A merged PR with no recorded flips counts as Ready immediately
+// before the merge (GitHub merges ready PRs), so missing flip events do not
+// attribute its whole trip to the draft station. When the walk still ends
+// somewhere other than the item's current station (history is missing), the
+// last entry is corrected to the current station: the item has been there
+// since its last known move.
 func (it Item) Timeline() []TimelineEntry {
 	first := Open
 	if it.Kind == KindPR {
@@ -224,6 +227,11 @@ func (it Item) Timeline() []TimelineEntry {
 	if it.ExitedAt != nil {
 		last := timeline[len(timeline)-1]
 		if it.ExitedAt.After(last.At) && it.Station != last.Station {
+			if it.Station == Merged && len(it.Moves) == 0 {
+				// No flip events at all: the PR was in Ready before the merge
+				// even though the transition was never captured.
+				timeline[len(timeline)-1] = TimelineEntry{At: last.At, Station: Ready}
+			}
 			timeline = append(timeline, TimelineEntry{At: *it.ExitedAt, Station: it.Station})
 		}
 	}
@@ -833,17 +841,23 @@ func oppositeOf(to Station) Station {
 	return Draft
 }
 
-// activeStationAtExit walks an item's moves to name the active station it
-// left when it exited (issues always leave Open; PRs leave Draft or Ready).
+// activeStationAtExit names the active station an item sat in immediately
+// before it exited, from its timeline: issues leave Open, PRs leave Draft or
+// Ready depending on the recorded flips (a merged PR with no flips counts as
+// Ready, see Timeline).
 func activeStationAtExit(it Item) Station {
-	station := firstStation(it.Kind)
-	for _, move := range it.Moves {
-		if move.At.Before(*it.ExitedAt) && move.To != station {
-			station = move.To
-		}
+	exit := firstStation(it.Kind)
+	if it.ExitedAt == nil {
+		return exit
 	}
-	if station != Open && station != Draft && station != Ready {
-		return firstStation(it.Kind)
+	station := exit
+	for _, entry := range it.Timeline() {
+		if !entry.At.Before(*it.ExitedAt) {
+			break
+		}
+		if entry.Station == Open || entry.Station == Draft || entry.Station == Ready {
+			station = entry.Station
+		}
 	}
 	return station
 }
