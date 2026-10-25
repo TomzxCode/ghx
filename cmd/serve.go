@@ -63,6 +63,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 	server := webui.New(store, serveRefreshFunc(store))
 	server.SetStatsFunc(serveStatsFunc(store))
+	server.SetProcessFunc(serveProcessFunc(store))
 	server.Mount("/rpc", rpc.NewServer(newRPCConfig(store, serveRPCToken, serveRPCAllowExec)))
 
 	url := "http://" + addr
