@@ -28,6 +28,7 @@ ghx serve --host 127.0.0.1 --port 9000 --open
   The choice is remembered in your browser; on first visit the UI follows your system preference.
 - **Refresh**: the refresh button in the top bar fetches new issues and PRs for the current repository using the same resumable logic as `ghx cache`.
 - **Stats**: the Stats button in the top bar opens the pull request activity report (the same report `ghx stats` writes to a file) for the current repository, or for every cached repository from the home page.
+- **Process**: the Process button in the top bar opens the production-line flow report (the same report `ghx process` writes to a file) for the current repository, or for every cached repository from the home page.
 
 The UI is read-only against the cache except for the explicit refresh action; the stats report is computed from cached pull requests only.
 
@@ -70,6 +71,25 @@ An invalid state, date, or `top` value answers `400`; a repository that is not c
 
 When the report is served by `ghx serve`, the page carries a period form (From, To, State) that reloads the report over the chosen range.
 Files written by `ghx stats` are static documents and have no form.
+
+## Process report
+
+`/process` serves the production-line flow report described in the [process guide](process.md), rendered from the cache on each request.
+The Process button in the top bar links there for the current repository, or for every cached repository from the home page:
+
+```bash
+curl -s "http://127.0.0.1:8080/process"
+curl -s "http://127.0.0.1:8080/process?repo=github.com/octocat/hello-world&days=30"
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `repo` | `host/owner/repo` to report on; repeat for several repositories, omit for all cached ones |
+| `days` | Reporting window in days, 1-730 (default `90`) |
+
+The same numbers are available as JSON at `/api/process` with the same parameters, computed from the cache only.
+The page's window form (days input plus Apply) reloads the report over any window from 1 to 730 days while preserving the requested repositories.
+An invalid `days` value answers `400`; a repository that is not cached fails with `400` on the JSON endpoint and `500` on the HTML page.
 
 ## Frontend note
 

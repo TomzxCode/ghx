@@ -61,7 +61,10 @@ to the current repository (or `--repo`).
 
 The same report is served by `ghx serve` at `/process`, computed from the
 cache only; the Process button in the top bar opens it for the current
-repository. The numbers are also available as JSON at `/api/process`:
+repository. The page carries a window form (a days input with an Apply
+button) that reloads the report over the chosen window while keeping the
+requested repositories. The numbers are also available as JSON at
+`/api/process`:
 
 ```bash
 curl -s "http://127.0.0.1:8080/process?repo=github.com/octocat/hello-world&days=30"
