@@ -43,15 +43,15 @@ type Meta struct {
 // stationColors assigns one hue per station, shared by every chart so a
 // color always means the same station.
 var stationColors = map[processflow.Station]string{
-	processflow.Open:          "#64748b",
-	processflow.Draft:         "#9333ea",
+	processflow.Open:           "#64748b",
+	processflow.Draft:          "#9333ea",
 	processflow.AwaitingReview: "#2563eb",
 	processflow.AwaitingAuthor: "#d97706",
 	processflow.AwaitingMerge:  "#0d9488",
-	processflow.Closed:       "#16a34a",
-	processflow.Merged:       "#15803d",
-	processflow.Discarded:    "#94a3b8",
-	processflow.Unsplit:      "#6b7280",
+	processflow.Closed:         "#16a34a",
+	processflow.Merged:         "#15803d",
+	processflow.Discarded:      "#94a3b8",
+	processflow.Unsplit:        "#6b7280",
 }
 
 func stationColor(station processflow.Station) string {
