@@ -502,6 +502,12 @@
           const repo = currentRepo();
           return repo ? !!state.refreshing[repoKey(repo)] : false;
         },
+        statsUrl() {
+          const repo = currentRepo();
+          return repo
+            ? '/stats?repo=' + encodeURIComponent(repo.host + '/' + repo.owner + '/' + repo.repo)
+            : '/stats';
+        },
       };
     },
     methods: {
@@ -588,6 +594,9 @@
         <input class="filter-input input input-sm input-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-48" v-model="state.query" type="search" placeholder="Filter titles...">
       </div>
       <div class="flex-1" v-else></div>
+      <a class="btn btn-sm btn-ghost text-neutral-content" :href="statsUrl()" title="Pull request activity report">
+        Stats
+      </a>
       <button class="btn btn-sm btn-ghost text-neutral-content" @click="toggleTheme()" :title="'Switch to ' + (state.theme === 'dark' ? 'light' : 'dark') + ' theme'">
         <svg v-if="state.theme === 'dark'" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M7 12a5 5 0 1 1 5 5 5 5 0 0 1-5-5zM11 3A1 1 0 0 1 13 3L13 4A1 1 0 0 1 11 4ZM17.66 4.93A1 1 0 0 1 19.07 6.34L18.36 7.05A1 1 0 0 1 16.95 5.64ZM21 11A1 1 0 0 1 21 13L20 13A1 1 0 0 1 20 11ZM19.07 17.66A1 1 0 0 1 17.66 19.07L16.95 18.36A1 1 0 0 1 18.36 16.95ZM13 21A1 1 0 0 1 11 21L11 20A1 1 0 0 1 13 20ZM6.34 19.07A1 1 0 0 1 4.93 17.66L5.64 16.95A1 1 0 0 1 7.05 18.36ZM3 13A1 1 0 0 1 3 11L4 11A1 1 0 0 1 4 13ZM4.93 6.34A1 1 0 0 1 6.34 4.93L7.05 5.64A1 1 0 0 1 5.64 7.05Z"></path></svg>
         <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.05 8.05 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Z"></path></svg>

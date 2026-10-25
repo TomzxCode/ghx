@@ -31,10 +31,45 @@ var embeddedFS embed.FS
 // issues and PRs written.
 type RefreshFunc func(host, owner, repo string) (issues, prs int, err error)
 
+// StatsQuery describes one stats report request. The string fields mirror the
+// ghx stats flags, so the UI can pass the query string through unchanged.
+// Repos holds "host/owner/repo" identifiers; an empty list means every cached
+// repository.
+type StatsQuery struct {
+	Repos       []string
+	From        string
+	To          string
+	State       string
+	Authors     []string
+	Reviewers   []string
+	IncludeBots bool
+	ListPRs     bool
+	Top         int
+}
+
+// StatsFunc renders the stats report for a query. It is injected by the caller
+// (the serve command) so this package stays decoupled from the report builder
+// in the cmd package. It returns a complete HTML document.
+type StatsFunc func(q StatsQuery) (string, error)
+
+// ProcessQuery describes one process report request. Repos holds
+// "host/owner/repo" identifiers; an empty list means every cached repository.
+type ProcessQuery struct {
+	Repos []string
+	Days  int
+}
+
+// ProcessFunc renders the process (production-line) report for a query. Like
+// StatsFunc it is injected by the serve command and returns a complete HTML
+// document.
+type ProcessFunc func(q ProcessQuery) (string, error)
+
 // Server serves the web UI and its JSON API over the cache store.
 type Server struct {
 	store   cache.Store
 	refresh RefreshFunc
+	stats   StatsFunc
+	process ProcessFunc
 
 	mu         sync.Mutex
 	refreshing map[string]bool
@@ -89,6 +124,12 @@ func (s *Server) Mount(path string, handler http.Handler) {
 	s.mounts = append(s.mounts, mount{path: path, handler: handler})
 }
 
+// SetStatsFunc installs the stats report renderer, served at /stats. Passing
+// nil disables the endpoint. It must be called before Handler.
+func (s *Server) SetStatsFunc(f StatsFunc) {
+	s.stats = f
+}
+
 // Handler returns the root http.Handler, separately from ListenAndServe so
 // tests can exercise it without binding a port.
 func (s *Server) Handler() http.Handler {
@@ -99,6 +140,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/repos/", s.handleRepoPath)
 	mux.HandleFunc("/api/repos", s.handleRepos)
 	mux.HandleFunc("/api/search", s.handleSearch)
+	mux.HandleFunc("/stats", s.handleStats)
 	mux.HandleFunc("/assets/", s.handleAssets)
 	mux.HandleFunc("/", s.handleIndex)
 
@@ -386,6 +428,61 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request, host, own
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"issues": issues, "prs": prs})
+}
+
+// handleStats serves the stats report at /stats. The report is rendered by the
+// injected StatsFunc; the query string mirrors the ghx stats flags (repo,
+// from, to, state, author, reviewer, include-bots, list-prs, top).
+func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		httpError(w, http.StatusMethodNotAllowed, "method %s not allowed", r.Method)
+		return
+	}
+	if s.stats == nil {
+		httpError(w, http.StatusNotImplemented, "stats report is not available")
+		return
+	}
+	query := r.URL.Query()
+	state := strings.ToLower(query.Get("state"))
+	if state == "" {
+		state = "all"
+	}
+	if !validState("prs", state) {
+		httpError(w, http.StatusBadRequest, "invalid state %q (use open, closed, merged, or all)", state)
+		return
+	}
+	top := 5
+	if v := query.Get("top"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			httpError(w, http.StatusBadRequest, "invalid top %q", v)
+			return
+		}
+		top = n
+	}
+	q := StatsQuery{
+		Repos:       query["repo"],
+		From:        query.Get("from"),
+		To:          query.Get("to"),
+		State:       state,
+		Authors:     query["author"],
+		Reviewers:   query["reviewer"],
+		IncludeBots: isTruthyParam(query.Get("include-bots")),
+		ListPRs:     isTruthyParam(query.Get("list-prs")),
+		Top:         top,
+	}
+	html, err := s.stats(q)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "%s", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(html))
+}
+
+// isTruthyParam interprets a boolean query parameter ("1" and "true" are on).
+func isTruthyParam(v string) bool {
+	return v == "1" || strings.EqualFold(v, "true")
 }
 
 // handleSearch serves the palette search across one repository (scope=repo,

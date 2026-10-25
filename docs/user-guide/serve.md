@@ -27,8 +27,9 @@ ghx serve --host 127.0.0.1 --port 9000 --open
 - **Theme**: the sun/moon button in the top bar switches between light and dark themes.
   The choice is remembered in your browser; on first visit the UI follows your system preference.
 - **Refresh**: the refresh button in the top bar fetches new issues and PRs for the current repository using the same resumable logic as `ghx cache`.
+- **Stats**: the Stats button in the top bar opens the pull request activity report (the same report `ghx stats` writes to a file) for the current repository, or for every cached repository from the home page.
 
-The UI is read-only against the cache except for the explicit refresh action.
+The UI is read-only against the cache except for the explicit refresh action; the stats report is computed from cached pull requests only.
 
 ## Loading data
 
@@ -43,6 +44,29 @@ ghx cache
 
 Issue bodies, PR bodies, and comments are rendered from markdown to HTML on the server (GitHub-flavoured tables, task lists, strikethrough, and autolinks).
 Raw HTML is removed, not passed through, so untrusted content stays inert.
+
+## Stats report
+
+`/stats` serves the repository activity report described in the [stats guide](stats.md), rendered from the cache on each request.
+The Stats button in the top bar links there; the URL accepts the same filters as the `stats` command flags:
+
+```bash
+curl -s "http://127.0.0.1:8080/stats"
+curl -s "http://127.0.0.1:8080/stats?repo=github.com/octocat/hello-world&state=merged&from=2026-01-01&to=2026-03-31"
+curl -s "http://127.0.0.1:8080/stats?list-prs=true&include-bots=true&top=10"
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `repo` | `host/owner/repo` to report on; repeat for several repositories, omit for all cached ones |
+| `from`, `to` | Period boundaries (`YYYY-MM-DD` or RFC3339); `to` is inclusive |
+| `state` | `open`, `closed`, `merged`, or `all` (default `all`) |
+| `author`, `reviewer` | Restrict to these logins; repeatable |
+| `include-bots` | `true` or `1` to count bot accounts as reviewers |
+| `list-prs` | `true` or `1` to append the table of individual pull requests |
+| `top` | Number of pull requests per notable-PRs list (default `5`) |
+
+An invalid state, date, or `top` value answers `400`; a repository that is not cached fails with `500`.
 
 ## Frontend note
 

@@ -2,6 +2,8 @@ package webui
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -593,5 +595,105 @@ func TestStaticAssets(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// /stats
+// ---------------------------------------------------------------------------
+
+func TestStatsEndpoint(t *testing.T) {
+	var got StatsQuery
+	srv := newTestServer(newTestStore(t), nil)
+	srv.SetStatsFunc(func(q StatsQuery) (string, error) {
+		got = q
+		return "<html>report</html>", nil
+	})
+	h := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/stats?repo=github.com/acme/one&repo=github.com/acme/two&from=2026-01-01&to=2026-01-31"+
+			"&state=merged&author=alice&author=bob&reviewer=carol&include-bots=true&list-prs=1&top=3", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/html; charset=utf-8" {
+		t.Fatalf("content type = %q", ct)
+	}
+	if body := rec.Body.String(); body != "<html>report</html>" {
+		t.Fatalf("body = %q", body)
+	}
+	want := StatsQuery{
+		Repos:       []string{"github.com/acme/one", "github.com/acme/two"},
+		From:        "2026-01-01",
+		To:          "2026-01-31",
+		State:       "merged",
+		Authors:     []string{"alice", "bob"},
+		Reviewers:   []string{"carol"},
+		IncludeBots: true,
+		ListPRs:     true,
+		Top:         3,
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("query = %+v, want %+v", got, want)
+	}
+
+	// Defaults: state=all and top=5, no repos or filters.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/stats", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("default status = %d", rec.Code)
+	}
+	if got.State != "all" || got.Top != 5 || len(got.Repos) != 0 {
+		t.Fatalf("defaults = %+v", got)
+	}
+}
+
+func TestStatsEndpoint_ValidationAndAvailability(t *testing.T) {
+	srv := newTestServer(newTestStore(t), nil)
+	srv.SetStatsFunc(func(StatsQuery) (string, error) { return "<html></html>", nil })
+	h := srv.Handler()
+
+	// Invalid state.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats?state=bogus", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid state: got %d, want 400", rec.Code)
+	}
+
+	// Invalid top.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats?top=nope", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid top: got %d, want 400", rec.Code)
+	}
+
+	// Renderer failure surfaces as a 500 with the JSON error shape.
+	srv.SetStatsFunc(func(StatsQuery) (string, error) { return "", errors.New("boom") })
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("renderer failure: got %d, want 500", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "boom") {
+		t.Fatalf("error body = %q", rec.Body.String())
+	}
+
+	// Without a renderer the endpoint reports unavailability.
+	srv.SetStatsFunc(nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stats", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("no renderer: got %d, want 501", rec.Code)
+	}
+
+	// POST is not allowed.
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/stats", nil))
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST: got %d, want 405", rec.Code)
 	}
 }

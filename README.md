@@ -232,7 +232,7 @@ ghx repo delete octocat/hello-world
 
 ### Web UI
 
-Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette):
+Browse the cache in a GitHub-like web UI (repo switcher, issue/PR lists and details, Ctrl+P search palette, stats report at `/stats`):
 
 ```bash
 ghx cache && ghx serve

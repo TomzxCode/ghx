@@ -25,6 +25,9 @@ Run `ghx cache` first so the report covers full history; stats serves data from
 the local cache and only falls back to the GitHub API (capped at 1000 PRs) when
 nothing is cached.
 
+The same report is also served by the web UI at `/stats`, computed from the
+cache only; see the [serve guide](serve.md#stats-report).
+
 ## Flags
 
 | Flag | Description |
