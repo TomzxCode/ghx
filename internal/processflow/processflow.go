@@ -617,12 +617,30 @@ func histogramFor(durations []float64) []HistogramBucket {
 	return buckets
 }
 
+// Unsplit is not a station: it is the wait-share bucket for completed PRs
+// whose draft/ready split is unknown (no recorded flip events), so their
+// whole trip is reported as one unsplit duration instead of being attributed
+// to a station by assumption.
+const Unsplit Station = "unsplit"
+
+// hasFlipHistory reports whether a completed PR's draft/review split is
+// recorded. GitHub merges ready PRs, so a merged PR with no flip events at
+// all (automation merges, or a cache without timeline data) has none.
+func hasFlipHistory(it Item) bool {
+	return it.Kind != KindPR || len(it.Moves) > 0
+}
+
 // stageWaits returns, per station, how long each completed item waited there,
 // clamped at its completion. The segments of a completed item's timeline
 // cover its whole trip, so the sums over stations add up to its cycle time.
+// Completed items without flip history contribute nothing here; they are
+// reported in the unsplit bucket instead.
 func stageWaits(done []completion) map[Station][]float64 {
 	waits := map[Station][]float64{}
 	for _, entry := range done {
+		if !hasFlipHistory(entry.item) {
+			continue
+		}
 		timeline := entry.item.Timeline()
 		for i, segment := range timeline {
 			leftAt := entry.at
@@ -656,16 +674,29 @@ func stageDwell(line Line, waits map[Station][]float64) []StageDwell {
 	return dwell
 }
 
-// stageWaitShares returns each station's share of the completed items' total
-// cycle time.
-func stageWaitShares(line Line, waits map[Station][]float64) []WaitShare {
+// stageWaitShares returns each station's slice of the completed items' total
+// cycle time, plus, for the PR line, one unsplit bucket holding the
+// completed PRs whose draft/ready split is not recorded. All shares,
+// including the unsplit one, sum to one.
+func stageWaitShares(line Line, waits map[Station][]float64, done []completion) []WaitShare {
 	grandTotal := 0.0
 	for _, samples := range waits {
 		for _, v := range samples {
 			grandTotal += v
 		}
 	}
-	shares := make([]WaitShare, 0, len(line.Stations))
+	unsplitCount := 0
+	unsplitTotal := 0.0
+	if line.Kind == KindPR {
+		for _, entry := range done {
+			if !hasFlipHistory(entry.item) {
+				unsplitCount++
+				unsplitTotal += HoursBetween(entry.item.CreatedAt, entry.at)
+			}
+		}
+		grandTotal += unsplitTotal
+	}
+	shares := make([]WaitShare, 0, len(line.Stations)+1)
 	for _, station := range line.Stations {
 		samples := waits[station]
 		total := 0.0
@@ -682,6 +713,21 @@ func stageWaitShares(line Line, waits map[Station][]float64) []WaitShare {
 			Count:     len(samples),
 			MeanHours: fmean(samples),
 			TotalHrs:  total,
+			Share:     share,
+		})
+	}
+	if line.Kind == KindPR && unsplitCount > 0 {
+		mean := unsplitTotal / float64(unsplitCount)
+		share := 0.0
+		if grandTotal > 0 {
+			share = unsplitTotal / grandTotal
+		}
+		shares = append(shares, WaitShare{
+			Station:   Unsplit,
+			Label:     "No draft/ready history",
+			Count:     unsplitCount,
+			MeanHours: &mean,
+			TotalHrs:  unsplitTotal,
 			Share:     share,
 		})
 	}
@@ -990,7 +1036,7 @@ func lineReport(items []Item, line Line, start, end time.Time) LineReport {
 		CycleTime:   summarizeDurations(durations),
 		Histogram:   histogramFor(durations),
 		Dwell:       stageDwell(line, waits),
-		WaitShares:  stageWaitShares(line, waits),
+		WaitShares:  stageWaitShares(line, waits, done),
 		Weekly:      weeklyFlow(items, line, done, start, end),
 		Littles:     littlesLaw(items, line, done, start, end),
 		Queue:       queuePressure(items, line, start, end),

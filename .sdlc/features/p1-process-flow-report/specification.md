@@ -55,10 +55,13 @@ doubles as "now" so a report for a past window stays reproducible.
 - **Completions**: line items whose `ExitedAt` (at the completion station)
   falls inside the window; cycle time is creation to `ExitedAt`. Discarded PRs
   never count as completions.
-- **Dwell and wait shares**: for each completed item, its timeline segments
-  clamped at the completion moment give per-station waits; shares divide each
-  station's total by the grand total. The issues line has one active station,
-  so its shares are trivially 100% and the page says so.
+- **Dwell and wait shares**: for each completed PR with recorded flips, its
+  timeline segments clamped at the completion moment give per-station waits;
+  shares divide each station's total by the grand total. Completed PRs
+  without flip history (automation merges, caches without timeline events)
+  land in one unsplit bucket instead of being attributed to a station; all
+  shares, including the unsplit one, sum to one. The issues line has one
+  active station, so its shares are trivially 100% and the page says so.
 - **Little's law**: average WIP is the exact time integral of active-station
   membership over the window; throughput is completions per day; implied cycle
   time is WIP divided by throughput.
@@ -137,7 +140,7 @@ ignored, and the form's date inputs pre-fill with the covered bounds.
 | FR-08 | `TestWipItemsSortLongestWaitFirst` |
 | FR-09 | `TestForecastResamplesWeeklyHistory` |
 | FR-10 | `TestOutcomesSplitWindowArrivalsByDisposition` |
-| FR-11 | `TestWaitSharesRankTheBottleneck`, `TestMergedPRWithoutFlipHistoryCountsAsReady` |
+| FR-11 | `TestWaitSharesRankTheBottleneck`, `TestMergedPRWithoutFlipHistoryCountsAsReady`, `TestWaitSharesBucketFliplessTripsSeparately` |
 | FR-12, FR-13 | command covered by the loaders' reuse of the tested stats loaders; report rendering by `TestRenderProducesTheSections` |
 | FR-14, FR-15 | `TestProcessEndpoint`, `TestProcessEndpoint_ValidationAndAvailability`, `TestAPIProcess`, `TestAPIProcess_DefaultsToAllCachedRepos`, `TestServeProcessFunc_RendersReport`, `TestServeProcessFunc_RejectsUncachedRepo` |
 | FR-17 | `TestRenderProducesTheSections` (capped table renders), cap constant unit-enforced |

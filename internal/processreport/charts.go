@@ -49,6 +49,7 @@ var stationColors = map[processflow.Station]string{
 	processflow.Closed:    "#16a34a",
 	processflow.Merged:    "#15803d",
 	processflow.Discarded: "#94a3b8",
+	processflow.Unsplit:   "#6b7280",
 }
 
 func stationColor(station processflow.Station) string {

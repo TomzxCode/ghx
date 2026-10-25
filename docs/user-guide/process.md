@@ -27,9 +27,12 @@ their open PRs at the station their current state implies.
   items currently there, and the moves observed in the window as arrows.
 - **Cumulative flow**: one stacked band per active station per day, with
   cumulative completions on top; a widening band is a queue forming.
-- **Bottlenecks**: where completed PR time went (draft versus ready), and each
-  station's queue pressure (arrived, departed, net, and a weekly WIP
-  sparkline). A filling queue receives items faster than it passes them on.
+- **Bottlenecks**: where completed PR time went (draft versus ready, per
+  recorded draft/ready flips), and each station's queue pressure (arrived,
+  departed, net, and a weekly WIP sparkline). PRs merged without flip events
+  (automation merges, or caches without timeline data) are reported as one
+  "no draft/ready history" bucket, since their split is not known. A filling
+  queue receives items faster than it passes them on.
 - **On the line now**: the aging list of every open issue and open PR, longest
   wait first (the rendered page caps the table; the JSON API lists them all).
 - **Cycle time**: median, p90, and mean per line with a histogram.

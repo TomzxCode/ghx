@@ -199,6 +199,44 @@ func TestWaitSharesRankTheBottleneck(t *testing.T) {
 	if byStation[Merged].Share != 0 {
 		t.Errorf("merged station should hold no wait, got %v", byStation[Merged].Share)
 	}
+	if byStation[Unsplit].Count != 0 {
+		t.Errorf("recorded flips should leave the unsplit bucket empty, got %+v", byStation[Unsplit])
+	}
+}
+
+func TestWaitSharesBucketFliplessTripsSeparately(t *testing.T) {
+	// One merged PR with recorded flips (2d draft, 7d ready) and one without
+	// any (9d trip): the recorded stations split the first trip, and the
+	// second lands whole in the unsplit bucket.
+	flipped := prItem("#50", at(31), Merged, tp(at(40)), []Move{{At: at(33), To: Ready}})
+	flipless := prItem("#51", at(31), Merged, tp(at(40)), nil)
+	report := Build([]Item{flipped, flipless}, now, 90)
+
+	total := 0.0
+	byStation := map[Station]WaitShare{}
+	for _, share := range report.PRs.WaitShares {
+		total += share.Share
+		byStation[share.Station] = share
+	}
+	if math.Abs(total-1) > 1e-9 {
+		t.Errorf("wait shares sum to %v, want 1", total)
+	}
+	if got := byStation[Draft].Share; math.Abs(got-2.0/18.0) > 1e-9 {
+		t.Errorf("draft share = %v, want 2/18", got)
+	}
+	if got := byStation[Ready].Share; math.Abs(got-7.0/18.0) > 1e-9 {
+		t.Errorf("ready share = %v, want 7/18", got)
+	}
+	unsplit := byStation[Unsplit]
+	if unsplit.Count != 1 {
+		t.Fatalf("unsplit trips = %d, want 1", unsplit.Count)
+	}
+	if math.Abs(unsplit.Share-9.0/18.0) > 1e-9 {
+		t.Errorf("unsplit share = %v, want 9/18", unsplit.Share)
+	}
+	if *unsplit.MeanHours != 9*24 {
+		t.Errorf("unsplit mean = %vh, want the whole 216h trip", *unsplit.MeanHours)
+	}
 }
 
 func TestWeeklyFlowSplitsArrivalsAndCompletions(t *testing.T) {
@@ -387,12 +425,18 @@ func TestMergedPRWithoutFlipHistoryCountsAsReady(t *testing.T) {
 	if count(Ready, Merged) != 1 || count(Draft, Merged) != 0 {
 		t.Errorf("flows = %+v, want ready->merged x1", report.PRs.Flows)
 	}
+	// The wait shares report the trip as unsplit instead of claiming the
+	// review station held all of it.
+	byStation := map[Station]WaitShare{}
 	for _, share := range report.PRs.WaitShares {
-		if share.Station == Ready && share.Share != 1 {
-			t.Errorf("ready share = %v, want 1", share.Share)
-		}
-		if share.Station == Draft && share.Share != 0 {
-			t.Errorf("draft share = %v, want 0", share.Share)
+		byStation[share.Station] = share
+	}
+	if got := byStation[Unsplit]; got.Count != 1 || got.Share != 1 {
+		t.Errorf("unsplit bucket = %+v, want one trip holding the whole share", got)
+	}
+	for _, station := range []Station{Draft, Ready} {
+		if byStation[station].Count != 0 || byStation[station].Share != 0 {
+			t.Errorf("%s wait share = %+v, want no recorded trips", station, byStation[station])
 		}
 	}
 	// Before the merge, the PR sits in the ready band of the cumulative flow.

@@ -144,9 +144,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
       {{end}}
     </table>
     {{else}}<div class="chart-empty">No pull requests merged in the window, so there is no completed time to split.</div>{{end}}
-    <div class="note">The issues line has a single active station (open), so its cycle time is
-    entirely queue wait by construction. Trips count the completed PRs that actually waited
-    in each station.</div>
+    <div class="note">Trips count the completed PRs that actually waited in each station, per
+    recorded draft/ready flips. PRs merged without flip events (automation merges, or caches
+    without timeline data) have no known draft-versus-review split, so they are reported as one
+    unsplit bucket rather than attributed to a station. The issues line has a single active
+    station (open), so its cycle time is entirely queue wait by construction.</div>
     <h3>Queue pressure</h3>
     <table>
       <tr><th>Line</th><th>Station</th><th class="num">Now</th><th class="num">Arrived</th><th class="num">Departed</th><th class="num">Net</th><th>Trend</th><th>Weekly WIP</th></tr>
