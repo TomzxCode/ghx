@@ -90,13 +90,17 @@ func (s *Server) handleAPIProcess(w http.ResponseWriter, r *http.Request) {
 		items = append(items, processflow.FromPRs(prs)...)
 	}
 	var report processflow.Report
-	if start.IsZero() && end.IsZero() {
-		report = processflow.Build(items, time.Now().UTC(), days)
-	} else {
+	switch {
+	case !start.IsZero() || !end.IsZero():
 		if end.IsZero() {
 			end = time.Now().UTC()
 		}
 		report = processflow.BuildRange(items, start, end)
+	case days > 0:
+		report = processflow.Build(items, time.Now().UTC(), days)
+	default:
+		// No bounds and no window: the entire available history.
+		report = processflow.BuildRange(items, time.Time{}, time.Now().UTC())
 	}
 	writeJSON(w, http.StatusOK, report)
 }
@@ -149,11 +153,12 @@ func validateRangeParams(fromRaw, toRaw string) error {
 	return err
 }
 
-// parseDaysParam reads the window length, defaulting to the process default
-// and clamped to the same range the command accepts.
+// parseDaysParam reads the optional window length: empty means unset (the
+// report covers all available history unless bounds are given), and a value
+// is clamped to the range the command accepts.
 func parseDaysParam(raw string) (int, error) {
 	if raw == "" {
-		return processflow.DefaultWindowDays, nil
+		return 0, nil
 	}
 	days, err := strconv.Atoi(raw)
 	if err != nil || days < 1 || days > processMaxDays {

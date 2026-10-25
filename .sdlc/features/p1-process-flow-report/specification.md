@@ -109,6 +109,10 @@ the earliest item's creation, keeping the daily sampling bounded; end doubles
 as "current time" for ages and forecasts, and the report records
 `WindowStart`/`WindowEnd` alongside the derived `WindowDays`.
 
+The serve endpoints resolve the window the same way: explicit bounds win,
+then an explicit days value, and with neither the report covers all
+available history (`BuildRange` with a zero start and end now).
+
 Before computing, BuildRange projects every item to its state at the window
 end (`itemAsOf`): the station it sat in then, moves recorded up to then, and
 its exit only if it finished by then. Items created after the end are
@@ -141,4 +145,5 @@ ignored, and the form's date inputs pre-fill with the covered bounds.
 | FR-19 | `TestOutcomesSplitWindowArrivalsByDisposition` |
 | NFR-01 | package imports: `processflow` imports only stdlib plus the github types adapter |
 | NFR-03 | `TestForecastResamplesWeeklyHistory` asserts exact seeded quantiles |
+| FR-22 (all-history default) | `TestAPIProcess_DefaultsToAllHistory`, `TestServeProcessFunc_DefaultsToAllHistory` |
 | FR-20, FR-21 | `TestBuildRangeCoversAnExplicitWindow`, `TestBuildRangeZeroStartStartsAtTheFirstItem`, `TestBuildRangeCountsItemsAsOfTheEnd`, `TestRenderRangeMeta`, `TestProcessEndpoint` (bounds parsed), `TestProcessEndpoint_ValidationAndAvailability` (bad bounds), `TestAPIProcess_Range`, `TestServeProcessFunc_Range` |

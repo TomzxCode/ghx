@@ -85,11 +85,13 @@ curl -s "http://127.0.0.1:8080/process?repo=github.com/octocat/hello-world&days=
 | Parameter | Meaning |
 | --- | --- |
 | `repo` | `host/owner/repo` to report on; repeat for several repositories, omit for all cached ones |
-| `days` | Trailing window in days, 1-730 (default `90`); used when neither bound is set |
+| `days` | Optional trailing window in days, 1-730; used when neither bound is set |
 | `from`, `to` | Optional range bounds (`YYYY-MM-DD` or RFC3339); `to` is inclusive, an empty `from` starts at the first item, an empty `to` ends now |
 
+With no bounds and no days the report covers all available history, which is the default.
+
 The same numbers are available as JSON at `/api/process` with the same parameters, computed from the cache only.
-The page's period form (From and To dates, plus a days shortcut) reloads the report over the chosen range or window while preserving the requested repositories.
+The page's period form (From and To dates, plus a days shortcut) reloads the report over the chosen range or window while preserving the requested repositories; left empty it covers all available history.
 When either bound is set the report covers that explicit range, like the stats page's period form; an empty From starts at the first item, an empty To ends today, and the `to` bound is inclusive.
 An invalid `days` or bound value answers `400`; a repository that is not cached fails with `400` on the JSON endpoint and `500` on the HTML page.
 

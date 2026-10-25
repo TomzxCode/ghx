@@ -100,6 +100,37 @@ func TestServeProcessFunc_Range(t *testing.T) {
 	}
 }
 
+// TestServeProcessFunc_DefaultsToAllHistory verifies that with no bounds and
+// no window the rendered report covers the entire available history and says
+// so in the meta line.
+func TestServeProcessFunc_DefaultsToAllHistory(t *testing.T) {
+	created := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	issue := &github.Issue{Number: 1, Title: "Old issue", State: "open", CreatedAt: created, UpdatedAt: created}
+	store := seedProcessRepo(t, "github.com", "acme", "repo1", []*github.Issue{issue}, nil)
+
+	process := serveProcessFunc(store)
+	html, err := process(webui.ProcessQuery{Repos: []string{"github.com/acme/repo1"}})
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if !strings.Contains(html, "Jan 1, 2025") {
+		t.Error("the meta line should name the covered span starting at the first item")
+	}
+	if strings.Contains(html, "last 90 days") {
+		t.Error("the all-history default should not describe itself as a trailing window")
+	}
+	if !strings.Contains(html, "Old issue") {
+		t.Error("the aging list should include the old item")
+	}
+	// The date inputs stay empty: submitting again keeps covering everything.
+	if !strings.Contains(html, `name="from" value=""`) || !strings.Contains(html, `name="to" value=""`) {
+		t.Error("the date inputs should be unset by default")
+	}
+	if strings.Contains(html, `name="days" min="1" max="730" value=""`) == false {
+		t.Error("the days input should be unset by default")
+	}
+}
+
 // TestServeProcessFunc_RejectsUncachedRepo mirrors the stats renderer: an
 // explicitly named repository that is not cached is an error, never an API
 // call, and an empty cache is an error rather than an empty report.

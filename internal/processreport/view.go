@@ -22,6 +22,9 @@ func buildView(report *processflow.Report, meta Meta) *view {
 		RepoIDs:     meta.RepoIDs,
 		Interactive: meta.Interactive,
 		AllRepos:    meta.AllRepos,
+		FromValue:   meta.FromValue,
+		ToValue:     meta.ToValue,
+		DaysValue:   meta.DaysValue,
 		GeneratedAt: report.GeneratedAt,
 		WindowDays:  report.WindowDays,
 		CFD:         template.HTML(stackedArea(report.Samples)),
@@ -29,13 +32,6 @@ func buildView(report *processflow.Report, meta Meta) *view {
 	}
 	if meta.HasRange {
 		v.Range = formatRange(report.WindowStart, report.WindowEnd)
-		v.FromValue = report.WindowStart.Format(dateParamLayout)
-		v.ToValue = report.WindowEnd.Format(dateParamLayout)
-	} else {
-		// A trailing-window report pre-fills the date inputs with the bounds
-		// it covered, so switching to an explicit range starts from there.
-		v.FromValue = report.WindowStart.Format(dateParamLayout)
-		v.ToValue = report.WindowEnd.Format(dateParamLayout)
 	}
 	if len(v.WIP) > wipListCap {
 		v.WIPHidden = len(v.WIP) - wipListCap
@@ -82,10 +78,6 @@ func buildLineView(line *processflow.LineReport) lineView {
 	}
 	return view
 }
-
-// dateParamLayout is the YYYY-MM-DD form the date inputs and query
-// parameters use.
-const dateParamLayout = "2006-01-02"
 
 // formatRange renders the covered span for the meta line: "Jan 3 – Feb 9,
 // 2006" within one year, with both years across a year boundary.
@@ -178,6 +170,7 @@ type view struct {
 	Range       string
 	FromValue   string
 	ToValue     string
+	DaysValue   string
 	GeneratedAt time.Time
 	WindowDays  int
 	TotalOpen   int

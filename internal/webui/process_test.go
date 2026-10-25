@@ -173,6 +173,41 @@ func TestAPIProcess_Range(t *testing.T) {
 	}
 }
 
+// TestAPIProcess_DefaultsToAllHistory verifies that with no bounds and no
+// window the report covers the entire available history: the window starts
+// at the earliest item and old arrivals count.
+func TestAPIProcess_DefaultsToAllHistory(t *testing.T) {
+	store := newTestStore(t)
+	old := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	closedAt := old.Add(48 * time.Hour)
+	seedRepo(t, store, "github.com", "acme", "repo1",
+		[]*github.Issue{
+			{Number: 1, Title: "Old closed", State: "closed", CreatedAt: old, ClosedAt: &closedAt},
+			{Number: 2, Title: "Recent", State: "open", CreatedAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)},
+		}, nil)
+	srv := newTestServer(store, nil)
+	h := srv.Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/process?repo=github.com/acme/repo1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var report processflow.Report
+	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if report.WindowStart.Month() != time.January || report.WindowStart.Year() != 2025 {
+		t.Errorf("window start = %v, want the earliest item (Jan 2025)", report.WindowStart)
+	}
+	if report.Issues.Arrivals != 2 {
+		t.Errorf("arrivals = %d, want 2 (the whole history counts)", report.Issues.Arrivals)
+	}
+	if report.Issues.Completions != 1 {
+		t.Errorf("completions = %d, want 1", report.Issues.Completions)
+	}
+}
+
 // TestAPIProcess_DefaultsToAllCachedRepos verifies the empty repo list selects
 // every cached repository, and an uncached one is rejected.
 func TestAPIProcess_DefaultsToAllCachedRepos(t *testing.T) {

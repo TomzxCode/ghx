@@ -48,7 +48,8 @@ Order rows by priority: Must first, then Should, then May.
 | FR-18 | Should | A finished item whose finish time GitHub did not record shall count toward inventory and outcomes but not toward cycle times or throughput |
 | FR-19 | May | The report shall include the outcomes breakdown per line beyond the Must sections (created/done/discarded/active) |
 | FR-20 | Must | The serve page and `/api/process` shall accept optional `from`/`to` bounds (YYYY-MM-DD or RFC3339, `to` inclusive): when either is set the report covers that explicit range instead of the trailing days window, an empty `from` starts at the first item, an empty `to` ends now, and a `to` before `from` is an error |
-| FR-21 | Must | The served page's period form shall expose From and To date inputs alongside the days shortcut, pre-filled with the covered bounds, and preserve the requested repositories on resubmit |
+| FR-21 | Must | The served page's period form shall expose From and To date inputs alongside the days shortcut, left unset by default, and preserve the requested repositories on resubmit |
+| FR-22 | Must | With no bounds and no window the report shall cover all available history (window start at the earliest item, end now), on the serve page, its form default, and `/api/process` |
 
 ## Non-Functional Requirements
 

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,13 +60,24 @@ func serveProcessFunc(store cache.Store) webui.ProcessFunc {
 		}
 		var report processflow.Report
 		switch {
-		case from.IsZero() && to.IsZero():
-			report = processflow.Build(items, time.Now().UTC(), q.Days)
-		default:
+		case !from.IsZero() || !to.IsZero():
 			if to.IsZero() {
 				to = time.Now().UTC()
 			}
 			report = processflow.BuildRange(items, from, to)
+			meta.HasRange = true
+			if !from.IsZero() {
+				meta.FromValue = from.Format("2006-01-02")
+			}
+			if !to.IsZero() {
+				meta.ToValue = to.Format("2006-01-02")
+			}
+		case q.Days > 0:
+			report = processflow.Build(items, time.Now().UTC(), q.Days)
+			meta.DaysValue = strconv.Itoa(q.Days)
+		default:
+			// No bounds and no window: the entire available history.
+			report = processflow.BuildRange(items, time.Time{}, time.Now().UTC())
 			meta.HasRange = true
 		}
 		return processreport.Render(&report, meta)

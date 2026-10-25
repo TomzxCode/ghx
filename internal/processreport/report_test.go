@@ -68,6 +68,7 @@ func TestRenderInteractiveWindowForm(t *testing.T) {
 		Repos:       []string{"acme/repo1"},
 		RepoIDs:     []string{"github.com/acme/repo1"},
 		Interactive: true,
+		DaysValue:   "30",
 	})
 	if err != nil {
 		t.Fatalf("render: %v", err)
@@ -76,8 +77,8 @@ func TestRenderInteractiveWindowForm(t *testing.T) {
 		`<form class="window-form" method="get" action="/process">`,
 		`<input type="hidden" name="repo" value="github.com/acme/repo1">`,
 		`name="days" min="1" max="730" value="30"`,
-		`name="from"`,
-		`name="to"`,
+		`name="from" value=""`,
+		`name="to" value=""`,
 		"Apply",
 	} {
 		if !strings.Contains(html, want) {
@@ -104,7 +105,8 @@ func TestRenderRangeMeta(t *testing.T) {
 	report := processflow.BuildRange([]processflow.Item{
 		reportItem("#1", processflow.KindIssue, created, processflow.Open, nil),
 	}, created, created.Add(30*24*time.Hour))
-	html, err := Render(&report, Meta{Repos: []string{"acme/repo1"}, Interactive: true, HasRange: true})
+	html, err := Render(&report, Meta{Repos: []string{"acme/repo1"}, Interactive: true, HasRange: true,
+		FromValue: "2026-03-01", ToValue: "2026-03-31"})
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

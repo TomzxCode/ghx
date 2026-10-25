@@ -56,11 +56,13 @@ type StatsFunc func(q StatsQuery) (string, error)
 // "host/owner/repo" identifiers; an empty list means every cached repository.
 type ProcessQuery struct {
 	Repos []string
-	Days  int
+	// Days is the optional trailing window; 0 means unset.
+	Days int
 	// From and To are optional date bounds (YYYY-MM-DD or RFC3339): when
 	// either is set the report covers that explicit range instead of the
 	// trailing Days window (an empty From starts at the first item, an empty
-	// To ends now).
+	// To ends now). With no bounds and no Days, the report covers all
+	// available history.
 	From string
 	To   string
 }

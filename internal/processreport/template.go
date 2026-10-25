@@ -101,12 +101,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     <label for="window-to">To</label>
     <input type="date" id="window-to" name="to" value="{{.ToValue}}" autocomplete="off">
     <label for="window-days">Window</label>
-    <input type="number" id="window-days" name="days" min="1" max="730" value="{{.WindowDays}}" autocomplete="off">
+    <input type="number" id="window-days" name="days" min="1" max="730" value="{{.DaysValue}}" placeholder="all" autocomplete="off">
     <span>days</span>
     <button type="submit">Apply</button>
   </form>
   {{end}}
-  {{if .Interactive}}<div class="note">Set From or To for an explicit range (an empty From starts at the first item, an empty To ends today); with both dates cleared the report covers the trailing window instead.</div>{{end}}
+  {{if .Interactive}}<div class="note">Set From or To for an explicit range (an empty From starts at the first item, an empty To ends today). With the dates cleared, the window field sets a trailing window in days; with everything empty the report covers all available history.</div>{{end}}
 
   <section>
     <h2>Production line</h2>

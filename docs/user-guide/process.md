@@ -65,8 +65,9 @@ repository. The page carries a period form (From and To dates, plus a days short
 with Apply) that reloads the report over the chosen range or window while
 keeping the requested repositories. When either date is set the report
 covers that explicit range (an empty From starts at the first item, an
-empty To ends today); with both dates cleared it covers the trailing
-window.
+empty To ends today); with the dates cleared the window field sets a
+trailing window; with everything empty the report covers all available
+history, which is the default.
 
 The range decides which issues and PRs are considered: the report describes
 the line as it stood at the range end. Items opened after the range end are
