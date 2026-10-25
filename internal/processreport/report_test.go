@@ -39,8 +39,8 @@ func TestRenderProducesTheSections(t *testing.T) {
 		"On the line now",
 		"Cycle time",
 		"Flow",
-		"Item #2",     // the aging list links the WIP items
-		"Item #11",    // by title
+		"Item #2",          // the aging list links the WIP items
+		"Item #11",         // by title
 		"svg",              // the charts are inline SVG
 		"filling",          // the queue-pressure trend badges
 		"Open issues",      // the cumulative flow legend
