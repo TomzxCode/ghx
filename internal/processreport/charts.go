@@ -15,7 +15,19 @@ import (
 
 // Meta describes the report run beyond the numbers.
 type Meta struct {
+	// Repos are the display labels for the repositories in the report.
 	Repos []string
+	// RepoIDs holds the raw host/owner/repo identifiers of the request, for
+	// the interactive window form's hidden inputs.
+	RepoIDs []string
+	// Interactive marks a report served by the web UI: the template renders
+	// the window form that reloads /process with a new window. CLI output
+	// stays a static document.
+	Interactive bool
+	// AllRepos reports whether the request covered every cached repository
+	// (no explicit repo list), so the form can resubmit without pinning the
+	// repository set.
+	AllRepos bool
 }
 
 // stationColors assigns one hue per station, shared by every chart so a

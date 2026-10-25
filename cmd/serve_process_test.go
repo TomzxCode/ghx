@@ -52,6 +52,10 @@ func TestServeProcessFunc_RendersReport(t *testing.T) {
 		"acme/repo1",
 		"Open issue",
 		"Draft PR",
+		// The interactive window form preserves the requested repositories.
+		`action="/process"`,
+		`<input type="hidden" name="repo" value="github.com/acme/repo1">`,
+		`name="days" min="1" max="730" value="30"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered report missing %q", want)

@@ -68,6 +68,12 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
              border: 1px solid var(--border); margin: 8px 0 12px; }
 .share-seg { display: block; height: 100%; }
 .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+.window-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+               margin-top: 10px; font-size: 13px; color: var(--muted); }
+.window-form input[type="number"] { width: 5.5em; background: var(--card); color: var(--fg);
+               border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; }
+.window-form button { background: var(--card); color: var(--fg); border: 1px solid var(--border);
+               border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer; }
 @media (max-width: 640px) { .arrow { min-width: 36px; } }
 </style>
 </head>
@@ -75,6 +81,16 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 <div class="wrap">
   <h1>Process report</h1>
   <div class="meta">{{.Repos}} &middot; last {{.WindowDays}} days &middot; generated {{.GeneratedAt.Format "Jan 2, 2006 15:04 UTC"}} &middot; {{.TotalOpen}} items on the line now</div>
+  {{if .Interactive}}
+  <form class="window-form" method="get" action="/process">
+    {{if not .AllRepos}}{{range .RepoIDs}}<input type="hidden" name="repo" value="{{.}}">
+{{end}}{{end}}
+    <label for="window-days">Window</label>
+    <input type="number" id="window-days" name="days" min="1" max="730" value="{{.WindowDays}}" autocomplete="off">
+    <span>days</span>
+    <button type="submit">Apply</button>
+  </form>
+  {{end}}
 
   <section>
     <h2>Production line</h2>

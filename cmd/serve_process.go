@@ -41,7 +41,12 @@ func serveProcessFunc(store cache.Store) webui.ProcessFunc {
 			labels = append(labels, c[1]+"/"+c[2])
 		}
 		report := processflow.Build(items, time.Now().UTC(), q.Days)
-		return processreport.Render(&report, processreport.Meta{Repos: labels})
+		return processreport.Render(&report, processreport.Meta{
+			Repos:       labels,
+			RepoIDs:     q.Repos,
+			Interactive: true,
+			AllRepos:    len(q.Repos) == 0,
+		})
 	}
 }
 

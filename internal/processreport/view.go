@@ -19,6 +19,9 @@ const wipListCap = 10
 func buildView(report *processflow.Report, meta Meta) *view {
 	v := &view{
 		Repos:       strings.Join(meta.Repos, ", "),
+		RepoIDs:     meta.RepoIDs,
+		Interactive: meta.Interactive,
+		AllRepos:    meta.AllRepos,
 		GeneratedAt: report.GeneratedAt,
 		WindowDays:  report.WindowDays,
 		CFD:         template.HTML(stackedArea(report.Samples)),
@@ -146,6 +149,9 @@ func wipRows(items []processflow.WipItem) []wipRow {
 
 type view struct {
 	Repos       string
+	RepoIDs     []string
+	Interactive bool
+	AllRepos    bool
 	GeneratedAt time.Time
 	WindowDays  int
 	TotalOpen   int

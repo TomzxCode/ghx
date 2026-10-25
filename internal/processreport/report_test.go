@@ -14,7 +14,8 @@ func reportItem(id string, kind processflow.Kind, created time.Time, station pro
 }
 
 // TestRenderProducesTheSections verifies the report renders every section
-// from the computed numbers.
+// from the computed numbers, and that the static (CLI) document carries no
+// interactive window form.
 func TestRenderProducesTheSections(t *testing.T) {
 	created := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	closed := created.Add(9 * 24 * time.Hour)
@@ -49,6 +50,47 @@ func TestRenderProducesTheSections(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered report missing %q", want)
 		}
+	}
+	if strings.Contains(html, "<form") {
+		t.Error("a static report should not render the interactive window form")
+	}
+}
+
+// TestRenderInteractiveWindowForm verifies the served report renders the
+// window form that reloads /process, preserving the requested repositories
+// and the current window as the input's value.
+func TestRenderInteractiveWindowForm(t *testing.T) {
+	created := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	report := processflow.Build([]processflow.Item{
+		reportItem("#1", processflow.KindIssue, created, processflow.Open, nil),
+	}, created.Add(48*time.Hour), 30)
+	html, err := Render(&report, Meta{
+		Repos:       []string{"acme/repo1"},
+		RepoIDs:     []string{"github.com/acme/repo1"},
+		Interactive: true,
+	})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		`<form class="window-form" method="get" action="/process">`,
+		`<input type="hidden" name="repo" value="github.com/acme/repo1">`,
+		`name="days" min="1" max="730" value="30"`,
+		"Apply",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("interactive report missing %q", want)
+		}
+	}
+
+	// Covering every cached repository, the form resubmits without pinning a
+	// repository set.
+	html, err = Render(&report, Meta{Repos: []string{"acme/repo1"}, Interactive: true, AllRepos: true})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if strings.Contains(html, `type="hidden" name="repo"`) {
+		t.Error("an all-repositories report should not pin repositories in the form")
 	}
 }
 
