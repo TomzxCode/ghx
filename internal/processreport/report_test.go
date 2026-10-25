@@ -41,9 +41,10 @@ func TestRenderProducesTheSections(t *testing.T) {
 		"Flow",
 		"Item #2",     // the aging list links the WIP items
 		"Item #11",    // by title
-		"svg",         // the charts are inline SVG
-		"filling",     // the queue-pressure trend badges
-		"Open issues", // the cumulative flow legend
+		"svg",              // the charts are inline SVG
+		"filling",          // the queue-pressure trend badges
+		"Open issues",      // the cumulative flow legend
+		"overflow-x: auto", // wide tables scroll instead of breaking mobile layout
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered report missing %q", want)

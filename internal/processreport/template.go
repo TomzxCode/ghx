@@ -31,7 +31,7 @@ section { background: var(--card); border: 1px solid var(--border); border-radiu
 .card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .card .value { font-size: 20px; font-weight: 600; }
 .card .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+.two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 18px; }
 .line-diagram { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
 .station { flex: 1 1 130px; min-width: 130px; border: 1px solid var(--border);
            border-left: 4px solid var(--station-color, var(--muted));
@@ -52,6 +52,9 @@ section { background: var(--card); border: 1px solid var(--border); border-radiu
                margin-right: 5px; vertical-align: -1px; }
 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* On narrow screens a wide table scrolls inside its card instead of
+   stretching the page; the stats report uses the same rule. */
+table { display: block; overflow-x: auto; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 th { color: var(--muted); font-weight: 500; font-size: 12px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
