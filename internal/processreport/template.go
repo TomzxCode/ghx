@@ -80,17 +80,22 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 <body>
 <div class="wrap">
   <h1>Process report</h1>
-  <div class="meta">{{.Repos}} &middot; last {{.WindowDays}} days &middot; generated {{.GeneratedAt.Format "Jan 2, 2006 15:04 UTC"}} &middot; {{.TotalOpen}} items on the line now</div>
+  <div class="meta">{{.Repos}} &middot; {{if .Range}}{{.Range}}{{else}}last {{.WindowDays}} days{{end}} &middot; generated {{.GeneratedAt.Format "Jan 2, 2006 15:04 UTC"}} &middot; {{.TotalOpen}} items on the line now</div>
   {{if .Interactive}}
   <form class="window-form" method="get" action="/process">
     {{if not .AllRepos}}{{range .RepoIDs}}<input type="hidden" name="repo" value="{{.}}">
 {{end}}{{end}}
+    <label for="window-from">From</label>
+    <input type="date" id="window-from" name="from" value="{{.FromValue}}" autocomplete="off">
+    <label for="window-to">To</label>
+    <input type="date" id="window-to" name="to" value="{{.ToValue}}" autocomplete="off">
     <label for="window-days">Window</label>
     <input type="number" id="window-days" name="days" min="1" max="730" value="{{.WindowDays}}" autocomplete="off">
     <span>days</span>
     <button type="submit">Apply</button>
   </form>
   {{end}}
+  {{if .Interactive}}<div class="note">Set From or To for an explicit range (an empty From starts at the first item, an empty To ends today); with both dates cleared the report covers the trailing window instead.</div>{{end}}
 
   <section>
     <h2>Production line</h2>

@@ -15,7 +15,7 @@ const processMaxDays = 730
 
 // handleProcess serves the process report at /process. The report is rendered
 // by the injected ProcessFunc; the query string mirrors the ghx process flags
-// (repo, days).
+// (repo, days) plus the stats page's period bounds (from, to).
 func (s *Server) handleProcess(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpError(w, http.StatusMethodNotAllowed, "method %s not allowed", r.Method)
@@ -30,7 +30,16 @@ func (s *Server) handleProcess(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "%s", err.Error())
 		return
 	}
-	q := ProcessQuery{Repos: r.URL.Query()["repo"], Days: days}
+	if err := validateRangeParams(r.URL.Query().Get("from"), r.URL.Query().Get("to")); err != nil {
+		httpError(w, http.StatusBadRequest, "%s", err.Error())
+		return
+	}
+	q := ProcessQuery{
+		Repos: r.URL.Query()["repo"],
+		Days:  days,
+		From:  r.URL.Query().Get("from"),
+		To:    r.URL.Query().Get("to"),
+	}
 	html, err := s.process(q)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, "%s", err.Error())
@@ -42,8 +51,9 @@ func (s *Server) handleProcess(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIProcess serves the process report as JSON at /api/process, computed
 // from the cache only (the web API never calls GitHub). Query params: repo
-// (repeatable, "host/owner/repo", omitted means every cached repository) and
-// days.
+// (repeatable, "host/owner/repo", omitted means every cached repository),
+// days, and the optional from/to bounds; when either bound is set the report
+// covers that explicit range instead of the trailing days window.
 func (s *Server) handleAPIProcess(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		httpError(w, http.StatusMethodNotAllowed, "method %s not allowed", r.Method)
@@ -55,6 +65,11 @@ func (s *Server) handleAPIProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	coords, err := s.resolveProcessRepos(r.URL.Query()["repo"])
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "%s", err.Error())
+		return
+	}
+	start, end, err := parseRangeParams(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "%s", err.Error())
 		return
@@ -74,8 +89,64 @@ func (s *Server) handleAPIProcess(w http.ResponseWriter, r *http.Request) {
 		items = append(items, processflow.FromIssues(issues)...)
 		items = append(items, processflow.FromPRs(prs)...)
 	}
-	report := processflow.Build(items, time.Now().UTC(), days)
+	var report processflow.Report
+	if start.IsZero() && end.IsZero() {
+		report = processflow.Build(items, time.Now().UTC(), days)
+	} else {
+		if end.IsZero() {
+			end = time.Now().UTC()
+		}
+		report = processflow.BuildRange(items, start, end)
+	}
 	writeJSON(w, http.StatusOK, report)
+}
+
+// dateParamLayouts are the accepted bounds formats, matching the stats
+// page's period parameters: date-only values and RFC3339 timestamps.
+var dateParamLayouts = []string{"2006-01-02", time.RFC3339}
+
+// parseBoundParam parses one optional bound. A date-only value is midnight,
+// or the last nanosecond of the day when endOfDay is set, so a `to` bound is
+// inclusive. Empty means absent (zero time).
+func parseBoundParam(raw string, endOfDay bool) (time.Time, error) {
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	for _, layout := range dateParamLayouts {
+		t, err := time.Parse(layout, raw)
+		if err != nil {
+			continue
+		}
+		if endOfDay && layout == "2006-01-02" {
+			t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, int(time.Second-time.Nanosecond), t.Location())
+		}
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("invalid bound %q: expected YYYY-MM-DD or RFC3339", raw)
+}
+
+// parseRangeParams parses both optional bounds, failing when `to` precedes
+// `from`.
+func parseRangeParams(fromRaw, toRaw string) (time.Time, time.Time, error) {
+	from, err := parseBoundParam(fromRaw, false)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	to, err := parseBoundParam(toRaw, true)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !from.IsZero() && !to.IsZero() && to.Before(from) {
+		return time.Time{}, time.Time{}, fmt.Errorf("to (%s) is before from (%s)", toRaw, fromRaw)
+	}
+	return from, to, nil
+}
+
+// validateRangeParams checks the raw bounds without resolving them; the
+// injected renderer parses them itself.
+func validateRangeParams(fromRaw, toRaw string) error {
+	_, _, err := parseRangeParams(fromRaw, toRaw)
+	return err
 }
 
 // parseDaysParam reads the window length, defaulting to the process default

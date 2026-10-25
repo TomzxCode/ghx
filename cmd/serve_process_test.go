@@ -52,14 +52,51 @@ func TestServeProcessFunc_RendersReport(t *testing.T) {
 		"acme/repo1",
 		"Open issue",
 		"Draft PR",
-		// The interactive window form preserves the requested repositories.
+		// The interactive period form preserves the requested repositories
+		// and pre-fills the covered bounds.
 		`action="/process"`,
 		`<input type="hidden" name="repo" value="github.com/acme/repo1">`,
 		`name="days" min="1" max="730" value="30"`,
+		`name="from"`,
+		`name="to"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered report missing %q", want)
 		}
+	}
+}
+
+// TestServeProcessFunc_Range verifies an explicit from/to query renders the
+// report over that range and names it in the meta line.
+func TestServeProcessFunc_Range(t *testing.T) {
+	now := time.Now().UTC()
+	created := now.AddDate(0, -2, 0)
+	closedAt := created.Add(48 * time.Hour)
+	issue := &github.Issue{Number: 1, Title: "Ranged issue", State: "closed", CreatedAt: created, ClosedAt: &closedAt}
+	store := seedProcessRepo(t, "github.com", "acme", "repo1", []*github.Issue{issue}, nil)
+
+	process := serveProcessFunc(store)
+	from := created.AddDate(0, 0, -1).Format("2006-01-02")
+	to := created.AddDate(0, 0, 5).Format("2006-01-02")
+	html, err := process(webui.ProcessQuery{Repos: []string{"github.com/acme/repo1"}, From: from, To: to})
+	if err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if !strings.Contains(html, `name="from" value="`+from+`"`) || !strings.Contains(html, `name="to" value="`+to+`"`) {
+		t.Error("date inputs should carry the requested bounds")
+	}
+	if strings.Contains(html, "last 90 days") {
+		t.Error("a ranged report should not describe itself as the trailing window")
+	}
+	if strings.Contains(html, "No issues closed in the window") {
+		t.Error("the range should include the closed issue's completion")
+	}
+
+	if _, err = process(webui.ProcessQuery{Repos: []string{"github.com/acme/repo1"}, From: to, To: from}); err == nil {
+		t.Fatal("to before from should be an error")
+	}
+	if _, err = process(webui.ProcessQuery{Repos: []string{"github.com/acme/repo1"}, From: "yesterday"}); err == nil {
+		t.Fatal("an unparseable bound should be an error")
 	}
 }
 

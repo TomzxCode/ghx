@@ -407,6 +407,8 @@ type LineReport struct {
 // Report is the whole production-line report for one window.
 type Report struct {
 	GeneratedAt time.Time    `json:"generatedAt"`
+	WindowStart time.Time    `json:"windowStart"`
+	WindowEnd   time.Time    `json:"windowEnd"`
 	WindowDays  int          `json:"windowDays"`
 	Issues      LineReport   `json:"issues"`
 	PRs         LineReport   `json:"prs"`
@@ -1153,13 +1155,32 @@ func Build(items []Item, now time.Time, windowDays int) Report {
 	if windowDays <= 0 {
 		windowDays = DefaultWindowDays
 	}
-	start := now.Add(-time.Duration(windowDays) * 24 * time.Hour)
+	return BuildRange(items, now.Add(-time.Duration(windowDays)*24*time.Hour), now)
+}
+
+// BuildRange computes the report for an explicit window [start, end]; end
+// doubles as "current time", so station ages and forecasts are measured
+// against it. A zero start means all history: the window begins at the
+// earliest item's creation, which keeps the daily sampling bounded. The end
+// must not be zero.
+func BuildRange(items []Item, start, end time.Time) Report {
+	if start.IsZero() {
+		start = end
+		for _, it := range items {
+			if it.CreatedAt.Before(start) {
+				start = it.CreatedAt
+			}
+		}
+	}
+	windowDays := int(math.Ceil(HoursBetween(start, end) / 24))
 	return Report{
-		GeneratedAt: now,
+		GeneratedAt: end,
+		WindowStart: start,
+		WindowEnd:   end,
 		WindowDays:  windowDays,
-		Issues:      lineReport(items, IssuesLine, start, now),
-		PRs:         lineReport(items, PRsLine, start, now),
-		Samples:     flowSamples(items, start, now),
-		WIP:         wipItems(items, now),
+		Issues:      lineReport(items, IssuesLine, start, end),
+		PRs:         lineReport(items, PRsLine, start, end),
+		Samples:     flowSamples(items, start, end),
+		WIP:         wipItems(items, end),
 	}
 }

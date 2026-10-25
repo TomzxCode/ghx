@@ -28,6 +28,10 @@ type Meta struct {
 	// (no explicit repo list), so the form can resubmit without pinning the
 	// repository set.
 	AllRepos bool
+	// HasRange marks a report computed over an explicit from/to range
+	// (rather than the default trailing window): the meta line shows the
+	// covered range and the form's date inputs carry it.
+	HasRange bool
 }
 
 // stationColors assigns one hue per station, shared by every chart so a

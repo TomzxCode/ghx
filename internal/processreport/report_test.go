@@ -58,7 +58,7 @@ func TestRenderProducesTheSections(t *testing.T) {
 
 // TestRenderInteractiveWindowForm verifies the served report renders the
 // window form that reloads /process, preserving the requested repositories
-// and the current window as the input's value.
+// and pre-filling the bounds with the covered window.
 func TestRenderInteractiveWindowForm(t *testing.T) {
 	created := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	report := processflow.Build([]processflow.Item{
@@ -76,6 +76,8 @@ func TestRenderInteractiveWindowForm(t *testing.T) {
 		`<form class="window-form" method="get" action="/process">`,
 		`<input type="hidden" name="repo" value="github.com/acme/repo1">`,
 		`name="days" min="1" max="730" value="30"`,
+		`name="from"`,
+		`name="to"`,
 		"Apply",
 	} {
 		if !strings.Contains(html, want) {
@@ -91,6 +93,31 @@ func TestRenderInteractiveWindowForm(t *testing.T) {
 	}
 	if strings.Contains(html, `type="hidden" name="repo"`) {
 		t.Error("an all-repositories report should not pin repositories in the form")
+	}
+}
+
+// TestRenderRangeMeta verifies an explicit from/to report names the covered
+// range in the meta line instead of a trailing window, and pre-fills the
+// date inputs with the range bounds.
+func TestRenderRangeMeta(t *testing.T) {
+	created := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	report := processflow.BuildRange([]processflow.Item{
+		reportItem("#1", processflow.KindIssue, created, processflow.Open, nil),
+	}, created, created.Add(30*24*time.Hour))
+	html, err := Render(&report, Meta{Repos: []string{"acme/repo1"}, Interactive: true, HasRange: true})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, "Mar 1 – Mar 31, 2026") {
+		t.Errorf("meta line should name the covered range, got page without it")
+	}
+	for _, want := range []string{`name="from" value="2026-03-01"`, `name="to" value="2026-03-31"`} {
+		if !strings.Contains(html, want) {
+			t.Errorf("date inputs should carry the range bounds, missing %q", want)
+		}
+	}
+	if strings.Contains(html, "last 31 days") {
+		t.Error("a ranged report should not describe itself as a trailing window")
 	}
 }
 

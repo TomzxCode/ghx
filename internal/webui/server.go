@@ -57,6 +57,12 @@ type StatsFunc func(q StatsQuery) (string, error)
 type ProcessQuery struct {
 	Repos []string
 	Days  int
+	// From and To are optional date bounds (YYYY-MM-DD or RFC3339): when
+	// either is set the report covers that explicit range instead of the
+	// trailing Days window (an empty From starts at the first item, an empty
+	// To ends now).
+	From string
+	To   string
 }
 
 // ProcessFunc renders the process (production-line) report for a query. Like

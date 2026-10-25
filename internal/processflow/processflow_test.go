@@ -424,6 +424,56 @@ func TestBuildDefaultsTheWindow(t *testing.T) {
 	}
 }
 
+func TestBuildRangeCoversAnExplicitWindow(t *testing.T) {
+	// A four-day window, Oct 15 to Oct 19: arrivals after that date (#2,
+	// Oct 20) must not count, and ages are measured against the window end.
+	start := at(75) // Oct 15 12:00
+	end := at(79)   // Oct 19 12:00
+	items := []Item{
+		issueItem("#1", at(31), Closed, tp(at(40))),    // closed Sep 10, before the range
+		issueItem("#4", at(75), Open, nil),             // created at the range start
+		issueItem("#2", at(80), Open, nil),             // Oct 20, after the range end
+		prItem("#10", at(31), Merged, tp(at(78)), nil), // merged inside the range
+	}
+	report := BuildRange(items, start, end)
+	if !report.WindowStart.Equal(start) || !report.WindowEnd.Equal(end) {
+		t.Errorf("window = %v..%v, want %v..%v", report.WindowStart, report.WindowEnd, start, end)
+	}
+	if report.WindowDays != 4 {
+		t.Errorf("window days = %d, want 4", report.WindowDays)
+	}
+	if report.Issues.Arrivals != 1 || report.Issues.Outcomes.Created != 1 {
+		t.Errorf("issue arrivals/outcomes = %d/%d, want 1/1 (only #4)", report.Issues.Arrivals, report.Issues.Outcomes.Created)
+	}
+	if report.PRs.Completions != 1 {
+		t.Errorf("PR completions = %d, want 1", report.PRs.Completions)
+	}
+	// The open issue's age counts from creation to the window end: 4 days.
+	open := lineOf(report.Issues, Open)
+	if *open.OldestHours != 4*24 {
+		t.Errorf("oldest open issue = %vh, want 96h", *open.OldestHours)
+	}
+}
+
+func TestBuildRangeZeroStartStartsAtTheFirstItem(t *testing.T) {
+	items := []Item{
+		issueItem("#1", at(31), Closed, tp(at(40))),
+		issueItem("#2", at(80), Open, nil),
+	}
+	report := BuildRange(items, time.Time{}, now)
+	if !report.WindowStart.Equal(at(31)) {
+		t.Errorf("window start = %v, want the earliest item's creation %v", report.WindowStart, at(31))
+	}
+	if len(report.Samples) != 55 { // Sep 1 (earliest item) .. Oct 25 inclusive
+		t.Errorf("samples = %d, want 55 daily samples from the first item", len(report.Samples))
+	}
+	// An empty line with a zero start covers a zero-length window at the end.
+	empty := BuildRange(nil, time.Time{}, now)
+	if !empty.WindowStart.Equal(now) || len(empty.Samples) != 1 {
+		t.Errorf("empty line = start %v, %d samples, want the end instant and one sample", empty.WindowStart, len(empty.Samples))
+	}
+}
+
 func TestFromIssueMapsStates(t *testing.T) {
 	open := FromIssue(&github.Issue{Number: 1, State: "open", CreatedAt: at(31), UpdatedAt: at(31)})
 	if open.Station != Open || open.Kind != KindIssue || open.ExitedAt != nil {

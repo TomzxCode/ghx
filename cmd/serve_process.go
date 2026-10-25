@@ -18,6 +18,17 @@ import (
 // use the refresh action) first for complete data.
 func serveProcessFunc(store cache.Store) webui.ProcessFunc {
 	return func(q webui.ProcessQuery) (string, error) {
+		from, err := parseStatsTime(q.From, false)
+		if err != nil {
+			return "", err
+		}
+		to, err := parseStatsTime(q.To, true)
+		if err != nil {
+			return "", err
+		}
+		if !from.IsZero() && !to.IsZero() && to.Before(from) {
+			return "", fmt.Errorf("to (%s) is before from (%s)", q.To, q.From)
+		}
 		coords, err := resolveProcessCoords(store, q.Repos)
 		if err != nil {
 			return "", err
@@ -40,13 +51,24 @@ func serveProcessFunc(store cache.Store) webui.ProcessFunc {
 			items = append(items, processflow.FromPRs(prs)...)
 			labels = append(labels, c[1]+"/"+c[2])
 		}
-		report := processflow.Build(items, time.Now().UTC(), q.Days)
-		return processreport.Render(&report, processreport.Meta{
+		meta := processreport.Meta{
 			Repos:       labels,
 			RepoIDs:     q.Repos,
 			Interactive: true,
 			AllRepos:    len(q.Repos) == 0,
-		})
+		}
+		var report processflow.Report
+		switch {
+		case from.IsZero() && to.IsZero():
+			report = processflow.Build(items, time.Now().UTC(), q.Days)
+		default:
+			if to.IsZero() {
+				to = time.Now().UTC()
+			}
+			report = processflow.BuildRange(items, from, to)
+			meta.HasRange = true
+		}
+		return processreport.Render(&report, meta)
 	}
 }
 

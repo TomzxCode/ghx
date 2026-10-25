@@ -47,6 +47,8 @@ Order rows by priority: Must first, then Should, then May.
 | FR-17 | Should | The rendered aging list shall cap its table (showing the oldest items and a note about the remainder) while the JSON keeps every item |
 | FR-18 | Should | A finished item whose finish time GitHub did not record shall count toward inventory and outcomes but not toward cycle times or throughput |
 | FR-19 | May | The report shall include the outcomes breakdown per line beyond the Must sections (created/done/discarded/active) |
+| FR-20 | Must | The serve page and `/api/process` shall accept optional `from`/`to` bounds (YYYY-MM-DD or RFC3339, `to` inclusive): when either is set the report covers that explicit range instead of the trailing days window, an empty `from` starts at the first item, an empty `to` ends now, and a `to` before `from` is an error |
+| FR-21 | Must | The served page's period form shall expose From and To date inputs alongside the days shortcut, pre-filled with the covered bounds, and preserve the requested repositories on resubmit |
 
 ## Non-Functional Requirements
 

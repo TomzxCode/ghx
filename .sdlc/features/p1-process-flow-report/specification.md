@@ -101,6 +101,17 @@ issues and PRs from the store, builds, and renders. The server wires the
 renderer through `SetProcessFunc`, exactly like `SetStatsFunc`; a nil renderer
 answers 501.
 
+## Explicit ranges
+
+`BuildRange(items, start, end)` computes any explicit window; `Build` is the
+trailing-window special case. A zero start means all history and clamps to
+the earliest item's creation, keeping the daily sampling bounded; end doubles
+as "current time" for ages and forecasts, and the report records
+`WindowStart`/`WindowEnd` alongside the derived `WindowDays`. The serve page
+parses `from`/`to` (date-only values or RFC3339; `to` gets end-of-day so the
+bound is inclusive), treats either bound as range mode with the days value
+ignored, and the form's date inputs pre-fill with the covered bounds.
+
 ## Test map
 
 | Requirement | Test |
@@ -123,3 +134,4 @@ answers 501.
 | FR-19 | `TestOutcomesSplitWindowArrivalsByDisposition` |
 | NFR-01 | package imports: `processflow` imports only stdlib plus the github types adapter |
 | NFR-03 | `TestForecastResamplesWeeklyHistory` asserts exact seeded quantiles |
+| FR-20, FR-21 | `TestBuildRangeCoversAnExplicitWindow`, `TestBuildRangeZeroStartStartsAtTheFirstItem`, `TestRenderRangeMeta`, `TestProcessEndpoint` (bounds parsed), `TestProcessEndpoint_ValidationAndAvailability` (bad bounds), `TestAPIProcess_Range`, `TestServeProcessFunc_Range` |

@@ -61,9 +61,12 @@ to the current repository (or `--repo`).
 
 The same report is served by `ghx serve` at `/process`, computed from the
 cache only; the Process button in the top bar opens it for the current
-repository. The page carries a window form (a days input with an Apply
-button) that reloads the report over the chosen window while keeping the
-requested repositories. The numbers are also available as JSON at
+repository. The page carries a period form (From and To dates, plus a days shortcut
+with Apply) that reloads the report over the chosen range or window while
+keeping the requested repositories. When either date is set the report
+covers that explicit range (an empty From starts at the first item, an
+empty To ends today); with both dates cleared it covers the trailing
+window. The numbers are also available as JSON at
 `/api/process`:
 
 ```bash
