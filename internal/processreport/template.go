@@ -68,12 +68,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
              border: 1px solid var(--border); margin: 8px 0 12px; }
 .share-seg { display: block; height: 100%; }
 .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
-.window-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-               margin-top: 10px; font-size: 13px; color: var(--muted); }
-.window-form input[type="number"] { width: 5.5em; background: var(--card); color: var(--fg);
-               border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font: inherit; }
-.window-form button { background: var(--card); color: var(--fg); border: 1px solid var(--border);
-               border-radius: 6px; padding: 4px 12px; font: inherit; cursor: pointer; }
+.window-form {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+  margin: 0.25rem 0 0.1rem; font-size: 0.8rem; color: var(--muted);
+}
+.window-form label { font-size: 0.8rem; }
+.window-form input {
+  background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.25rem 0.4rem; font-size: 0.8rem;
+}
+.window-form input:focus { outline: none; border-color: var(--accent); }
+.window-form #window-days { width: 4.5em; }
+.window-form button {
+  background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 0.25rem 0.65rem; font-size: 0.8rem; cursor: pointer;
+}
+.window-form button:hover { border-color: var(--muted); }
+@media (prefers-color-scheme: dark) { .window-form input { color-scheme: dark; } }
 @media (max-width: 640px) { .arrow { min-width: 36px; } }
 </style>
 </head>
