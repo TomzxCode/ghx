@@ -81,7 +81,7 @@ template. Charts are server-side SVG strings (stacked area, grouped weekly
 bars, histogram, sparklines, wait-share bar) and the station diagram is
 server-side HTML, so the template only places them. The page is styled with
 CSS variables and `prefers-color-scheme` dark mode; no JavaScript, no external
-assets. The aging table is capped at 100 rows with a note; the JSON keeps
+assets. The aging table is capped at ten rows with a note; the JSON keeps
 everything.
 
 ## CLI command

@@ -10,8 +10,8 @@ import (
 )
 
 // wipListCap bounds the rendered aging list; the JSON report keeps every
-// item, the HTML page shows the oldest ones and a count of the rest.
-const wipListCap = 100
+// item, the HTML page shows the ten oldest and a count of the rest.
+const wipListCap = 10
 
 // buildView flattens the report into template-friendly rows and pre-rendered
 // charts. Charts and the station diagrams are HTML/SVG strings produced

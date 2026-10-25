@@ -1,6 +1,7 @@
 package processreport
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,37 @@ func TestRenderProducesTheSections(t *testing.T) {
 		if !strings.Contains(html, want) {
 			t.Errorf("rendered report missing %q", want)
 		}
+	}
+}
+
+// TestRenderCapsTheAgingList verifies the rendered page shows at most ten
+// aging items and notes the remainder.
+func TestRenderCapsTheAgingList(t *testing.T) {
+	created := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	items := make([]processflow.Item, 0, wipListCap+3)
+	for i := range wipListCap + 3 {
+		items = append(items, reportItem(fmt.Sprintf("#%d", i+1), processflow.KindIssue, created.Add(time.Duration(i)*time.Hour), processflow.Open, nil))
+	}
+	report := processflow.Build(items, created.Add(48*time.Hour), 30)
+	if len(report.WIP) != wipListCap+3 {
+		t.Fatalf("report WIP = %d items, want %d", len(report.WIP), wipListCap+3)
+	}
+	html, err := Render(&report, Meta{Repos: []string{"acme/repo1"}})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if got := strings.Count(html, `class="badge">issue`); got != wipListCap {
+		t.Errorf("rendered aging rows = %d, want %d", got, wipListCap)
+	}
+	if !strings.Contains(html, "and 3 more items on the line") {
+		t.Error("rendered report should note the hidden remainder")
+	}
+	// The oldest items win the visible rows: #1 is the oldest, #13 the newest.
+	if !strings.Contains(html, ">#1</a>") {
+		t.Error("the oldest item should be visible in the capped table")
+	}
+	if strings.Contains(html, ">#13</a>") {
+		t.Error("the newest item should be hidden by the cap")
 	}
 }
 
