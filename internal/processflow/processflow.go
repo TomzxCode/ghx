@@ -1158,11 +1158,49 @@ func Build(items []Item, now time.Time, windowDays int) Report {
 	return BuildRange(items, now.Add(-time.Duration(windowDays)*24*time.Hour), now)
 }
 
+// itemAsOf projects an item to its state at instant end: the station it sat
+// in then, the moves recorded up to then, and its exit only if it finished by
+// then. An item created after end did not exist yet and returns false. This
+// is what makes an explicit range describe the line as it was during the
+// range instead of as it is now: items that finished later still count as
+// open work, and items opened later do not count at all.
+func itemAsOf(it Item, end time.Time) (Item, bool) {
+	last := -1
+	for i, entry := range it.Timeline() {
+		if entry.At.After(end) {
+			break
+		}
+		last = i
+	}
+	if last < 0 {
+		return Item{}, false
+	}
+	proj := Item{
+		ID:        it.ID,
+		Kind:      it.Kind,
+		Title:     it.Title,
+		URL:       it.URL,
+		CreatedAt: it.CreatedAt,
+		Station:   it.Timeline()[last].Station,
+	}
+	for _, move := range it.Moves {
+		if !move.At.After(end) {
+			proj.Moves = append(proj.Moves, move)
+		}
+	}
+	if it.ExitedAt != nil && !it.ExitedAt.After(end) {
+		exited := *it.ExitedAt
+		proj.ExitedAt = &exited
+	}
+	return proj, true
+}
+
 // BuildRange computes the report for an explicit window [start, end]; end
-// doubles as "current time", so station ages and forecasts are measured
-// against it. A zero start means all history: the window begins at the
-// earliest item's creation, which keeps the daily sampling bounded. The end
-// must not be zero.
+// doubles as "current time": items are projected to their state at end, so
+// the report describes the line as it stood at the window end, with flow
+// metrics measured inside the window. A zero start means all history: the
+// window begins at the earliest item's creation, which keeps the daily
+// sampling bounded. The end must not be zero.
 func BuildRange(items []Item, start, end time.Time) Report {
 	if start.IsZero() {
 		start = end
@@ -1172,15 +1210,21 @@ func BuildRange(items []Item, start, end time.Time) Report {
 			}
 		}
 	}
+	considered := make([]Item, 0, len(items))
+	for _, it := range items {
+		if proj, ok := itemAsOf(it, end); ok {
+			considered = append(considered, proj)
+		}
+	}
 	windowDays := int(math.Ceil(HoursBetween(start, end) / 24))
 	return Report{
 		GeneratedAt: end,
 		WindowStart: start,
 		WindowEnd:   end,
 		WindowDays:  windowDays,
-		Issues:      lineReport(items, IssuesLine, start, end),
-		PRs:         lineReport(items, PRsLine, start, end),
-		Samples:     flowSamples(items, start, end),
-		WIP:         wipItems(items, end),
+		Issues:      lineReport(considered, IssuesLine, start, end),
+		PRs:         lineReport(considered, PRsLine, start, end),
+		Samples:     flowSamples(considered, start, end),
+		WIP:         wipItems(considered, end),
 	}
 }

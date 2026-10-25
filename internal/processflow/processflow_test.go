@@ -448,10 +448,38 @@ func TestBuildRangeCoversAnExplicitWindow(t *testing.T) {
 	if report.PRs.Completions != 1 {
 		t.Errorf("PR completions = %d, want 1", report.PRs.Completions)
 	}
+	// The range filters the items considered: #2 did not exist yet at the
+	// window end, so the line holds only #4.
+	if open := lineOf(report.Issues, Open); open.Count != 1 {
+		t.Errorf("open issues = %d, want 1 (the item created after the range is excluded)", open.Count)
+	}
+	if len(report.WIP) != 1 {
+		t.Errorf("WIP list = %d items, want 1", len(report.WIP))
+	}
 	// The open issue's age counts from creation to the window end: 4 days.
 	open := lineOf(report.Issues, Open)
 	if *open.OldestHours != 4*24 {
 		t.Errorf("oldest open issue = %vh, want 96h", *open.OldestHours)
+	}
+}
+
+func TestBuildRangeCountsItemsAsOfTheEnd(t *testing.T) {
+	// A PR merged after the range end was still open work during the range:
+	// it must sit in Ready as of the end, not in Merged, and its exit must
+	// not count as a completion.
+	pr := prItem("#40", at(31), Merged, tp(at(80)), []Move{{At: at(33), To: Ready}})
+	report := BuildRange([]Item{pr}, at(40), at(50))
+	if got := lineOf(report.PRs, Merged).Count; got != 0 {
+		t.Errorf("merged count = %d, want 0 (the merge happened after the range)", got)
+	}
+	if got := lineOf(report.PRs, Ready).Count; got != 1 {
+		t.Errorf("ready count = %d, want 1 (as of the range end the PR was in review)", got)
+	}
+	if report.PRs.Completions != 0 {
+		t.Errorf("completions = %d, want 0", report.PRs.Completions)
+	}
+	if len(report.WIP) != 1 || report.WIP[0].Station != Ready {
+		t.Errorf("WIP = %+v, want the PR on the line in Ready", report.WIP)
 	}
 }
 

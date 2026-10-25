@@ -107,7 +107,14 @@ answers 501.
 trailing-window special case. A zero start means all history and clamps to
 the earliest item's creation, keeping the daily sampling bounded; end doubles
 as "current time" for ages and forecasts, and the report records
-`WindowStart`/`WindowEnd` alongside the derived `WindowDays`. The serve page
+`WindowStart`/`WindowEnd` alongside the derived `WindowDays`.
+
+Before computing, BuildRange projects every item to its state at the window
+end (`itemAsOf`): the station it sat in then, moves recorded up to then, and
+its exit only if it finished by then. Items created after the end are
+excluded and items that finished later count as still-open work, so an
+explicit range describes the line as it stood at the range end, with station
+inventory, the aging list, and outcomes all as-of rather than current. The serve page
 parses `from`/`to` (date-only values or RFC3339; `to` gets end-of-day so the
 bound is inclusive), treats either bound as range mode with the days value
 ignored, and the form's date inputs pre-fill with the covered bounds.
@@ -134,4 +141,4 @@ ignored, and the form's date inputs pre-fill with the covered bounds.
 | FR-19 | `TestOutcomesSplitWindowArrivalsByDisposition` |
 | NFR-01 | package imports: `processflow` imports only stdlib plus the github types adapter |
 | NFR-03 | `TestForecastResamplesWeeklyHistory` asserts exact seeded quantiles |
-| FR-20, FR-21 | `TestBuildRangeCoversAnExplicitWindow`, `TestBuildRangeZeroStartStartsAtTheFirstItem`, `TestRenderRangeMeta`, `TestProcessEndpoint` (bounds parsed), `TestProcessEndpoint_ValidationAndAvailability` (bad bounds), `TestAPIProcess_Range`, `TestServeProcessFunc_Range` |
+| FR-20, FR-21 | `TestBuildRangeCoversAnExplicitWindow`, `TestBuildRangeZeroStartStartsAtTheFirstItem`, `TestBuildRangeCountsItemsAsOfTheEnd`, `TestRenderRangeMeta`, `TestProcessEndpoint` (bounds parsed), `TestProcessEndpoint_ValidationAndAvailability` (bad bounds), `TestAPIProcess_Range`, `TestServeProcessFunc_Range` |

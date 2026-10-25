@@ -66,7 +66,13 @@ with Apply) that reloads the report over the chosen range or window while
 keeping the requested repositories. When either date is set the report
 covers that explicit range (an empty From starts at the first item, an
 empty To ends today); with both dates cleared it covers the trailing
-window. The numbers are also available as JSON at
+window.
+
+The range decides which issues and PRs are considered: the report describes
+the line as it stood at the range end. Items opened after the range end are
+excluded, items that finished after it count as still-open work in their
+pre-finish station, station ages are measured against the range end, and
+the aging list shows what was on the line then. The numbers are also available as JSON at
 `/api/process`:
 
 ```bash
