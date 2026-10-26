@@ -208,18 +208,40 @@
     state.loading = false;
   }
 
-  async function refreshRepo() {
+  // refreshKey identifies the in-flight refresh for the current view: one key
+  // per repository on a list, one per item on a detail page.
+  function refreshKey() {
+    const repo = currentRepo();
+    if (!repo) return '';
+    const base = repoKey(repo);
+    const r = state.route;
+    if (r.name === 'detail') return base + '/' + r.kind + '/' + r.number;
+    return base;
+  }
+
+  // refreshCurrent fetches on a list (a delta refresh of the repository, like
+  // `ghx cache`) and on a detail page (a forced re-fetch of that one item, like
+  // `ghx issue view --refresh`).
+  async function refreshCurrent() {
     const repo = currentRepo();
     if (!repo) return;
-    const key = repoKey(repo);
+    const key = refreshKey();
     if (state.refreshing[key]) return;
+    const route = state.route;
     state.refreshing[key] = true;
+    const base = '/api/repos/' + repo.host + '/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo);
     try {
-      await api('/api/repos/' + repo.host + '/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/refresh', { method: 'POST' });
-      state.error = '';
-      await loadRepos();
-      if (state.route.name === 'list') await loadItems();
-      if (state.route.name === 'detail') await loadDetail();
+      if (route.name === 'detail') {
+        const kind = route.kind === 'pulls' ? 'prs' : 'issues';
+        await api(base + '/' + kind + '/' + route.number + '/refresh', { method: 'POST' });
+        state.error = '';
+        await loadDetail();
+      } else {
+        await api(base + '/refresh', { method: 'POST' });
+        state.error = '';
+        await loadRepos();
+        if (state.route.name === 'list') await loadItems();
+      }
     } catch (e) {
       state.error = 'Refresh failed: ' + e.message;
     }
@@ -468,7 +490,12 @@
         setTab,
         setFilter,
         activeTab,
-        refreshRepo,
+        refreshCurrent,
+        refreshTitle() {
+          if (state.route.name !== 'detail') return 'Fetch new issues and pull requests';
+          const d = state.detail;
+          return 'Fetch this ' + (d ? (d.kind === 'pr' ? 'pull request' : 'issue') : 'item') + ' again';
+        },
         openPalette,
         closePalette,
         moveSel,
@@ -519,8 +546,7 @@
           return repo ? repo.owner + '/' + repo.repo : '';
         },
         isRefreshing() {
-          const repo = currentRepo();
-          return repo ? !!state.refreshing[repoKey(repo)] : false;
+          return !!state.refreshing[refreshKey()];
         },
         statsUrl() {
           const repo = currentRepo();
@@ -633,7 +659,7 @@
       <button class="btn btn-sm btn-ghost text-neutral-content" @click="openPalette()" title="Search (Ctrl+P)">
         Search <kbd class="kbd kbd-xs">Ctrl P</kbd>
       </button>
-      <button class="btn btn-sm btn-ghost text-neutral-content" @click="refreshRepo()" :disabled="isRefreshing()">
+      <button class="btn btn-sm btn-ghost text-neutral-content" @click="refreshCurrent()" :disabled="isRefreshing()" :title="refreshTitle()">
         <span v-if="isRefreshing()" class="loading loading-spinner loading-xs"></span>
         {{ isRefreshing() ? 'Refreshing...' : 'Refresh' }}
       </button>

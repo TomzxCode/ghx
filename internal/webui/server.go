@@ -31,6 +31,12 @@ var embeddedFS embed.FS
 // issues and PRs written.
 type RefreshFunc func(host, owner, repo string) (issues, prs int, err error)
 
+// ItemRefreshFunc force-fetches one issue or pull request into the store,
+// bypassing the cache's freshness checks. kind is "issue" or "pr". It backs the
+// detail view's refresh button, which behaves like `ghx issue view --refresh`
+// and `ghx pr view --refresh`.
+type ItemRefreshFunc func(host, owner, repo, kind string, number int) error
+
 // StatsQuery describes one stats report request. The string fields mirror the
 // ghx stats flags, so the UI can pass the query string through unchanged.
 // Repos holds "host/owner/repo" identifiers; an empty list means every cached
@@ -74,10 +80,11 @@ type ProcessFunc func(q ProcessQuery) (string, error)
 
 // Server serves the web UI and its JSON API over the cache store.
 type Server struct {
-	store   cache.Store
-	refresh RefreshFunc
-	stats   StatsFunc
-	process ProcessFunc
+	store       cache.Store
+	refresh     RefreshFunc
+	itemRefresh ItemRefreshFunc
+	stats       StatsFunc
+	process     ProcessFunc
 
 	mu         sync.Mutex
 	refreshing map[string]bool
@@ -101,6 +108,12 @@ func New(store cache.Store, refresh RefreshFunc) *Server {
 		refresh:    refresh,
 		refreshing: map[string]bool{},
 	}
+}
+
+// SetItemRefreshFunc sets the callback behind the single-item refresh endpoint.
+// Without one, that endpoint reports that refreshing is unavailable.
+func (s *Server) SetItemRefreshFunc(f ItemRefreshFunc) {
+	s.itemRefresh = f
 }
 
 // ListenAndServe serves on addr until Shutdown is called. It returns nil on a
@@ -340,6 +353,14 @@ func (s *Server) handleRepoPath(w http.ResponseWriter, r *http.Request) {
 			httpError(w, http.StatusNotFound, "invalid number %q", tail[0])
 			return
 		}
+		if len(tail) == 2 && tail[1] == "refresh" {
+			s.handleItemRefresh(w, r, host, owner, repo, kind, number)
+			return
+		}
+		if len(tail) > 1 {
+			httpError(w, http.StatusNotFound, "unknown resource %q", tail[1])
+			return
+		}
 		s.handleDetail(w, r, host, owner, repo, kind, number)
 	case "refresh":
 		s.handleRefresh(w, r, host, owner, repo)
@@ -454,6 +475,67 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request, host, own
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"issues": issues, "prs": prs})
+}
+
+// handleItemRefresh re-fetches one cached issue or pull request from GitHub,
+// bypassing the freshness checks the detail endpoint relies on. The UI calls it
+// from the detail view, where the repo-level refresh would be wasted work.
+func (s *Server) handleItemRefresh(w http.ResponseWriter, r *http.Request, host, owner, repo, kind string, number int) {
+	if r.Method != http.MethodPost {
+		httpError(w, http.StatusMethodNotAllowed, "refresh requires POST")
+		return
+	}
+	if !s.hasRepo(host, owner, repo) {
+		httpError(w, http.StatusNotFound, "repository %s/%s/%s is not cached", host, owner, repo)
+		return
+	}
+	if s.itemRefresh == nil {
+		httpError(w, http.StatusNotImplemented, "item refresh is not available")
+		return
+	}
+
+	itemKind := "issue"
+	if kind == "prs" {
+		itemKind = "pr"
+	}
+	if !s.hasItem(host, owner, repo, itemKind, number) {
+		httpError(w, http.StatusNotFound, "%s #%d not found in cache", itemKind, number)
+		return
+	}
+
+	key := host + "/" + owner + "/" + repo + "/" + itemKind + "/" + strconv.Itoa(number)
+	s.mu.Lock()
+	if s.refreshing[key] {
+		s.mu.Unlock()
+		httpError(w, http.StatusConflict, "a refresh is already running for %s", key)
+		return
+	}
+	s.refreshing[key] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.refreshing, key)
+		s.mu.Unlock()
+	}()
+
+	if err := s.itemRefresh(host, owner, repo, itemKind, number); err != nil {
+		httpError(w, http.StatusInternalServerError, "%s", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refreshed": true})
+}
+
+// hasItem reports whether the store holds the named issue or pull request.
+func (s *Server) hasItem(host, owner, repo, kind string, number int) bool {
+	switch kind {
+	case "issue":
+		_, _, err := s.store.LoadIssue(host, owner, repo, number)
+		return err == nil
+	case "pr":
+		_, _, err := s.store.LoadPR(host, owner, repo, number)
+		return err == nil
+	}
+	return false
 }
 
 // handleStats serves the stats report at /stats. The report is rendered by the

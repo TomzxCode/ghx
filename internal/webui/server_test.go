@@ -514,6 +514,125 @@ func TestRefreshRepoCachedOnlyByView(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Item refresh
+// ---------------------------------------------------------------------------
+
+func TestItemRefreshEndpoint(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now()
+	seedRepo(t, store, "github.com", "acme", "testrepo",
+		[]*github.Issue{makeIssue(1, "stale", "OPEN", "", now)},
+		[]*github.PullRequest{makePR(2, "stale", "OPEN", false, nil, now)})
+
+	var (
+		mu    sync.Mutex
+		calls []string
+	)
+	running := make(chan struct{})
+	release := make(chan struct{})
+
+	srv := newTestServer(store, nil)
+	srv.SetItemRefreshFunc(func(host, owner, repo, kind string, number int) error {
+		mu.Lock()
+		calls = append(calls, fmt.Sprintf("%s/%s/%s/%s/%d", host, owner, repo, kind, number))
+		first := len(calls) == 1
+		mu.Unlock()
+		if first {
+			close(running)
+			<-release
+		}
+		if kind == "pr" {
+			return store.SavePR(host, owner, repo, makePR(number, "fetched", "OPEN", false, nil, time.Now()))
+		}
+		return store.SaveIssue(host, owner, repo, makeIssue(number, "fetched", "OPEN", "", time.Now()))
+	})
+	h := srv.Handler()
+
+	doPost := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	var first *httptest.ResponseRecorder
+	done := make(chan struct{})
+	go func() {
+		first = doPost("/api/repos/github.com/acme/testrepo/issues/1/refresh")
+		close(done)
+	}()
+	<-running
+
+	// A concurrent refresh of the same item is rejected.
+	if got := doPost("/api/repos/github.com/acme/testrepo/issues/1/refresh"); got.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for a concurrent item refresh, got %d", got.Code)
+	}
+	// A different item is a different key, so it runs while the first is in flight.
+	if got := doPost("/api/repos/github.com/acme/testrepo/prs/2/refresh"); got.Code != http.StatusOK {
+		t.Fatalf("expected 200 for a different item, got %d: %s", got.Code, got.Body.String())
+	}
+
+	close(release)
+	<-done
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", first.Code, first.Body.String())
+	}
+
+	// The callback rewrote both cached records.
+	issue, _, err := store.LoadIssue("github.com", "acme", "testrepo", 1)
+	if err != nil || issue.Title != "fetched" {
+		t.Fatalf("expected refreshed issue in store, got %v %v", issue, err)
+	}
+	pr, _, err := store.LoadPR("github.com", "acme", "testrepo", 2)
+	if err != nil || pr.Title != "fetched" {
+		t.Fatalf("expected refreshed pull request in store, got %v %v", pr, err)
+	}
+
+	mu.Lock()
+	gotCalls := append([]string(nil), calls...)
+	mu.Unlock()
+	want := []string{
+		"github.com/acme/testrepo/issue/1",
+		"github.com/acme/testrepo/pr/2",
+	}
+	if fmt.Sprint(gotCalls) != fmt.Sprint(want) {
+		t.Fatalf("refresh calls = %v, want %v", gotCalls, want)
+	}
+
+	// GET is not allowed.
+	req := httptest.NewRequest(http.MethodGet, "/api/repos/github.com/acme/testrepo/issues/1/refresh", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+
+	// An item that is not cached cannot be refreshed.
+	if got := doPost("/api/repos/github.com/acme/testrepo/issues/99/refresh"); got.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for a missing item, got %d", got.Code)
+	}
+
+	// An unknown sub-resource is not the refresh endpoint.
+	if got := doPost("/api/repos/github.com/acme/testrepo/issues/1/bogus"); got.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown sub-resource, got %d", got.Code)
+	}
+
+	// Without a callback the endpoint reports that refreshing is unavailable.
+	plain := newTestServer(store, nil).Handler()
+	req = httptest.NewRequest(http.MethodPost, "/api/repos/github.com/acme/testrepo/issues/1/refresh", nil)
+	rec = httptest.NewRecorder()
+	plain.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("expected 501 without a callback, got %d", rec.Code)
+	}
+
+	// A repository that is not cached is unknown.
+	if got := doPost("/api/repos/github.com/acme/missing/issues/1/refresh"); got.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown repository, got %d", got.Code)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Search (palette)
 // ---------------------------------------------------------------------------
 

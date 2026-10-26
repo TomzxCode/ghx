@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tomzxcode/ghx/internal/cache"
+	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/rpc"
 	"github.com/tomzxcode/ghx/internal/webui"
@@ -33,10 +34,11 @@ var serveCmd = &cobra.Command{
 	Short: "Serve a local web UI over the cached issues and PRs",
 	Long: `Starts a local web server that browses the ghx cache: issue and PR lists and
 details for every cached repository, markdown rendering, a Ctrl+P search palette,
-a refresh action that reuses the cache command's fetch logic, and a stats report
-of PR activity at /stats (the same report ghx stats writes to a file).
+a refresh action that reuses the cache command's fetch logic (and a single-item
+refresh on a detail page), and a stats report of PR activity at /stats (the same
+report ghx stats writes to a file).
 
-The UI is read-only against the cache except for the explicit refresh action;
+The UI is read-only against the cache except for the explicit refresh actions;
 the stats report is computed from cached pull requests only.`,
 	RunE: runServe,
 }
@@ -62,6 +64,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 	server := webui.New(store, serveRefreshFunc(store))
+	server.SetItemRefreshFunc(serveItemRefreshFunc(store))
 	server.SetStatsFunc(serveStatsFunc(store))
 	server.SetProcessFunc(serveProcessFunc(store))
 	server.Mount("/rpc", rpc.NewServer(newRPCConfig(store, serveRPCToken, serveRPCAllowExec)))
@@ -95,7 +98,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 // serveRefreshFunc adapts the shared cache fetch logic into a webui.RefreshFunc.
-// Each call runs a forced (but resumable) full fetch for the given repository.
+// Each call runs a delta fetch from the last cache write, like `ghx cache`.
 func serveRefreshFunc(store cache.Store) webui.RefreshFunc {
 	return func(host, owner, name string) (int, int, error) {
 		client, err := newClient(host)
@@ -113,11 +116,47 @@ func serveRefreshFunc(store cache.Store) webui.RefreshFunc {
 			info = &cache.CacheInfo{}
 		}
 		return fetchRepoData(store, client, repo, info, FetchOptions{
-			Force:       true,
 			FetchIssues: true,
 			FetchPRs:    true,
 			Duration:    60,
 		})
+	}
+}
+
+// serveItemRefreshFunc adapts a single item fetch into a webui.ItemRefreshFunc.
+// It bypasses the cache's freshness checks and rewrites the cached record, like
+// `ghx issue view --refresh` and `ghx pr view --refresh`.
+func serveItemRefreshFunc(store cache.Store) webui.ItemRefreshFunc {
+	return func(host, owner, name, kind string, number int) error {
+		client, err := newClient(host)
+		if err != nil {
+			return err
+		}
+		repo, err := gitremote.ParseRepo(host + "/" + owner + "/" + name)
+		if err != nil {
+			return err
+		}
+		return refreshItem(store, client, repo, kind, number)
+	}
+}
+
+// refreshItem fetches one issue or pull request and writes it to the store.
+func refreshItem(store cache.Store, client *github.Client, repo *gitremote.Repo, kind string, number int) error {
+	switch kind {
+	case "issue":
+		issue, err := client.GetIssue(repo.Owner, repo.Name, number)
+		if err != nil {
+			return err
+		}
+		return store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue)
+	case "pr":
+		pr, err := client.GetPR(repo.Owner, repo.Name, number)
+		if err != nil {
+			return err
+		}
+		return store.SavePR(repo.Host, repo.Owner, repo.Name, pr)
+	default:
+		return fmt.Errorf("unknown item kind %q", kind)
 	}
 }
 

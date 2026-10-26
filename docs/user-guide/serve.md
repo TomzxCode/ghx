@@ -26,7 +26,9 @@ ghx serve --host 127.0.0.1 --port 9000 --open
   Type to fuzzy-search issues and PRs by number or title, use <kbd>↑</kbd>/<kbd>↓</kbd> and <kbd>Enter</kbd> to jump, and <kbd>Tab</kbd> to switch the search scope between the current repository and all cached repositories.
 - **Theme**: the sun/moon button in the top bar switches between light and dark themes.
   The choice is remembered in your browser; on first visit the UI follows your system preference.
-- **Refresh**: the refresh button in the top bar fetches new issues and PRs for the current repository using the same resumable logic as `ghx cache`.
+- **Refresh**: the button in the top bar refreshes what you are looking at.
+  On a list it runs a regular `ghx cache` for the current repository (a delta fetch from the last cache write).
+  On an issue or pull request page it re-fetches that one item from GitHub and rewrites its cached record, like `ghx issue view --refresh` or `ghx pr view --refresh`.
 - **Stats**: the Stats button in the top bar opens the pull request activity report (the same report `ghx stats` writes to a file) for the current repository, or for every cached repository from the home page.
 - **Process**: the Process button in the top bar opens the production-line flow report (the same report `ghx process` writes to a file) for the current repository, or for every cached repository from the home page.
 
@@ -108,6 +110,7 @@ curl -s "http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues?s
 curl -s http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues/42
 curl -s "http://127.0.0.1:8080/api/search?q=login&scope=all"
 curl -X POST http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/refresh
+curl -X POST http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues/42/refresh
 ```
 
 ## Testing with the mock server
