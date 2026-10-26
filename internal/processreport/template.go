@@ -10,15 +10,17 @@ const reportTemplate = `<!doctype html>
 :root {
   --bg: #f6f7f9; --fg: #1a202c; --muted: #64748b; --card: #ffffff;
   --border: #e2e8f0; --accent: #2563eb;
+  --done-bg: #f0fdf4; --done-border: #86efac;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #12141a; --fg: #e5e9f0; --muted: #8b94a7; --card: #1b1f29;
-          --border: #2a3140; --accent: #60a5fa; }
+          --border: #2a3140; --accent: #60a5fa;
+          --done-bg: #0f2a1d; --done-border: #1e5b38; }
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--fg);
        font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.wrap { max-width: 1000px; margin: 0 auto; padding: 24px 16px 64px; }
+.wrap { width: 100%; max-width: none; margin: 0; padding: 24px 16px 64px; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1 { font-size: 22px; margin: 0; }
@@ -32,16 +34,18 @@ section { background: var(--card); border: 1px solid var(--border); border-radiu
 .card .value { font-size: 20px; font-weight: 600; }
 .card .label { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 18px; }
-.line-diagram { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; }
-.station { flex: 1 1 130px; min-width: 130px; border: 1px solid var(--border);
-           border-left: 4px solid var(--station-color, var(--muted));
-           border-radius: 8px; padding: 8px 10px; background: var(--bg); }
-.station .name { font-size: 12px; color: var(--muted); }
-.station .count { font-size: 20px; font-weight: 600; }
-.station .ages { font-size: 12px; color: var(--muted); }
-.arrow { display: flex; flex-direction: column; justify-content: center; align-items: center;
-         color: var(--muted); font-size: 12px; min-width: 52px; gap: 2px; }
-.arrow .head { font-size: 16px; letter-spacing: -2px; }
+.line-scroll { overflow-x: auto; }
+.line-svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.line-svg .box { fill: var(--bg); stroke: var(--border); stroke-width: 1.5; }
+.line-svg .box.done { fill: var(--done-bg); stroke: var(--done-border); }
+.line-svg .box.scrap { stroke-dasharray: 5 4; }
+.line-svg .name { fill: var(--muted); font-size: 12px; }
+.line-svg .count { fill: var(--fg); font-size: 22px; font-weight: 600; }
+.line-svg .ages { fill: var(--muted); font-size: 10.5px; }
+.line-svg .moves { fill: var(--muted); font-size: 10.5px; }
+.line-svg .edge { fill: none; stroke: var(--muted); stroke-width: 1.5;
+                  stroke-linecap: round; stroke-linejoin: round; }
+.line-svg .head { fill: var(--muted); }
 .chart { width: 100%; height: auto; }
 .chart .tick { fill: var(--muted); font-size: 11px; }
 .chart .grid { stroke: var(--border); stroke-width: 1; }
@@ -85,7 +89,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .window-form button:hover { border-color: var(--muted); }
 @media (prefers-color-scheme: dark) { .window-form input { color-scheme: dark; } }
-@media (max-width: 640px) { .arrow { min-width: 36px; } }
 </style>
 </head>
 <body>
@@ -114,8 +117,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
     {{.Issues.Diagram}}
     <h3>{{.PRs.Label}}</h3>
     {{.PRs.Diagram}}
-    <div class="note">Box counts are the items sitting in each station now. Arrow counts are the
-    moves observed in the window; the draft/ready arrow shows both directions.</div>
+    <div class="note">Box counts are the items sitting in each station now, with the oldest and
+    median wait. Arrow counts are the moves observed in the window, in both directions
+    where they happened; an approval can move a PR straight to Waiting on merge, and a
+    PR can be discarded from any open station.</div>
   </section>
 
   <section>

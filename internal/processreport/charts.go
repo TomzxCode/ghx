@@ -291,48 +291,258 @@ func waitShareBar(shares []processflow.WaitShare) string {
 	return svg.String()
 }
 
-// lineDiagram renders the station boxes with arrows carrying the window's
-// move counts. The draft/ready arrow shows both directions when PRs flipped
-// back to draft.
+// Production-line diagram geometry, in the SVG's user units.
+const (
+	lineBoxW  = 164.0
+	lineBoxH  = 96.0
+	lineLeft  = 8.0
+	lineMid1  = 268.0 // reviewer and author column
+	lineMid2  = 528.0 // merge column
+	lineRight = 788.0
+)
+
+// lineDiagram renders the production line as an inline SVG graph: station
+// cards carry the current inventory and wait, arrows carry the window's move
+// counts. The review stations are placed as a loop (reviewer above, author
+// below, merge to the right) so approvals that skip a station stay visible,
+// which a single row of stations cannot show.
 func lineDiagram(line *processflow.LineReport) string {
-	count := func(from, to processflow.Station) int {
-		for _, flow := range line.Flows {
-			if flow.From == from && flow.To == to {
-				return flow.Count
-			}
-		}
-		return 0
+	if line.Kind == processflow.KindIssue {
+		return issueLineDiagram(line)
 	}
-	var html strings.Builder
-	html.WriteString(`<div class="line-diagram">`)
-	for i, station := range line.Stations {
-		if i > 0 {
-			prev := line.Stations[i-1]
-			forward := count(prev.Station, station.Station)
-			back := count(station.Station, prev.Station)
-			html.WriteString(`<div class="arrow"><span class="head">&rarr;</span>`)
-			if forward > 0 || back > 0 {
-				fmt.Fprintf(&html, `<span>%d &rarr;`, forward)
-				if back > 0 {
-					fmt.Fprintf(&html, ` %d &larr;`, back)
-				}
-				html.WriteString(`</span>`)
-			}
-			html.WriteString(`</div>`)
-		}
-		color := stationColor(station.Station)
-		ages := ""
-		if isActiveStation(station.Station) && station.Count > 0 && station.OldestHours != nil {
-			ages = fmt.Sprintf(`<div class="ages">oldest %s &middot; median %s</div>`,
-				template.HTMLEscapeString(formatHours(station.OldestHours)),
-				template.HTMLEscapeString(formatHours(station.MedianAgeHrs)))
-		}
-		fmt.Fprintf(&html,
-			`<div class="station" style="--station-color:%s"><div class="name">%s</div><div class="count">%d</div>%s</div>`,
-			color, template.HTMLEscapeString(station.Label), station.Count, ages)
+	return prLineDiagram(line)
+}
+
+func issueLineDiagram(line *processflow.LineReport) string {
+	var b strings.Builder
+	b.WriteString(`<div class="line-scroll">`)
+	fmt.Fprintf(&b, `<svg class="line-svg" viewBox="0 0 960 112" role="img" aria-label="%s production line">`,
+		template.HTMLEscapeString(line.Label))
+	writeArrowMarker(&b, "issues")
+	horizontalMoves(&b, 172, 788, 56, flowCount(line, processflow.Open, processflow.Closed), 0, "line-arrow-issues")
+	b.WriteString(stationBox(statFor(line, processflow.Open), lineLeft, 8))
+	b.WriteString(stationBox(statFor(line, processflow.Closed), lineRight, 8))
+	b.WriteString(`</svg></div>`)
+	return b.String()
+}
+
+func prLineDiagram(line *processflow.LineReport) string {
+	// Every observed move is attributed to exactly one drawn edge, so the
+	// arrow counts still add up to the window's moves. A move that skips a
+	// station (an approval from review, or a close from any station) lands on
+	// the edge for the turn it represents.
+	draft := processflow.Draft
+	review := processflow.AwaitingReview
+	author := processflow.AwaitingAuthor
+	merge := processflow.AwaitingMerge
+	merged := processflow.Merged
+	discarded := processflow.Discarded
+
+	readyForward := flowCount(line, draft, review)
+	readyBack := flowCount(line, review, draft) + flowCount(line, author, draft) + flowCount(line, merge, draft)
+	changesForward := flowCount(line, review, author) + flowCount(line, draft, author)
+	changesBack := flowCount(line, author, review)
+	approveForward := flowCount(line, review, merge) + flowCount(line, draft, merge)
+	approveBack := flowCount(line, merge, review)
+	authorApprove := flowCount(line, author, merge)
+	authorApproveBack := flowCount(line, merge, author)
+	mergeCount := 0
+	discardCount := 0
+	for _, from := range []processflow.Station{draft, review, author, merge} {
+		mergeCount += flowCount(line, from, merged)
+		discardCount += flowCount(line, from, discarded)
 	}
-	html.WriteString(`</div>`)
-	return html.String()
+
+	var b strings.Builder
+	b.WriteString(`<div class="line-scroll">`)
+	fmt.Fprintf(&b, `<svg class="line-svg" viewBox="0 0 960 280" role="img" aria-label="%s production line">`,
+		template.HTMLEscapeString(line.Label))
+	writeArrowMarker(&b, "prs")
+
+	// Main row, left to right: draft, reviewer, merge, merged.
+	horizontalMoves(&b, 172, 268, 56, readyForward, readyBack, "line-arrow-prs")
+	horizontalMoves(&b, 432, 528, 56, approveForward, approveBack, "line-arrow-prs")
+	horizontalMoves(&b, 692, 788, 56, mergeCount, 0, "line-arrow-prs")
+	// Reviewer to author (and back), then the author/merge turns.
+	verticalMoves(&b, 350, 104, 176, changesForward, changesBack, "line-arrow-prs")
+	authorMergeMoves(&b, authorApprove, authorApproveBack, "line-arrow-prs")
+	// Merge to discarded, which any open station can reach.
+	b.WriteString(`<path class="edge" d="M 660 109 V 152 H 870 V 171" marker-end="url(#line-arrow-prs)"/>`)
+	if discardCount > 0 {
+		writeMoveLabel(&b, 765, 144, fmt.Sprintf("%d", discardCount))
+	}
+
+	b.WriteString(stationBox(statFor(line, draft), lineLeft, 8))
+	b.WriteString(stationBox(statFor(line, review), lineMid1, 8))
+	b.WriteString(stationBox(statFor(line, merge), lineMid2, 8))
+	b.WriteString(stationBox(statFor(line, merged), lineRight, 8))
+	b.WriteString(stationBox(statFor(line, author), lineMid1, 176))
+	b.WriteString(stationBox(statFor(line, discarded), lineRight, 176))
+	b.WriteString(`</svg></div>`)
+	return b.String()
+}
+
+// statFor returns the inventory entry for one station. Every station of a
+// line is always present, so the zero value only guards a future change.
+func statFor(line *processflow.LineReport, station processflow.Station) processflow.StageStat {
+	for _, stat := range line.Stations {
+		if stat.Station == station {
+			return stat
+		}
+	}
+	return processflow.StageStat{Station: station, Label: string(station)}
+}
+
+// flowCount is the number of moves between two stations in the window.
+func flowCount(line *processflow.LineReport, from, to processflow.Station) int {
+	for _, flow := range line.Flows {
+		if flow.From == from && flow.To == to {
+			return flow.Count
+		}
+	}
+	return 0
+}
+
+// moveLabel formats an edge's count.
+func moveLabel(count int) string {
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", count)
+}
+
+// edgeGap is how far each arrow sits from an edge's centerline when both
+// directions had moves.
+const edgeGap = 5.0
+
+// horizontalMoves draws one arrow per direction that had moves, each with its
+// own count, so the arrow carries the direction and the number stays readable.
+// With no moves it still draws the forward arrow, keeping the topology visible.
+func horizontalMoves(b *strings.Builder, left, right, center float64, forward, back int, marker string) {
+	both := forward > 0 && back > 0
+	if forward > 0 || back == 0 {
+		y := center
+		if both {
+			y = center - edgeGap
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M %.0f %.0f H %.0f" marker-end="url(#%s)"/>`,
+			left+5, y, right-5, marker)
+		writeMoveLabel(b, (left+right)/2, y-9, moveLabel(forward))
+	}
+	if back > 0 {
+		y := center
+		if both {
+			y = center + edgeGap
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M %.0f %.0f H %.0f" marker-end="url(#%s)"/>`,
+			right-5, y, left+5, marker)
+		writeMoveLabel(b, (left+right)/2, y+14, moveLabel(back))
+	}
+}
+
+// verticalMoves is horizontalMoves for a top-to-bottom edge: the forward
+// arrow points down, the back arrow points up, and each label sits outside
+// the pair.
+func verticalMoves(b *strings.Builder, centerX, top, bottom float64, forward, back int, marker string) {
+	both := forward > 0 && back > 0
+	if forward > 0 || back == 0 {
+		x := centerX
+		if both {
+			x = centerX - edgeGap
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M %.0f %.0f V %.0f" marker-end="url(#%s)"/>`,
+			x, top+5, bottom-5, marker)
+		if forward > 0 {
+			labelX, anchor := x+12, "start"
+			if both {
+				labelX, anchor = x-8, "end"
+			}
+			writeMoveLabelAt(b, labelX, (top+bottom)/2+4, anchor, moveLabel(forward))
+		}
+	}
+	if back > 0 {
+		x := centerX
+		if both {
+			x = centerX + edgeGap
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M %.0f %.0f V %.0f" marker-end="url(#%s)"/>`,
+			x, bottom-5, top+5, marker)
+		writeMoveLabelAt(b, x+12, (top+bottom)/2+4, "start", moveLabel(back))
+	}
+}
+
+// authorMergeMoves draws the turn between waiting on author and waiting on
+// merge as one elbow per direction that had moves.
+func authorMergeMoves(b *strings.Builder, forward, back int, marker string) {
+	both := forward > 0 && back > 0
+	if forward > 0 || back == 0 {
+		y, x := 224.0, 610.0
+		if both {
+			y, x = 219, 605
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M 437 %.0f H %.0f V 109" marker-end="url(#%s)"/>`, y, x, marker)
+		writeMoveLabel(b, 520, y-8, moveLabel(forward))
+	}
+	if back > 0 {
+		y, x := 224.0, 610.0
+		if both {
+			y, x = 229, 615
+		}
+		fmt.Fprintf(b, `<path class="edge" d="M %.0f 109 V %.0f H 437" marker-end="url(#%s)"/>`, x, y, marker)
+		writeMoveLabel(b, 520, y+14, moveLabel(back))
+	}
+}
+
+func writeMoveLabel(b *strings.Builder, x, y float64, label string) {
+	writeMoveLabelAt(b, x, y, "middle", label)
+}
+
+func writeMoveLabelAt(b *strings.Builder, x, y float64, anchor, label string) {
+	if label == "" {
+		return
+	}
+	fmt.Fprintf(b, `<text class="moves" x="%.0f" y="%.0f" text-anchor="%s">%s</text>`, x, y, anchor, label)
+}
+
+// writeArrowMarker defines the edge arrowhead once per diagram, so the tip
+// lands at the path end at a fixed size.
+func writeArrowMarker(b *strings.Builder, id string) {
+	fmt.Fprintf(b, `<defs><marker id="line-arrow-%s" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="head" d="M 0 0 L 8 4 L 0 8 Z"/></marker></defs>`, id)
+}
+
+// stationBox renders one station card: name, current inventory, and either
+// the wait of the items there or what the station's count means.
+func stationBox(stat processflow.StageStat, x, y float64) string {
+	class := "box"
+	switch stat.Station {
+	case processflow.Closed, processflow.Merged:
+		class = "box done"
+	case processflow.Discarded:
+		class = "box scrap"
+	}
+	center := x + lineBoxW/2
+	var b strings.Builder
+	fmt.Fprintf(&b, `<g><rect class="%s" x="%.0f" y="%.0f" width="%.0f" height="%.0f" rx="8"/>`, class, x, y, lineBoxW, lineBoxH)
+	fmt.Fprintf(&b, `<rect class="bar" x="%.0f" y="%.0f" width="%.0f" height="3" rx="1.5" fill="%s"/>`,
+		x+12, y+8, lineBoxW-24, stationColor(stat.Station))
+	fmt.Fprintf(&b, `<text class="name" x="%.0f" y="%.0f" text-anchor="middle">%s</text>`,
+		center, y+28, template.HTMLEscapeString(stat.Label))
+	fmt.Fprintf(&b, `<text class="count" x="%.0f" y="%.0f" text-anchor="middle">%d</text>`, center, y+58, stat.Count)
+	switch {
+	case stat.Station == processflow.Closed || stat.Station == processflow.Merged:
+		fmt.Fprintf(&b, `<text class="ages" x="%.0f" y="%.0f" text-anchor="middle">completed</text>`, center, y+82)
+	case stat.Station == processflow.Discarded:
+		fmt.Fprintf(&b, `<text class="ages" x="%.0f" y="%.0f" text-anchor="middle">scrap, not completed</text>`, center, y+82)
+	case stat.Count > 0 && stat.OldestHours != nil:
+		fmt.Fprintf(&b, `<text class="ages" x="%.0f" y="%.0f" text-anchor="middle">oldest %s</text>`,
+			center, y+74, formatHours(stat.OldestHours))
+		fmt.Fprintf(&b, `<text class="ages" x="%.0f" y="%.0f" text-anchor="middle">median %s</text>`,
+			center, y+88, formatHours(stat.MedianAgeHrs))
+	case isActiveStation(stat.Station):
+		fmt.Fprintf(&b, `<text class="ages" x="%.0f" y="%.0f" text-anchor="middle">no items waiting</text>`, center, y+82)
+	}
+	b.WriteString(`</g>`)
+	return b.String()
 }
 
 // isActiveStation reports whether a station holds unfinished work.

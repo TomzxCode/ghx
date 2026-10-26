@@ -9,6 +9,8 @@ Run `ghx cache` first so the report covers full history; like `stats`, it
 serves data from the local cache and only falls back to the GitHub API when
 nothing is cached.
 
+[![The production line: an issue moves from Open to Closed; a pull request moves from Draft to Waiting on reviewer, then to Waiting on author or Waiting on merge, and reaches Merged, while a closed unmerged PR is Discarded](../assets/process-flow.svg)](../assets/process-flow.svg)
+
 ## The two lines
 
 - **Issues**: an open issue sits in the *Open* station; closing it moves it to *Closed*.

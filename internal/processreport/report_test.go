@@ -123,6 +123,83 @@ func TestRenderRangeMeta(t *testing.T) {
 	}
 }
 
+// TestLineDiagramShowsEveryMove verifies the diagram draws counts for moves
+// that skip a station (approvals straight to waiting on merge, and closes into
+// discarded from any open station), which a one-row strip of adjacent stations
+// could not show, and that a two-way edge gets a separate arrow and number per
+// direction instead of a single arrow with both numbers.
+func TestLineDiagramShowsEveryMove(t *testing.T) {
+	stat := func(station processflow.Station, label string, count int) processflow.StageStat {
+		return processflow.StageStat{Station: station, Label: label, Count: count}
+	}
+	line := &processflow.LineReport{
+		Kind:  processflow.KindPR,
+		Label: "Pull requests",
+		Stations: []processflow.StageStat{
+			stat(processflow.Draft, "Draft", 1),
+			stat(processflow.AwaitingReview, "Waiting on reviewer", 2),
+			stat(processflow.AwaitingAuthor, "Waiting on author", 3),
+			stat(processflow.AwaitingMerge, "Waiting on merge", 4),
+			stat(processflow.Merged, "Merged", 5),
+			stat(processflow.Discarded, "Discarded", 6),
+		},
+		Flows: []processflow.StationFlow{
+			{From: processflow.Draft, To: processflow.AwaitingReview, Count: 11},
+			{From: processflow.AwaitingReview, To: processflow.Draft, Count: 2},
+			{From: processflow.AwaitingReview, To: processflow.AwaitingMerge, Count: 7},
+			{From: processflow.AwaitingAuthor, To: processflow.AwaitingMerge, Count: 8},
+			{From: processflow.AwaitingAuthor, To: processflow.Discarded, Count: 9},
+			{From: processflow.AwaitingMerge, To: processflow.Merged, Count: 10},
+		},
+	}
+	html := lineDiagram(line)
+	for _, want := range []string{
+		`class="line-svg"`,
+		// Two-way edge: one arrow each way, each with its own number.
+		`d="M 177 51 H 263"`,
+		`d="M 263 61 H 177"`,
+		`x="220" y="42" text-anchor="middle">11</text>`,
+		`x="220" y="75" text-anchor="middle">2</text>`,
+		// One-way edges carry their number beside the arrow.
+		`x="480" y="47" text-anchor="middle">7</text>`,
+		`x="520" y="216" text-anchor="middle">8</text>`,
+		`x="765" y="144" text-anchor="middle">9</text>`,
+		`x="740" y="47" text-anchor="middle">10</text>`,
+		"Waiting on merge",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("diagram missing %q", want)
+		}
+	}
+	if strings.Contains(html, "&#8594;") || strings.Contains(html, "&#8592;") {
+		t.Error("arrow glyphs belong on the paths, not in the labels")
+	}
+}
+
+// TestIssueLineDiagram verifies the issue line carries the close count.
+func TestIssueLineDiagram(t *testing.T) {
+	line := &processflow.LineReport{
+		Kind:  processflow.KindIssue,
+		Label: "Issues",
+		Stations: []processflow.StageStat{
+			{Station: processflow.Open, Label: "Open", Count: 4},
+			{Station: processflow.Closed, Label: "Closed", Count: 12},
+		},
+		Flows: []processflow.StationFlow{{From: processflow.Open, To: processflow.Closed, Count: 12}},
+	}
+	html := lineDiagram(line)
+	for _, want := range []string{
+		`class="line-svg"`,
+		`x="480" y="47" text-anchor="middle">12</text>`,
+		"Open",
+		"Closed",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("issue diagram missing %q", want)
+		}
+	}
+}
+
 // TestRenderCapsTheAgingList verifies the rendered page shows at most ten
 // aging items and notes the remainder.
 func TestRenderCapsTheAgingList(t *testing.T) {
