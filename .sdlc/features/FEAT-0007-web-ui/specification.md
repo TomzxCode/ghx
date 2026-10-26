@@ -75,7 +75,10 @@ The refresh handler calls back into the shared fetch logic extracted from `cmd/c
 | createdAt | string | RFC3339 timestamp |
 | closedAt/mergedAt | string/null | RFC3339 timestamps when set |
 | baseRefName/headRefName | string | PR branch names (empty for issues) |
+| reviewers | array | PR only: `{login, state}` entries, where state is `approved`, `changes_requested`, `commented`, `dismissed`, or `pending`; omitted for issues and PRs with no reviewers |
 | comments | array | `{author, createdAt, bodyHTML, url}` entries |
+
+Reviewers are derived from the PR's cached reviews and timeline: each person who submitted a review or was requested as a reviewer appears once, with their latest non-comment review state (a later comment-only review does not hide an approval), `commented` when they only left comment reviews, and `pending` when their latest review request is newer than their latest review (including a re-request). Team requests, which carry no login, are skipped.
 
 ## API Contracts
 
@@ -124,7 +127,7 @@ Returns `ItemDetail` as JSON; 404 when the item is not cached.
 | Root app | Reactive store: repos, current repo, tab, state filter, items, detail, theme, refreshing map; hash parsing |
 | RepoSelect | Dropdown of cached repositories with issue/PR counts |
 | ItemList | GitHub-style rows: state icon (open green, closed purple for issues, merged purple, draft grey for PRs), number, title, colored label chips, author, comment count, updated date |
-| ItemDetail | State badge, title, meta line, sidebar (labels, assignees, milestone, GitHub link), rendered markdown body, comment timeline |
+| ItemDetail | State badge, title, meta line, sidebar (reviewers for PRs, labels, assignees, milestone, GitHub link), rendered markdown body, comment timeline |
 | ThemeToggle | Switches daisyUI's `data-theme` between light and dark; persists to localStorage; defaults to the system preference |
 | Palette | Overlay triggered by Ctrl+P/Cmd+P or `/`; fuzzy filter over `#N title` entries; arrow keys + Enter to jump, Esc to close |
 

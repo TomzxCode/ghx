@@ -211,6 +211,15 @@ type MilestoneInfo struct {
 	Title  string `json:"title"`
 }
 
+// ReviewerView is one reviewer shown on a pull request's detail page. State
+// is the reviewer's latest submitted review state in lowercase
+// ("approved", "changes_requested", "commented", "dismissed"), or "pending"
+// when the reviewer was requested but has not reviewed since that request.
+type ReviewerView struct {
+	Login string `json:"login"`
+	State string `json:"state"`
+}
+
 // ItemDetail is the detail-view projection of an issue or PR. ItemSummary is
 // embedded, so its fields are flattened into the JSON object. CachedAt is the
 // time the item's cache row was last written.
@@ -225,6 +234,7 @@ type ItemDetail struct {
 	Milestone   *MilestoneInfo `json:"milestone"`
 	BaseRefName string         `json:"baseRefName,omitempty"`
 	HeadRefName string         `json:"headRefName,omitempty"`
+	Reviewers   []ReviewerView `json:"reviewers,omitempty"`
 	Comments    []CommentView  `json:"comments"`
 }
 
@@ -667,8 +677,86 @@ func prDetail(pr *github.PullRequest) *ItemDetail {
 		Milestone:   milestoneInfo(pr.Milestone),
 		BaseRefName: pr.BaseRefName,
 		HeadRefName: pr.HeadRefName,
+		Reviewers:   prReviewers(pr),
 		Comments:    commentViews(pr.Comments),
 	}
+}
+
+// prReviewers lists the pull request's reviewers for the detail sidebar. A
+// reviewer is anyone who submitted a review or was requested in the timeline.
+// The state is the latest non-comment review (so a later plain comment does
+// not hide an approval), falling back to "commented" when the reviewer only
+// left comment reviews, or "pending" when their latest request is newer than
+// their latest review (a re-request returns them to pending).
+func prReviewers(pr *github.PullRequest) []ReviewerView {
+	type reviewer struct {
+		login        string
+		state        string
+		stateAt      time.Time
+		lastReviewAt time.Time
+		requestedAt  time.Time
+	}
+	byLogin := map[string]*reviewer{}
+	get := func(a github.Actor) *reviewer {
+		login := strings.ToLower(a.Login)
+		r, ok := byLogin[login]
+		if !ok {
+			r = &reviewer{login: a.Login}
+			byLogin[login] = r
+		}
+		return r
+	}
+
+	for _, rev := range pr.Reviews {
+		if rev.Author.Login == "" {
+			continue
+		}
+		r := get(rev.Author)
+		submitted := rev.SubmittedAt
+		if submitted.After(r.lastReviewAt) {
+			r.lastReviewAt = submitted
+		}
+		state := strings.ToLower(rev.State)
+		switch state {
+		case "commented":
+			if r.state == "" {
+				r.state = "commented"
+			}
+			continue
+		case "approved", "changes_requested", "dismissed":
+			// Later comment-only reviews do not replace a decision, but a
+			// later decision does.
+			if submitted.After(r.stateAt) || r.state == "commented" {
+				r.state = state
+				r.stateAt = submitted
+			}
+		}
+	}
+	for _, ev := range pr.Timeline {
+		if ev.Kind != github.TimelineReviewRequested || ev.RequestedReviewer.Login == "" {
+			continue
+		}
+		r := get(ev.RequestedReviewer)
+		if ev.CreatedAt.After(r.requestedAt) {
+			r.requestedAt = ev.CreatedAt
+		}
+	}
+
+	out := make([]ReviewerView, 0, len(byLogin))
+	for _, r := range byLogin {
+		state := r.state
+		if state == "" {
+			state = "pending"
+		}
+		if !r.requestedAt.IsZero() && r.requestedAt.After(r.lastReviewAt) {
+			state = "pending"
+		}
+		out = append(out, ReviewerView{Login: r.login, State: state})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Login) < strings.ToLower(out[j].Login)
+	})
+	return out
 }
 
 func labelChips(labels []github.Label) []LabelChip {

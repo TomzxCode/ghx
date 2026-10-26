@@ -26,7 +26,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-01 | Must | The system shall provide a `ghx serve` CLI command that starts an HTTP server on a loopback address and prints its URL |
 | FR-02 | Must | The serve UI shall list all cached repositories (via the cache store's repository listing) and allow switching between them |
 | FR-03 | Must | The serve UI shall display a list of issues and a list of pull requests for the selected repository with number, title, state, labels, author, comment count, and updated date |
-| FR-04 | Must | The serve UI shall provide a detail view for each issue and pull request showing state badge, metadata (author, dates, labels, assignees, milestone), the rendered markdown body, and the comment thread |
+| FR-04 | Must | The serve UI shall provide a detail view for each issue and pull request showing state badge, metadata (author, dates, labels, assignees, milestone, reviewers for PRs), the rendered markdown body, and the comment thread |
 | FR-05 | Must | The serve UI shall filter issue and PR lists by state (open, closed, all; merged for PRs) and by a free-text query |
 | FR-06 | Must | The serve UI shall provide a Ctrl+P (Cmd+P on macOS) palette that fuzzy-searches issues and PRs by number and title and jumps to the selected item |
 | FR-07 | Must | The serve API shall render issue and PR bodies and comments from markdown to HTML using GFM extensions (tables, task lists, strikethrough, autolinks) without allowing raw HTML injection |
@@ -61,7 +61,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-01: `ghx serve` starts a server, prints its URL, and shuts down cleanly on SIGINT/SIGTERM
 - [ ] FR-02: All repositories found by the cache store appear in the repo dropdown
 - [ ] FR-03: Selecting a repository and tab shows the correct issue/PR rows with all listed columns
-- [ ] FR-04: Opening an item shows the state badge, metadata, rendered markdown body, and comments
+- [ ] FR-04: Opening an item shows the state badge, metadata (including a PR's reviewers and their latest review state), rendered markdown body, and comments
 - [ ] FR-05: State filter and free-text query narrow the visible rows
 - [ ] FR-06: Ctrl+P opens the palette, typing narrows matches, Enter jumps to the item view
 - [ ] FR-07: Markdown bodies render with GFM features; a `<script>` tag in a body is removed

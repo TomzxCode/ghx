@@ -35,6 +35,28 @@
   margin-bottom: 4px;
 }
 
+.reviewer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.reviewer-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #eef1f4;
+  border: 1px solid #d0d7de;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: default;
+}
+
 /* Comment card header strip -------------------------------------------------- */
 
 .comment .comment-head {

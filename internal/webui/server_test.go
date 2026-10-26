@@ -307,6 +307,59 @@ func TestDetailPR(t *testing.T) {
 	assertRecentCachedAt(t, body)
 }
 
+func TestDetailPRReviewers(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now()
+	pr := makePR(5, "Reviewed PR", "OPEN", false, nil, now)
+	pr.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: now.Add(-4 * time.Hour)},
+		// A later comment review must not hide bob's approval.
+		{Author: github.Actor{Login: "bob"}, State: "COMMENTED", SubmittedAt: now.Add(-3 * time.Hour)},
+		{Author: github.Actor{Login: "dave"}, State: "CHANGES_REQUESTED", SubmittedAt: now.Add(-3 * time.Hour)},
+		{Author: github.Actor{Login: "frank"}, State: "APPROVED", SubmittedAt: now.Add(-3 * time.Hour)},
+		{Author: github.Actor{Login: "grace"}, State: "COMMENTED", SubmittedAt: now.Add(-3 * time.Hour)},
+	}
+	pr.Timeline = []github.TimelineEvent{
+		// erin was requested and never reviewed.
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "erin"}, CreatedAt: now.Add(-5 * time.Hour)},
+		// frank was re-requested after approving, so he is pending again.
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "frank"}, CreatedAt: now.Add(-time.Hour)},
+		// Team requests carry no login.
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{}, CreatedAt: now.Add(-time.Hour)},
+	}
+	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
+	h := newTestServer(store, nil).Handler()
+
+	rec, body := get(t, h, "/api/repos/github.com/acme/testrepo/prs/5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	raw, ok := body["reviewers"].([]any)
+	if !ok {
+		t.Fatalf("expected reviewers in detail, got %v", body["reviewers"])
+	}
+	got := map[string]string{}
+	for _, e := range raw {
+		r := e.(map[string]any)
+		got[r["login"].(string)] = r["state"].(string)
+	}
+	want := map[string]string{
+		"bob":   "approved",
+		"dave":  "changes_requested",
+		"erin":  "pending",
+		"frank": "pending",
+		"grace": "commented",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("reviewers = %v, want %v", got, want)
+	}
+	for login, state := range want {
+		if got[login] != state {
+			t.Errorf("reviewer %s state = %q, want %q", login, got[login], state)
+		}
+	}
+}
+
 // assertRecentCachedAt checks that a detail response reports when its cache row
 // was written, and that the timestamp is recent.
 func assertRecentCachedAt(t *testing.T, body map[string]any) {

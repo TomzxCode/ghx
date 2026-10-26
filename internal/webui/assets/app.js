@@ -489,6 +489,26 @@
           if (item.isDraft && item.state === 'open') return 'Draft';
           return item.state.charAt(0).toUpperCase() + item.state.slice(1);
         },
+        reviewerLabel(state2) {
+          switch (state2) {
+            case 'approved': return 'Approved';
+            case 'changes_requested': return 'Changes requested';
+            case 'commented': return 'Commented';
+            case 'dismissed': return 'Dismissed';
+            case 'pending': return 'Pending';
+            default: return state2;
+          }
+        },
+        reviewerEmoji(state2) {
+          switch (state2) {
+            case 'approved': return '✔️';
+            case 'changes_requested': return '🚫';
+            case 'commented': return '💬';
+            case 'dismissed': return '❌';
+            case 'pending': return '⏳';
+            default: return '•';
+          }
+        },
         detailNoun() {
           const d = state.detail;
           if (!d) return '';
@@ -700,6 +720,13 @@
             </div>
           </div>
           <aside class="detail-side text-sm">
+            <section v-if="state.detail.kind === 'pr' && state.detail.reviewers && state.detail.reviewers.length" class="mb-4">
+              <h3 class="side-title">Reviewers</h3>
+              <div v-for="r in state.detail.reviewers" :key="r.login" class="reviewer-row">
+                <span class="truncate">{{ r.login }}</span>
+                <span class="reviewer-state" :title="reviewerLabel(r.state)" :aria-label="reviewerLabel(r.state)">{{ reviewerEmoji(r.state) }}</span>
+              </div>
+            </section>
             <section v-if="state.detail.labels.length" class="mb-4">
               <h3 class="side-title">Labels</h3>
               <span class="badge badge-sm label-chip-side" v-for="l in state.detail.labels" :key="l.name" :style="labelStyle(l)">{{ l.name }}</span>
