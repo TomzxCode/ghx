@@ -748,8 +748,8 @@
           <aside class="detail-side text-sm">
             <section v-if="state.detail.kind === 'pr' && state.detail.reviewers && state.detail.reviewers.length" class="mb-4">
               <h3 class="side-title">Reviewers</h3>
-              <div v-for="r in state.detail.reviewers" :key="r.login" class="reviewer-row">
-                <span class="truncate">{{ r.login }}</span>
+              <div v-for="r in state.detail.reviewers" :key="r.name || r.login" class="reviewer-row">
+                <span class="truncate">{{ r.name || r.login }}</span>
                 <span class="reviewer-state" :title="reviewerLabel(r.state)" :aria-label="reviewerLabel(r.state)">{{ reviewerEmoji(r.state) }}</span>
               </div>
             </section>

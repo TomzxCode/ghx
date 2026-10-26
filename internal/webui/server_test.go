@@ -318,14 +318,20 @@ func TestDetailPRReviewers(t *testing.T) {
 		{Author: github.Actor{Login: "dave"}, State: "CHANGES_REQUESTED", SubmittedAt: now.Add(-3 * time.Hour)},
 		{Author: github.Actor{Login: "frank"}, State: "APPROVED", SubmittedAt: now.Add(-3 * time.Hour)},
 		{Author: github.Actor{Login: "grace"}, State: "COMMENTED", SubmittedAt: now.Add(-3 * time.Hour)},
+		// The pull request author is never a reviewer of their own PR.
+		{Author: github.Actor{Login: "carol"}, State: "COMMENTED", SubmittedAt: now.Add(-3 * time.Hour)},
 	}
+	// Current review requests are authoritative: erin never reviewed, frank was
+	// re-requested after approving, and ml-infra-gpu is a team request.
+	pr.ReviewRequests = []github.ReviewRequest{
+		{Type: "User", Login: "erin"},
+		{Type: "Team", Name: "ml-infra-gpu"},
+		{Type: "User", Login: "frank"},
+		{Type: "User", Login: "carol"},
+	}
+	// A stale timeline request for someone no longer requested must not appear.
 	pr.Timeline = []github.TimelineEvent{
-		// erin was requested and never reviewed.
-		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "erin"}, CreatedAt: now.Add(-5 * time.Hour)},
-		// frank was re-requested after approving, so he is pending again.
-		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "frank"}, CreatedAt: now.Add(-time.Hour)},
-		// Team requests carry no login.
-		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{}, CreatedAt: now.Add(-time.Hour)},
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "heidi"}, CreatedAt: now.Add(-5 * time.Hour)},
 	}
 	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
 	h := newTestServer(store, nil).Handler()
@@ -341,15 +347,63 @@ func TestDetailPRReviewers(t *testing.T) {
 	got := map[string]string{}
 	for _, e := range raw {
 		r := e.(map[string]any)
-		got[r["login"].(string)] = r["state"].(string)
+		name, _ := r["login"].(string)
+		if name == "" {
+			name, _ = r["name"].(string)
+		}
+		got[name] = r["state"].(string)
 	}
 	want := map[string]string{
-		"bob":   "approved",
-		"dave":  "changes_requested",
-		"erin":  "pending",
-		"frank": "pending",
-		"grace": "commented",
+		"bob":          "approved",
+		"dave":         "changes_requested",
+		"erin":         "pending",
+		"frank":        "pending",
+		"grace":        "commented",
+		"ml-infra-gpu": "pending",
 	}
+	if len(got) != len(want) {
+		t.Fatalf("reviewers = %v, want %v", got, want)
+	}
+	for login, state := range want {
+		if got[login] != state {
+			t.Errorf("reviewer %s state = %q, want %q", login, got[login], state)
+		}
+	}
+}
+
+// TestDetailPRReviewersLegacyTimeline covers cached PRs that predate the
+// reviewRequests field: reviewers come from the timeline's user-only requests,
+// and the pull request author is still excluded.
+func TestDetailPRReviewersLegacyTimeline(t *testing.T) {
+	store := newTestStore(t)
+	now := time.Now()
+	pr := makePR(6, "Legacy reviewed PR", "OPEN", false, nil, now)
+	pr.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: now.Add(-2 * time.Hour)},
+		{Author: github.Actor{Login: "carol"}, State: "COMMENTED", SubmittedAt: now.Add(-2 * time.Hour)},
+	}
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: now.Add(-3 * time.Hour)},
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "erin"}, CreatedAt: now.Add(-3 * time.Hour)},
+		{Kind: github.TimelineReviewRequested, RequestedReviewer: github.Actor{Login: "carol"}, CreatedAt: now.Add(-3 * time.Hour)},
+	}
+	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
+	h := newTestServer(store, nil).Handler()
+
+	rec, body := get(t, h, "/api/repos/github.com/acme/testrepo/prs/6")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	raw, ok := body["reviewers"].([]any)
+	if !ok {
+		t.Fatalf("expected reviewers in detail, got %v", body["reviewers"])
+	}
+	got := map[string]string{}
+	for _, e := range raw {
+		r := e.(map[string]any)
+		got[r["login"].(string)] = r["state"].(string)
+	}
+	want := map[string]string{"bob": "approved", "erin": "pending"}
 	if len(got) != len(want) {
 		t.Fatalf("reviewers = %v, want %v", got, want)
 	}

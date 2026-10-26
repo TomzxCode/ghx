@@ -95,6 +95,23 @@ type timelineNode struct {
 	CreatedAt         time.Time  `json:"createdAt"`
 }
 
+// requestedReviewerNode is the RequestedReviewer union member: people and bots
+// carry a login, teams carry a name and slug.
+type requestedReviewerNode struct {
+	Typename string `json:"__typename"`
+	Login    string `json:"login"`
+	Name     string `json:"name"`
+	Slug     string `json:"slug"`
+}
+
+type reviewRequestNode struct {
+	RequestedReviewer *requestedReviewerNode `json:"requestedReviewer"`
+}
+
+type reviewRequestConnection struct {
+	Nodes []reviewRequestNode `json:"nodes"`
+}
+
 type issueNode struct {
 	Number    int                         `json:"number"`
 	Title     string                      `json:"title"`
@@ -137,6 +154,7 @@ type prNode struct {
 	Deletions      int                            `json:"deletions"`
 	Reviews        struct{ Nodes []reviewNode }   `json:"reviews"`
 	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
+	ReviewRequests *reviewRequestConnection       `json:"reviewRequests"`
 	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
@@ -226,6 +244,7 @@ func nodeToPR(n *prNode) *PullRequest {
 		CommentCount:   n.Comments.TotalCount,
 	}
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
+	applyReviewRequests(pr, n.ReviewRequests)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.actor())
 	}
@@ -239,6 +258,34 @@ func nodeToPR(n *prNode) *PullRequest {
 		pr.Comments = append(pr.Comments, commentNodeToComment(c))
 	}
 	return pr
+}
+
+// applyReviewRequests fills the current review requests. A nil connection
+// means the query did not ask for them (or the cache row predates the field),
+// which leaves pr.ReviewRequests nil so readers can tell "unknown" from "none";
+// an empty connection records a non-nil empty slice.
+func applyReviewRequests(pr *PullRequest, conn *reviewRequestConnection) {
+	if conn == nil {
+		return
+	}
+	pr.ReviewRequests = make([]ReviewRequest, 0, len(conn.Nodes))
+	for _, n := range conn.Nodes {
+		if n.RequestedReviewer == nil {
+			continue
+		}
+		rr := ReviewRequest{
+			Type:  n.RequestedReviewer.Typename,
+			Login: n.RequestedReviewer.Login,
+			Name:  n.RequestedReviewer.Name,
+		}
+		if rr.Name == "" {
+			rr.Name = n.RequestedReviewer.Slug
+		}
+		if rr.Login == "" && rr.Name == "" {
+			continue
+		}
+		pr.ReviewRequests = append(pr.ReviewRequests, rr)
+	}
 }
 
 // applyPRExtras fills the review-analytics fields (additions, deletions,
@@ -741,6 +788,24 @@ timelineItems(first: 250, itemTypes: [READY_FOR_REVIEW_EVENT, CONVERT_TO_DRAFT_E
   }
 }`
 
+// prReviewRequestsSelection is the current pending review requests. Unlike
+// the timeline's requestedReviewer (which the stats command treats as
+// user-only activity), this connection includes teams and reflects removals,
+// so it is the source for the reviewers shown on a pull request.
+const prReviewRequestsSelection = `
+reviewRequests(first: 100) {
+  nodes {
+    requestedReviewer {
+      __typename
+      ... on User { login }
+      ... on Bot { login }
+      ... on Mannequin { login }
+      ... on Team { name slug }
+      ... on EnterpriseTeam { name slug }
+    }
+  }
+}`
+
 const getPRQuery = `
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -757,6 +822,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
         nodes { author { __typename login } state submittedAt }
       }
       ` + prTimelineSelection + `
+      ` + prReviewRequestsSelection + `
       comments(first: 100) {
         nodes { id author { __typename login } body createdAt updatedAt url }
       }
@@ -803,6 +869,7 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
           nodes { author { __typename login } state submittedAt }
         }
 ` + prTimelineSelection + `
+` + prReviewRequestsSelection + `
         comments(first: 100) {
           totalCount
           nodes { id author { __typename login } body createdAt updatedAt url }

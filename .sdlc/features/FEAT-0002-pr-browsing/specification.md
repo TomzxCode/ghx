@@ -58,6 +58,9 @@ Read commands never advance the cache freshness window.
 | commentCount | int | | Total comment count |
 | comments | []Comment | | Inline comments |
 | reviewDecision | string | | APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED |
+| reviews | []PRReview | | Submitted reviews (`author`, `state`, `submittedAt`) |
+| timeline | []TimelineEvent | | Draft/ready flips and review-request events |
+| reviewRequests | []ReviewRequest | nil = unknown | Current pending review requests (`type`, `login` for people/bots, `name` for teams) |
 
 ## API Contracts
 

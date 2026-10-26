@@ -224,12 +224,14 @@ type MilestoneInfo struct {
 	Title  string `json:"title"`
 }
 
-// ReviewerView is one reviewer shown on a pull request's detail page. State
-// is the reviewer's latest submitted review state in lowercase
-// ("approved", "changes_requested", "commented", "dismissed"), or "pending"
-// when the reviewer was requested but has not reviewed since that request.
+// ReviewerView is one reviewer shown on a pull request's detail page. Login
+// identifies a person or bot, Name identifies a team. State is the reviewer's
+// latest submitted review state in lowercase ("approved",
+// "changes_requested", "commented", "dismissed"), or "pending" when GitHub
+// currently waits on them.
 type ReviewerView struct {
-	Login string `json:"login"`
+	Login string `json:"login,omitempty"`
+	Name  string `json:"name,omitempty"`
 	State string `json:"state"`
 }
 
@@ -764,36 +766,44 @@ func prDetail(pr *github.PullRequest) *ItemDetail {
 	}
 }
 
-// prReviewers lists the pull request's reviewers for the detail sidebar. A
-// reviewer is anyone who submitted a review or was requested in the timeline.
-// The state is the latest non-comment review (so a later plain comment does
-// not hide an approval), falling back to "commented" when the reviewer only
-// left comment reviews, or "pending" when their latest request is newer than
-// their latest review (a re-request returns them to pending).
+// prReviewers lists the pull request's reviewers for the detail sidebar. It
+// combines the reviewers who submitted a review with GitHub's current review
+// requests, including teams. The pull request author never counts as a
+// reviewer. Review state is the latest non-comment review (so a later plain
+// comment does not hide an approval), falling back to "commented" when the
+// reviewer only left comment reviews; anyone in the current review requests is
+// "pending", which covers re-requests.
+//
+// A nil ReviewRequests means the cached record predates the field (or came
+// from a query that did not ask for it), so the timeline's review-request
+// events are used as a user-only fallback. Teams and review removals are not
+// visible there.
 func prReviewers(pr *github.PullRequest) []ReviewerView {
 	type reviewer struct {
 		login        string
+		name         string
 		state        string
 		stateAt      time.Time
 		lastReviewAt time.Time
+		requested    bool
 		requestedAt  time.Time
 	}
-	byLogin := map[string]*reviewer{}
-	get := func(a github.Actor) *reviewer {
-		login := strings.ToLower(a.Login)
-		r, ok := byLogin[login]
+	byKey := map[string]*reviewer{}
+	get := func(key, login, name string) *reviewer {
+		r, ok := byKey[key]
 		if !ok {
-			r = &reviewer{login: a.Login}
-			byLogin[login] = r
+			r = &reviewer{login: login, name: name}
+			byKey[key] = r
 		}
 		return r
 	}
+	userKey := func(login string) string { return "user:" + strings.ToLower(login) }
 
 	for _, rev := range pr.Reviews {
-		if rev.Author.Login == "" {
+		if rev.Author.Login == "" || strings.EqualFold(rev.Author.Login, pr.Author.Login) {
 			continue
 		}
-		r := get(rev.Author)
+		r := get(userKey(rev.Author.Login), rev.Author.Login, "")
 		submitted := rev.SubmittedAt
 		if submitted.After(r.lastReviewAt) {
 			r.lastReviewAt = submitted
@@ -814,29 +824,52 @@ func prReviewers(pr *github.PullRequest) []ReviewerView {
 			}
 		}
 	}
-	for _, ev := range pr.Timeline {
-		if ev.Kind != github.TimelineReviewRequested || ev.RequestedReviewer.Login == "" {
-			continue
+
+	if pr.ReviewRequests != nil {
+		for _, req := range pr.ReviewRequests {
+			if req.Name != "" {
+				r := get("team:"+strings.ToLower(req.Name), "", req.Name)
+				r.requested = true
+				continue
+			}
+			if req.Login == "" || strings.EqualFold(req.Login, pr.Author.Login) {
+				continue
+			}
+			r := get(userKey(req.Login), req.Login, "")
+			r.requested = true
 		}
-		r := get(ev.RequestedReviewer)
-		if ev.CreatedAt.After(r.requestedAt) {
-			r.requestedAt = ev.CreatedAt
+	} else {
+		for _, ev := range pr.Timeline {
+			if ev.Kind != github.TimelineReviewRequested || ev.RequestedReviewer.Login == "" ||
+				strings.EqualFold(ev.RequestedReviewer.Login, pr.Author.Login) {
+				continue
+			}
+			r := get(userKey(ev.RequestedReviewer.Login), ev.RequestedReviewer.Login, "")
+			if ev.CreatedAt.After(r.requestedAt) {
+				r.requestedAt = ev.CreatedAt
+			}
 		}
 	}
 
-	out := make([]ReviewerView, 0, len(byLogin))
-	for _, r := range byLogin {
+	out := make([]ReviewerView, 0, len(byKey))
+	for _, r := range byKey {
 		state := r.state
-		if state == "" {
+		if state == "" || r.requested {
+			state = "pending"
+		} else if pr.ReviewRequests == nil && r.requestedAt.After(r.lastReviewAt) {
 			state = "pending"
 		}
-		if !r.requestedAt.IsZero() && r.requestedAt.After(r.lastReviewAt) {
-			state = "pending"
-		}
-		out = append(out, ReviewerView{Login: r.login, State: state})
+		out = append(out, ReviewerView{Login: r.login, Name: r.name, State: state})
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return strings.ToLower(out[i].Login) < strings.ToLower(out[j].Login)
+		a, b := out[i].Name, out[j].Name
+		if a == "" {
+			a = out[i].Login
+		}
+		if b == "" {
+			b = out[j].Login
+		}
+		return strings.ToLower(a) < strings.ToLower(b)
 	})
 	return out
 }

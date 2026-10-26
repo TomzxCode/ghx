@@ -615,6 +615,7 @@ func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 		"deletions":      pr.Deletions,
 		"reviews":        reviewNodes(pr.Reviews),
 		"timelineItems":  timelineNodes(pr.Timeline),
+		"reviewRequests": reviewRequestNodes(pr.ReviewRequests),
 		"comments":       commentNodes(pr.Comments),
 	}
 }
@@ -710,6 +711,29 @@ func timelineNodes(events []github.TimelineEvent) map[string]interface{} {
 			node["requestedReviewer"] = actorNode(e.RequestedReviewer)
 		}
 		nodes = append(nodes, node)
+	}
+	return map[string]interface{}{"nodes": nodes}
+}
+
+// reviewRequestNodes mirrors the reviewRequests(first: N) { nodes { ... } }
+// connection shape. Teams carry a name and slug; people and bots carry a
+// login.
+func reviewRequestNodes(reqs []github.ReviewRequest) map[string]interface{} {
+	nodes := make([]map[string]interface{}, 0, len(reqs))
+	for _, r := range reqs {
+		typ := r.Type
+		if typ == "" {
+			typ = "User"
+		}
+		reviewer := map[string]interface{}{"__typename": typ}
+		if r.Login != "" {
+			reviewer["login"] = r.Login
+		}
+		if r.Name != "" {
+			reviewer["name"] = r.Name
+			reviewer["slug"] = r.Name
+		}
+		nodes = append(nodes, map[string]interface{}{"requestedReviewer": reviewer})
 	}
 	return map[string]interface{}{"nodes": nodes}
 }

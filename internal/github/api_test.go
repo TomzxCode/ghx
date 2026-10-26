@@ -150,6 +150,38 @@ func TestNodeToPRCarriesActorType(t *testing.T) {
 	}
 }
 
+// TestNodeToPRCarriesReviewRequests asserts pending review requests survive
+// the node conversion, including team requests, and that a missing connection
+// stays distinguishable from an empty one.
+func TestNodeToPRCarriesReviewRequests(t *testing.T) {
+	n := &prNode{ReviewRequests: &reviewRequestConnection{Nodes: []reviewRequestNode{
+		{RequestedReviewer: &requestedReviewerNode{Typename: "User", Login: "tomzx"}},
+		{RequestedReviewer: &requestedReviewerNode{Typename: "Team", Slug: "Shopify/ml-infra-gpu"}},
+	}}}
+
+	pr := nodeToPR(n)
+	want := []ReviewRequest{
+		{Type: "User", Login: "tomzx"},
+		{Type: "Team", Name: "Shopify/ml-infra-gpu"},
+	}
+	if len(pr.ReviewRequests) != len(want) {
+		t.Fatalf("review requests = %+v, want %+v", pr.ReviewRequests, want)
+	}
+	for i := range want {
+		if pr.ReviewRequests[i] != want[i] {
+			t.Errorf("review request %d = %+v, want %+v", i, pr.ReviewRequests[i], want[i])
+		}
+	}
+
+	if got := nodeToPR(&prNode{}).ReviewRequests; got != nil {
+		t.Errorf("missing connection = %+v, want nil", got)
+	}
+	empty := nodeToPR(&prNode{ReviewRequests: &reviewRequestConnection{}})
+	if empty.ReviewRequests == nil || len(empty.ReviewRequests) != 0 {
+		t.Errorf("empty connection = %+v, want a non-nil empty slice", empty.ReviewRequests)
+	}
+}
+
 // TestQueriesRequestActorTypename guards the selections: without __typename on
 // an actor the account type is unavailable no matter what the parser does.
 func TestQueriesRequestActorTypename(t *testing.T) {
@@ -170,5 +202,12 @@ func TestQueriesRequestActorTypename(t *testing.T) {
 	}
 	if !strings.Contains(prTimelineSelection, "... on Bot { __typename login }") {
 		t.Error("prTimelineSelection: requestedReviewer is missing the Bot fragment")
+	}
+	for name, q := range map[string]string{"getPR": getPRQuery, "fetchAllPRs": fetchAllPRsQuery} {
+		for _, sub := range []string{"reviewRequests(first: 100)", "... on Team { name slug }"} {
+			if !strings.Contains(q, sub) {
+				t.Errorf("%s: %q not found in query", name, sub)
+			}
+		}
 	}
 }

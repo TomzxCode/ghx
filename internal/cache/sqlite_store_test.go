@@ -118,6 +118,10 @@ func richPR(n int) *github.PullRequest {
 			{Kind: github.TimelineReadyForReview, Actor: github.Actor{Login: "alice"}, CreatedAt: utc(2024, 3, 1, 6, 0)},
 			{Kind: github.TimelineReviewRequested, Actor: github.Actor{Login: "alice"}, RequestedReviewer: github.Actor{Login: "bob"}, CreatedAt: utc(2024, 3, 1, 6, 5)},
 		},
+		ReviewRequests: []github.ReviewRequest{
+			{Type: "User", Login: "bob"},
+			{Type: "Team", Name: "ml-infra-gpu"},
+		},
 	}
 }
 
@@ -134,6 +138,9 @@ func richDraftPR(n int) *github.PullRequest {
 		UpdatedAt:   utc(2024, 6, 2, 0, 0),
 		URL:         "https://github.com/owner/repo/pull/3",
 		Body:        "WIP",
+		// An empty, non-nil list means "known to have no pending review
+		// requests", which must stay distinguishable from nil (unknown).
+		ReviewRequests: []github.ReviewRequest{},
 	}
 }
 
@@ -599,6 +606,9 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 	}
 	if len(legacyPR.Reviews) != 0 || len(legacyPR.Timeline) != 0 {
 		t.Errorf("legacy PR: got reviews=%v timeline=%v, want empty", legacyPR.Reviews, legacyPR.Timeline)
+	}
+	if legacyPR.ReviewRequests != nil {
+		t.Errorf("legacy PR: review requests = %v, want nil for an unknown value", legacyPR.ReviewRequests)
 	}
 
 	// The migrated columns are NULL: per-type freshness falls back to CachedAt.

@@ -75,10 +75,10 @@ The refresh handler calls back into the shared fetch logic extracted from `cmd/c
 | createdAt | string | RFC3339 timestamp |
 | closedAt/mergedAt | string/null | RFC3339 timestamps when set |
 | baseRefName/headRefName | string | PR branch names (empty for issues) |
-| reviewers | array | PR only: `{login, state}` entries, where state is `approved`, `changes_requested`, `commented`, `dismissed`, or `pending`; omitted for issues and PRs with no reviewers |
+| reviewers | array | PR only: `{login, name, state}` entries (`login` for people and bots, `name` for teams), where state is `approved`, `changes_requested`, `commented`, `dismissed`, or `pending`; omitted for issues and PRs with no reviewers |
 | comments | array | `{author, createdAt, bodyHTML, url}` entries |
 
-Reviewers are derived from the PR's cached reviews and timeline: each person who submitted a review or was requested as a reviewer appears once, with their latest non-comment review state (a later comment-only review does not hide an approval), `commented` when they only left comment reviews, and `pending` when their latest review request is newer than their latest review (including a re-request). Team requests, which carry no login, are skipped.
+Reviewers combine the PR's cached reviews with its current review requests (`reviewRequests`, including teams): everyone who submitted a review and everyone currently requested appears once, and the PR author is never listed. State is the latest non-comment review (a later comment-only review does not hide an approval), `commented` when they only left comment reviews, and `pending` for anyone in the current review requests (including a re-request). A cache row predating `reviewRequests` falls back to the timeline's user-only review-request events, where teams and request removals are not visible.
 
 ## API Contracts
 

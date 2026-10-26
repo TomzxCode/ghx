@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     comments        TEXT    NOT NULL,
     reviews         TEXT    NOT NULL DEFAULT '[]',
     timeline        TEXT    NOT NULL DEFAULT '[]',
+    review_requests TEXT,
     review_decision TEXT,
     additions       INTEGER NOT NULL DEFAULT 0,
     deletions       INTEGER NOT NULL DEFAULT 0,

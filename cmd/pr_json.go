@@ -37,6 +37,7 @@ var prJSONFields = map[string]func(*github.PullRequest) any{
 	"milestone":      func(pr *github.PullRequest) any { return pr.Milestone },
 	"number":         func(pr *github.PullRequest) any { return pr.Number },
 	"reviewDecision": func(pr *github.PullRequest) any { return pr.ReviewDecision },
+	"reviewRequests": func(pr *github.PullRequest) any { return pr.ReviewRequests },
 	"reviews":        func(pr *github.PullRequest) any { return pr.Reviews },
 	"state":          func(pr *github.PullRequest) any { return pr.State },
 	"timeline":       func(pr *github.PullRequest) any { return pr.Timeline },

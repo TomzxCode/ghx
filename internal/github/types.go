@@ -46,6 +46,18 @@ type PullRequest struct {
 	Deletions      int             `json:"deletions"`
 	Reviews        []PRReview      `json:"reviews,omitempty"`
 	Timeline       []TimelineEvent `json:"timeline,omitempty"`
+	// ReviewRequests is the set of reviews GitHub currently waits on. It is
+	// nil when the record predates the field (an older cache row), and empty
+	// (non-nil) when the PR has no pending review requests.
+	ReviewRequests []ReviewRequest `json:"reviewRequests"`
+}
+
+// ReviewRequest is a pending review request on a pull request. Login is set
+// for people and bots; Name is set for teams (for example a team slug).
+type ReviewRequest struct {
+	Type  string `json:"type,omitempty"`
+	Login string `json:"login,omitempty"`
+	Name  string `json:"name,omitempty"`
 }
 
 // PRReview is a single review submitted on a pull request.
