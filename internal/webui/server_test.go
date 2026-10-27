@@ -371,6 +371,174 @@ func TestDetailPRReviewers(t *testing.T) {
 	}
 }
 
+func TestDetailIssueTimeline(t *testing.T) {
+	store := newTestStore(t)
+	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	closed := created.Add(50 * time.Hour)
+	issue := makeIssue(7, "Timeline issue", "CLOSED", "", created.Add(72*time.Hour))
+	issue.CreatedAt = created
+	issue.Comments = []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: created.Add(2 * time.Hour)},
+		// A comment without a time (legacy row) must not land at the zero time.
+		{Author: github.Actor{Login: "zoe"}},
+	}
+	issue.ClosedAt = &closed
+	seedRepo(t, store, "github.com", "acme", "testrepo", []*github.Issue{issue}, nil)
+	h := newTestServer(store, nil).Handler()
+
+	rec, body := get(t, h, "/api/repos/github.com/acme/testrepo/issues/7")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	got := timelineKinds(t, body)
+	if strings.Join(got, ",") != "opened,commented,closed" {
+		t.Fatalf("timeline kinds = %v, want opened,commented,closed", got)
+	}
+	first := timelineEvents(t, body)[0]
+	if first["actor"] != "alice" || first["at"] != created.Format(time.RFC3339) {
+		t.Fatalf("unexpected opening event: %v", first)
+	}
+	if events := timelineEvents(t, body); events[1]["actor"] != "bob" {
+		t.Fatalf("unexpected comment event: %v", events[1])
+	}
+}
+
+func TestDetailPRTimeline(t *testing.T) {
+	store := newTestStore(t)
+	created := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	merged := created.Add(72 * time.Hour)
+	pr := makePR(5, "Timeline PR", "CLOSED", false, &merged, created.Add(80*time.Hour))
+	pr.CreatedAt = created
+	pr.ClosedAt = &merged
+	pr.Comments = []github.Comment{
+		{Author: github.Actor{Login: "bob"}, CreatedAt: created.Add(2 * time.Hour)},
+	}
+	pr.Reviews = []github.PRReview{
+		{Author: github.Actor{Login: "dave"}, State: "APPROVED", SubmittedAt: created.Add(time.Hour)},
+	}
+	pr.Timeline = []github.TimelineEvent{
+		{Kind: github.TimelineReadyForReview, Actor: github.Actor{Login: "carol"}, CreatedAt: created.Add(30 * time.Minute)},
+		{Kind: github.TimelineConvertedToDraft, Actor: github.Actor{Login: "carol"}, CreatedAt: created.Add(45 * time.Minute)},
+		{Kind: github.TimelineReviewRequested, Actor: github.Actor{Login: "carol"}, RequestedReviewer: github.Actor{Login: "erin"}, CreatedAt: created.Add(90 * time.Minute)},
+	}
+	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
+	h := newTestServer(store, nil).Handler()
+
+	rec, body := get(t, h, "/api/repos/github.com/acme/testrepo/prs/5")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	want := "opened,ready_for_review,converted_to_draft,review,review_requested,commented,merged"
+	if got := strings.Join(timelineKinds(t, body), ","); got != want {
+		t.Fatalf("timeline kinds = %s, want %s", got, want)
+	}
+	events := timelineEvents(t, body)
+	if events[3]["detail"] != "approved" || events[3]["actor"] != "dave" {
+		t.Fatalf("unexpected review event: %v", events[3])
+	}
+	if events[4]["detail"] != "erin" {
+		t.Fatalf("expected requested reviewer, got %v", events[4])
+	}
+	for _, ev := range events {
+		if ev["kind"] == "closed" {
+			t.Fatalf("merged pull request reported a separate close event: %v", events)
+		}
+	}
+}
+
+// TestDetailPRTimelineClosed covers a pull request closed without merging: it
+// reports a close event instead of a merge.
+func TestDetailPRTimelineClosed(t *testing.T) {
+	store := newTestStore(t)
+	created := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	closed := created.Add(3 * time.Hour)
+	pr := makePR(6, "Abandoned PR", "CLOSED", false, nil, closed)
+	pr.CreatedAt = created
+	pr.ClosedAt = &closed
+	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
+	h := newTestServer(store, nil).Handler()
+
+	_, body := get(t, h, "/api/repos/github.com/acme/testrepo/prs/6")
+	if got := strings.Join(timelineKinds(t, body), ","); got != "opened,closed" {
+		t.Fatalf("timeline kinds = %s, want opened,closed", got)
+	}
+}
+
+// TestDetailTimelineCondense checks that consecutive events by the same actor
+// with the same kind and detail fold into one entry with a count, while a
+// different actor or a different review state starts a new entry.
+func TestDetailTimelineCondense(t *testing.T) {
+	store := newTestStore(t)
+	created := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	pr := makePR(8, "Chatty PR", "OPEN", false, nil, created.Add(5*time.Hour))
+	pr.CreatedAt = created
+	for i := 0; i < 5; i++ {
+		pr.Reviews = append(pr.Reviews, github.PRReview{
+			Author: github.Actor{Login: "tomzx"}, State: "COMMENTED",
+			SubmittedAt: created.Add(time.Duration(i+1) * time.Minute),
+		})
+	}
+	pr.Comments = []github.Comment{
+		// A different actor breaks the run.
+		{Author: github.Actor{Login: "alice"}, CreatedAt: created.Add(10 * time.Minute)},
+		{Author: github.Actor{Login: "tomzx"}, CreatedAt: created.Add(11 * time.Minute)},
+		{Author: github.Actor{Login: "tomzx"}, CreatedAt: created.Add(12 * time.Minute)},
+	}
+	// Consecutive reviews with different states are different events.
+	pr.Reviews = append(pr.Reviews,
+		github.PRReview{Author: github.Actor{Login: "bob"}, State: "APPROVED", SubmittedAt: created.Add(20 * time.Minute)},
+		github.PRReview{Author: github.Actor{Login: "bob"}, State: "CHANGES_REQUESTED", SubmittedAt: created.Add(21 * time.Minute)},
+	)
+	seedRepo(t, store, "github.com", "acme", "testrepo", nil, []*github.PullRequest{pr})
+	h := newTestServer(store, nil).Handler()
+
+	_, body := get(t, h, "/api/repos/github.com/acme/testrepo/prs/8")
+	events := timelineEvents(t, body)
+	want := "opened,review,commented,commented,review,review"
+	if got := strings.Join(timelineKinds(t, body), ","); got != want {
+		t.Fatalf("timeline kinds = %s, want %s", got, want)
+	}
+	wantCounts := []int{0, 5, 0, 2, 0, 0}
+	for i, ev := range events {
+		count := 0
+		if raw, ok := ev["count"].(float64); ok {
+			count = int(raw)
+		}
+		if count != wantCounts[i] {
+			t.Errorf("event %d (%v) count = %d, want %d", i, ev["kind"], count, wantCounts[i])
+		}
+	}
+	// The condensed entry keeps the first event's time.
+	firstAt := created.Add(time.Minute).Format(time.RFC3339)
+	if events[1]["at"] != firstAt {
+		t.Fatalf("condensed review at %v, want %s", events[1]["at"], firstAt)
+	}
+}
+
+func timelineEvents(t *testing.T, body map[string]any) []map[string]any {
+	t.Helper()
+	raw, ok := body["timeline"].([]any)
+	if !ok {
+		t.Fatalf("no timeline in response: %v", body)
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, e := range raw {
+		out = append(out, e.(map[string]any))
+	}
+	return out
+}
+
+func timelineKinds(t *testing.T, body map[string]any) []string {
+	t.Helper()
+	events := timelineEvents(t, body)
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		kind, _ := e["kind"].(string)
+		out = append(out, kind)
+	}
+	return out
+}
+
 // TestDetailPRReviewersLegacyTimeline covers cached PRs that predate the
 // reviewRequests field: reviewers come from the timeline's user-only requests,
 // and the pull request author is still excluded.

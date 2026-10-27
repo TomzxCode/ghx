@@ -66,6 +66,35 @@
     return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
+  // offsetTime formats a timestamp as a signed offset from a reference time,
+  // compact enough for the timeline strip ("+2d 5h"). The reference is the
+  // item's creation, so the first event reads "start".
+  function offsetTime(fromIso, iso) {
+    if (!fromIso || !iso) return '';
+    const ms = new Date(iso).getTime() - new Date(fromIso).getTime();
+    if (!isFinite(ms)) return '';
+    const s = Math.max(0, Math.floor(ms / 1000));
+    if (s === 0) return 'start';
+    if (s < 60) return '+' + s + 's';
+    const m = Math.floor(s / 60);
+    if (m < 60) return '+' + m + 'm';
+    const h = Math.floor(m / 60);
+    if (h < 24) return '+' + h + 'h' + (m % 60 ? ' ' + (m % 60) + 'm' : '');
+    const d = Math.floor(h / 24);
+    return '+' + d + 'd' + (h % 24 ? ' ' + (h % 24) + 'h' : '');
+  }
+
+  // reviewSummary turns a review state into the timeline's verb phrase.
+  function reviewSummary(state) {
+    switch (state) {
+      case 'approved': return 'approved these changes';
+      case 'changes_requested': return 'requested changes';
+      case 'commented': return 'left a review';
+      case 'dismissed': return 'had a review dismissed';
+      default: return 'reviewed';
+    }
+  }
+
   function labelStyle(l) {
     if (!l.color) return { background: '#d0d7de', color: '#24292f' };
     const hex = l.color.replace('#', '');
@@ -83,6 +112,16 @@
     repos: [],
     route: parseHash(),
     theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light',
+    // timelineMode picks how the detail timeline shows event times: absolute
+    // timestamps, or offsets from the item's creation. It persists like the
+    // theme choice.
+    timelineMode: (() => {
+      try {
+        return localStorage.getItem('ghx-timeline-mode') === 'absolute' ? 'absolute' : 'relative';
+      } catch (e) {
+        return 'relative';
+      }
+    })(),
     tab: 'issues',
     stateFilter: 'open',
     query: '',
@@ -487,6 +526,45 @@
         relTime,
         fmtDate,
         labelStyle,
+        setTimelineMode(mode) {
+          state.timelineMode = mode === 'absolute' ? 'absolute' : 'relative';
+          try { localStorage.setItem('ghx-timeline-mode', state.timelineMode); } catch (e) { /* private mode */ }
+        },
+        timelineWhen(at) {
+          const createdAt = state.detail && state.detail.createdAt;
+          return state.timelineMode === 'absolute' ? fmtDate(at) : offsetTime(createdAt, at);
+        },
+        timelineWhenTitle(at) {
+          const createdAt = state.detail && state.detail.createdAt;
+          const offset = offsetTime(createdAt, at);
+          if (state.timelineMode !== 'absolute') return fmtDate(at);
+          return offset === 'start' ? fmtDate(at) : offset.replace(/^\+/, '') + ' after opening';
+        },
+        timelineDot(ev) {
+          if (ev.kind === 'review' && ev.detail) return 'dot-' + ev.detail;
+          return 'dot-' + ev.kind;
+        },
+        timelineText(ev) {
+          const d = state.detail || {};
+          const noun = d.kind === 'pr' ? 'pull request' : 'issue';
+          const actor = ev.actor ? ev.actor + ' ' : '';
+          let text;
+          switch (ev.kind) {
+            case 'opened': text = actor + 'opened this ' + noun; break;
+            case 'commented': text = actor + 'commented'; break;
+            case 'closed': text = actor + 'closed this ' + noun; break;
+            case 'merged': text = actor + 'merged this ' + noun; break;
+            case 'review': text = actor + reviewSummary(ev.detail); break;
+            case 'ready_for_review': text = actor + 'marked this ' + noun + ' as ready for review'; break;
+            case 'converted_to_draft': text = actor + 'converted this ' + noun + ' to draft'; break;
+            case 'review_requested':
+              text = actor + 'requested a review' + (ev.detail ? ' from ' + ev.detail : '');
+              break;
+            default: text = actor + ev.kind;
+          }
+          if (ev.count > 1) text += ' (x' + ev.count + ')';
+          return text;
+        },
         setTab,
         setFilter,
         activeTab,
@@ -725,6 +803,37 @@
             </span>
           </div>
         </div>
+
+        <section class="timeline-bar card bg-base-100 border border-base-300 mt-3" v-if="state.detail.timeline && state.detail.timeline.length">
+          <div class="flex items-center justify-between gap-3 px-4 pt-3">
+            <h2 class="text-sm font-semibold">Timeline</h2>
+            <div class="join" role="group" aria-label="Timeline time format">
+              <button
+                type="button"
+                class="btn btn-xs join-item"
+                :class="state.timelineMode === 'absolute' ? 'btn-active' : 'btn-ghost'"
+                :aria-pressed="state.timelineMode === 'absolute'"
+                title="Show absolute timestamps"
+                @click="setTimelineMode('absolute')"
+              >Absolute</button>
+              <button
+                type="button"
+                class="btn btn-xs join-item"
+                :class="state.timelineMode === 'relative' ? 'btn-active' : 'btn-ghost'"
+                :aria-pressed="state.timelineMode === 'relative'"
+                title="Show time since the item was created"
+                @click="setTimelineMode('relative')"
+              >Relative</button>
+            </div>
+          </div>
+          <ol class="timeline-track px-4 pb-2">
+            <li class="timeline-event" v-for="(ev, i) in state.detail.timeline" :key="i">
+              <time class="timeline-when" :datetime="ev.at" :title="timelineWhenTitle(ev.at)">{{ timelineWhen(ev.at) }}</time>
+              <span class="timeline-dot" :class="timelineDot(ev)" aria-hidden="true"></span>
+              <span class="timeline-text">{{ timelineText(ev) }}</span>
+            </li>
+          </ol>
+        </section>
 
         <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_260px] gap-6 pt-4">
           <div class="detail-main min-w-0">

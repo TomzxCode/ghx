@@ -235,22 +235,39 @@ type ReviewerView struct {
 	State string `json:"state"`
 }
 
+// TimelineEventView is one entry in an item's timeline: what happened, who did
+// it, and when. Kind is a stable identifier the UI maps to a label
+// ("opened", "commented", "closed", "merged", "review",
+// "ready_for_review", "converted_to_draft", "review_requested"). Detail
+// carries the extra subject some kinds need: the review state for "review",
+// and the requested reviewer for "review_requested". Count is how many
+// consecutive identical events the entry stands for, omitted when it stands
+// for one.
+type TimelineEventView struct {
+	Kind   string    `json:"kind"`
+	Actor  string    `json:"actor,omitempty"`
+	Detail string    `json:"detail,omitempty"`
+	At     time.Time `json:"at"`
+	Count  int       `json:"count,omitempty"`
+}
+
 // ItemDetail is the detail-view projection of an issue or PR. ItemSummary is
 // embedded, so its fields are flattened into the JSON object. CachedAt is the
 // time the item's cache row was last written.
 type ItemDetail struct {
 	ItemSummary
-	BodyHTML    string         `json:"bodyHTML"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	CachedAt    time.Time      `json:"cachedAt"`
-	ClosedAt    *time.Time     `json:"closedAt"`
-	MergedAt    *time.Time     `json:"mergedAt"`
-	Assignees   []string       `json:"assignees"`
-	Milestone   *MilestoneInfo `json:"milestone"`
-	BaseRefName string         `json:"baseRefName,omitempty"`
-	HeadRefName string         `json:"headRefName,omitempty"`
-	Reviewers   []ReviewerView `json:"reviewers,omitempty"`
-	Comments    []CommentView  `json:"comments"`
+	BodyHTML    string              `json:"bodyHTML"`
+	CreatedAt   time.Time           `json:"createdAt"`
+	CachedAt    time.Time           `json:"cachedAt"`
+	ClosedAt    *time.Time          `json:"closedAt"`
+	MergedAt    *time.Time          `json:"mergedAt"`
+	Assignees   []string            `json:"assignees"`
+	Milestone   *MilestoneInfo      `json:"milestone"`
+	BaseRefName string              `json:"baseRefName,omitempty"`
+	HeadRefName string              `json:"headRefName,omitempty"`
+	Reviewers   []ReviewerView      `json:"reviewers,omitempty"`
+	Comments    []CommentView       `json:"comments"`
+	Timeline    []TimelineEventView `json:"timeline"`
 }
 
 // RepoSummary describes a cached repository.
@@ -747,6 +764,7 @@ func issueDetail(issue *github.Issue) *ItemDetail {
 		Assignees:   actorLogins(issue.Assignees),
 		Milestone:   milestoneInfo(issue.Milestone),
 		Comments:    commentViews(issue.Comments),
+		Timeline:    issueTimeline(issue),
 	}
 }
 
@@ -763,7 +781,101 @@ func prDetail(pr *github.PullRequest) *ItemDetail {
 		HeadRefName: pr.HeadRefName,
 		Reviewers:   prReviewers(pr),
 		Comments:    commentViews(pr.Comments),
+		Timeline:    prTimeline(pr),
 	}
+}
+
+// issueTimeline assembles the issue's events: it was opened, each comment was
+// left, and it was closed. Comments without a recorded time (legacy cache
+// rows) are skipped rather than placed at the zero time.
+func issueTimeline(issue *github.Issue) []TimelineEventView {
+	events := []TimelineEventView{{Kind: "opened", Actor: issue.Author.Login, At: issue.CreatedAt}}
+	events = append(events, commentTimeline(issue.Comments)...)
+	if issue.ClosedAt != nil {
+		events = append(events, TimelineEventView{Kind: "closed", At: *issue.ClosedAt})
+	}
+	return sortTimeline(events)
+}
+
+// prTimeline assembles the pull request's events: opened, comments, submitted
+// reviews, draft/ready and review-request transitions, then the merge or
+// close. Merging closes the pull request too, so a merged PR reports "merged"
+// only, never both.
+func prTimeline(pr *github.PullRequest) []TimelineEventView {
+	events := []TimelineEventView{{Kind: "opened", Actor: pr.Author.Login, At: pr.CreatedAt}}
+	events = append(events, commentTimeline(pr.Comments)...)
+	for _, review := range pr.Reviews {
+		if review.SubmittedAt.IsZero() {
+			continue
+		}
+		events = append(events, TimelineEventView{
+			Kind:   "review",
+			Actor:  review.Author.Login,
+			Detail: strings.ToLower(review.State),
+			At:     review.SubmittedAt,
+		})
+	}
+	for _, ev := range pr.Timeline {
+		if ev.CreatedAt.IsZero() {
+			continue
+		}
+		events = append(events, TimelineEventView{
+			Kind:   string(ev.Kind),
+			Actor:  ev.Actor.Login,
+			Detail: ev.RequestedReviewer.Login,
+			At:     ev.CreatedAt,
+		})
+	}
+	if pr.MergedAt != nil {
+		events = append(events, TimelineEventView{Kind: "merged", At: *pr.MergedAt})
+	} else if pr.ClosedAt != nil {
+		events = append(events, TimelineEventView{Kind: "closed", At: *pr.ClosedAt})
+	}
+	return sortTimeline(events)
+}
+
+// commentTimeline projects comments onto timeline events.
+func commentTimeline(comments []github.Comment) []TimelineEventView {
+	events := make([]TimelineEventView, 0, len(comments))
+	for _, c := range comments {
+		if c.CreatedAt.IsZero() {
+			continue
+		}
+		events = append(events, TimelineEventView{Kind: "commented", Actor: c.Author.Login, At: c.CreatedAt})
+	}
+	return events
+}
+
+// sortTimeline orders events oldest first, keeping the order they were
+// appended in when two events share a timestamp (the opening event comes
+// first because it is appended first), then folds runs of identical events.
+func sortTimeline(events []TimelineEventView) []TimelineEventView {
+	sort.SliceStable(events, func(i, j int) bool { return events[i].At.Before(events[j].At) })
+	return condenseTimeline(events)
+}
+
+// condenseTimeline folds consecutive events by the same actor with the same
+// kind and detail into the first one and counts them, so a reviewer who left
+// five comment reviews in a row reads as one node ("x5") instead of five.
+// Events are condensed only after sorting, so a run is consecutive in time.
+// Count stays zero (omitted from the JSON) when an event stands alone.
+func condenseTimeline(events []TimelineEventView) []TimelineEventView {
+	out := make([]TimelineEventView, 0, len(events))
+	for _, ev := range events {
+		if n := len(out); n > 0 {
+			last := &out[n-1]
+			if last.Kind == ev.Kind && last.Actor == ev.Actor && last.Detail == ev.Detail {
+				if last.Count == 0 {
+					last.Count = 2
+				} else {
+					last.Count++
+				}
+				continue
+			}
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // prReviewers lists the pull request's reviewers for the detail sidebar. It

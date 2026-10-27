@@ -77,8 +77,13 @@ The refresh handler calls back into the shared fetch logic extracted from `cmd/c
 | baseRefName/headRefName | string | PR branch names (empty for issues) |
 | reviewers | array | PR only: `{login, name, state}` entries (`login` for people and bots, `name` for teams), where state is `approved`, `changes_requested`, `commented`, `dismissed`, or `pending`; omitted for issues and PRs with no reviewers |
 | comments | array | `{author, createdAt, bodyHTML, url}` entries |
+| timeline | array | `{kind, actor, detail, at, count}` entries, oldest first; kind is `opened`, `commented`, `closed`, `merged`, `review`, `ready_for_review`, `converted_to_draft`, or `review_requested`; `count` is present only when the entry stands for several consecutive identical events |
 
 Reviewers combine the PR's cached reviews with its current review requests (`reviewRequests`, including teams): everyone who submitted a review and everyone currently requested appears once, and the PR author is never listed. State is the latest non-comment review (a later comment-only review does not hide an approval), `commented` when they only left comment reviews, and `pending` for anyone in the current review requests (including a re-request). A cache row predating `reviewRequests` falls back to the timeline's user-only review-request events, where teams and request removals are not visible.
+
+The timeline is assembled from the cached record: the opening event, every comment, every submitted review (with `detail` set to its lowercase state), the PR's tracked draft/ready and review-request events, and the merge or close. Merging closes a pull request too, so a merged PR carries a `merged` event and no `closed` event. `detail` carries the requested reviewer's login for `review_requested`. Events with no recorded time are skipped, and ties keep insertion order (the opening event first).
+
+After sorting, runs of consecutive events with the same kind, actor, and detail are condensed into the first event of the run, with `count` set to the number of events it stands for (the UI appends `(xN)`). A different actor, kind, or detail starts a new entry, so a later approval is never folded into an earlier comment review. The condensed entry keeps the first event's timestamp.
 
 ## API Contracts
 
@@ -127,7 +132,7 @@ Returns `ItemDetail` as JSON; 404 when the item is not cached.
 | Root app | Reactive store: repos, current repo, tab, state filter, items, detail, theme, refreshing map; hash parsing |
 | RepoSelect | Dropdown of cached repositories with issue/PR counts |
 | ItemList | GitHub-style rows: state icon (open green, closed purple for issues, merged purple, draft grey for PRs), number, title, colored label chips, author, comment count, updated date |
-| ItemDetail | State badge, title, meta line, sidebar (reviewers for PRs, labels, assignees, milestone, GitHub link), rendered markdown body, comment timeline |
+| ItemDetail | State badge, title, meta line, horizontal event timeline with an absolute/relative time toggle (persisted), sidebar (reviewers for PRs, labels, assignees, milestone, GitHub link), rendered markdown body, comment list |
 | ThemeToggle | Switches daisyUI's `data-theme` between light and dark; persists to localStorage; defaults to the system preference |
 | Palette | Overlay triggered by Ctrl+P/Cmd+P or `/`; fuzzy filter over `#N title` entries; arrow keys + Enter to jump, Esc to close |
 

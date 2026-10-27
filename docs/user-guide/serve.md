@@ -21,7 +21,11 @@ ghx serve --host 127.0.0.1 --port 9000 --open
 
 - **Repository switcher**: the dropdown in the top bar lists all cached repositories (as produced by `ghx repo list`) with their issue and PR counts.
 - **List view**: tabs for Issues and Pull requests with open/closed/all filters (merged for PRs) and a text filter over titles.
-- **Detail view**: click a row to see the state badge, metadata (author, dates, labels, assignees, milestone, branches), the rendered markdown body, and the comment timeline. A pull request's sidebar also lists its reviewers (people and teams) with their latest state (approved, changes requested, commented, dismissed, or pending); the pull request author is not listed.
+- **Detail view**: click a row to see the state badge, metadata (author, dates, labels, assignees, milestone, branches), a timeline of the item's events, the rendered markdown body, and the comment thread.
+  The timeline sits above the body and records the opening, comments, submitted reviews, draft and ready-for-review transitions, review requests, and the merge or close.
+  A run of identical events by the same person (for example five comment reviews in a row) is condensed into one node labeled with a count, such as `(x5)`.
+  Its **Absolute** / **Relative** toggle switches between absolute timestamps and offsets from the item's creation (for example `+2d 5h`); the choice is remembered in your browser.
+  A pull request's sidebar also lists its reviewers (people and teams) with their latest state (approved, changes requested, commented, dismissed, or pending); the pull request author is not listed.
 - **Search palette**: press <kbd>Ctrl</kbd>+<kbd>P</kbd> (or <kbd>Cmd</kbd>+<kbd>P</kbd>, or `/`) to open the palette.
   Type to fuzzy-search issues and PRs by number or title, use <kbd>↑</kbd>/<kbd>↓</kbd> and <kbd>Enter</kbd> to jump, and <kbd>Tab</kbd> to switch the search scope between the current repository and all cached repositories.
 - **Theme**: the sun/moon button in the top bar switches between light and dark themes.
