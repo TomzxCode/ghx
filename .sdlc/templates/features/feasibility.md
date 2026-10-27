@@ -1,6 +1,7 @@
 ---
 title: "<Feature Name>"
 status: draft
+session_link: "<filled by skill>"
 ---
 
 # Feasibility Assessment: <Feature Name>
@@ -49,6 +50,10 @@ status: draft
 **Conditions (if any):**
 
 - <Condition that must be met before proceeding to requirements>
+
+## Assumptions
+
+- <Belief the feasibility assessment depends on but has not verified. Promote risky ones via /create-assumption.>
 
 ## Open Questions
 

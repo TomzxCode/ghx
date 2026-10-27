@@ -12,7 +12,7 @@ session_link: "http://localhost:10000/?session=ses_fbbd6ecf9ffeBDsTFy7ccdFJM6"
 
 This feature *is* the telemetry, so the measurement plan is about the events the tool records locally, not about product analytics.
 The goals are to make per-call API and cache cost measurable, to make cache-population decisions answerable with data, and to feed measured latency distributions into the simulation generator.
-Everything stays on the machine: ghx is offline-first by architectural decision (`.sdlc/context/architecture.md`, `.sdlc/features/FEAT-0008-sqlite-backend/telemetry.md`), so there is no analytics platform, no upload, and no user tracking.
+Everything stays on the machine: ghx is offline-first by architectural decision (`.sdlc/context/architecture.md`, `.sdlc/features/8-sqlite-backend/telemetry.md`), so there is no analytics platform, no upload, and no user tracking.
 
 ## Success Metrics
 

@@ -1,6 +1,7 @@
 ---
 title: "<Feature Name>"
 status: draft
+session_link: "<filled by skill>"
 ---
 
 # Implementation Plan: <Feature Name>
@@ -20,6 +21,20 @@ status: draft
 **Deliverables:**
 - [ ] <Deliverable>
 
+## Phase Dependencies
+
+```mermaid
+flowchart TD
+    P1["Phase 1: <name>"]
+    P2["Phase 2: <name>"]
+    P3["Phase 3: <name>"]
+    P1 --> P2
+    P2 --> P3
+    P1 --> P3
+```
+
+The diagram shows parallel phases (no edge between them) and unintended serialization (an edge that should not exist).
+
 ## Milestones
 
 | Milestone | Phase | Success Criteria |
@@ -38,7 +53,23 @@ status: draft
 |---|---|---|---|
 | <description> | High / Med / Low | High / Med / Low | <action> |
 
+## Assumptions
+
+- <Belief the plan depends on but has not verified. Promote risky ones via /create-assumption.>
+
 ## Timeline
 
-| Phase | Start | End | Notes |
-|---|---|---|---|
+Render the timeline as a Mermaid `gantt` when calendar dates are estimable, so sequencing and parallel tracks are easy to inspect.
+When no calendar can be committed yet, keep a duration-only table instead.
+
+```mermaid
+gantt
+    title <Feature Name>
+    dateFormat YYYY-MM-DD
+    section Phase 1
+    <phase or deliverable> :p1, 2026-01-01, 5d
+    section Phase 2
+    <phase or deliverable> :p2, after p1, 8d
+    section Phase 3
+    <phase or deliverable> :p3, after p2, 3d
+```

@@ -1,6 +1,7 @@
 ---
 title: "<Feature Name>"
 status: draft
+session_link: "<filled by skill>"
 ---
 
 # Specification: <Feature Name>
@@ -11,7 +12,7 @@ status: draft
 
 ## Architecture
 
-<ASCII diagram or description showing components and their relationships.>
+<Mermaid diagram or description showing components and their relationships.>
 
 ## Data Models
 
@@ -23,19 +24,14 @@ status: draft
 
 ## API Contracts
 
-### <METHOD /path>
+The normative contract is in [`api.yaml`](api.yaml) (OpenAPI 3), written alongside this document whenever the specification defines an API surface.
+The table below is a summary; request/response schemas, error response bodies, and auth requirements are in `api.yaml`.
 
-**Request**
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-
-**Response (200 OK)**
-
-| Field | Type | Description |
+| Method | Path | Purpose |
 |---|---|---|
+| POST | /path | <one-line purpose> |
 
-**Error Responses**
+Error codes shared across endpoints:
 
 | Status | Code | Description |
 |---|---|---|
@@ -45,8 +41,16 @@ status: draft
 
 ### <Flow Name>
 
-```
-Actor → Service → DB
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant S as Service
+    participant DB as DB
+    C->>S: POST /thing
+    S->>DB: INSERT thing
+    DB-->>S: ok
+    S-->>C: 201 Created
 ```
 
 ## Technical Decisions

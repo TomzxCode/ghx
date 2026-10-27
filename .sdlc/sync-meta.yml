@@ -1,0 +1,172 @@
+# SDLC Sync Metadata
+# Tracks which version of agents was used for the last sync.
+# Used by sync-sdlc to detect process/template changes and migrate existing files.
+agents_ref: ba8ed18fe5dda1d3276e9487f5697c3a6b1a472d
+agents_remote: https://github.com/tomzx/agents.git
+last_synced: 2026-10-27
+code_ref: a438206aadf96a1e37ef70651505753867ef153a
+code_index:
+  "p3-issue-browsing":
+    - cmd/issue.go
+    - internal/github/api.go
+    - internal/github/types.go
+    - internal/cache/filter.go
+    - internal/github/api_test.go
+    - internal/cache/filter_test.go
+    - internal/cache/item_freshness_test.go
+    - internal/cache/query_equiv_test.go
+    - internal/integration/cli_test.go
+  "p4-pr-browsing":
+    - cmd/pr.go
+    - cmd/pr_json.go
+    - cmd/readcache.go
+    - internal/github/api.go
+    - internal/github/types.go
+    - cmd/pr_json_test.go
+    - cmd/readcache_test.go
+    - internal/github/api_test.go
+    - internal/integration/cli_test.go
+  "p5-cache-management":
+    - cmd/cache.go
+    - cmd/cachehit.go
+    - cmd/readcache.go
+    - internal/cache/store.go
+    - internal/cache/file_store.go
+    - internal/cache/sqlite_store.go
+    - internal/cache/migrate.go
+    - internal/cache/normalize.go
+    - internal/cache/normalize_keys.go
+    - internal/cache/instrumented.go
+    - internal/cache/filter.go
+    - cmd/cache_fresh_test.go
+    - cmd/cache_parallel_test.go
+    - cmd/cache_since_test.go
+    - cmd/cache_type_test.go
+    - cmd/readcache_test.go
+    - cmd/storage_test.go
+    - internal/cache/store_test.go
+    - internal/cache/migrate_test.go
+    - internal/cache/item_freshness_test.go
+    - internal/cache/per_type_freshness_test.go
+  "p6-repository-listing":
+    - cmd/repo.go
+    - cmd/cachehit.go
+    - internal/cache/store.go
+    - internal/cache/sqlite_store.go
+    - cmd/repo_test.go
+    - internal/cache/sqlite_store_test.go
+    - internal/cache/normalize_test.go
+  "p7-mock-server":
+    - cmd/mock.go
+    - cmd/mock_latency.go
+    - internal/mockserver/server.go
+    - internal/mockserver/scenario.go
+    - internal/mockserver/simulation.go
+    - internal/mockserver/latency.go
+    - internal/mockserver/types.go
+    - cmd/mock_test.go
+    - internal/mockserver/server_test.go
+    - internal/mockserver/simulation_test.go
+    - internal/mockserver/latency_test.go
+  "p8-stats-report-analytics":
+    - cmd/stats.go
+    - cmd/stats_report.go
+    - cmd/serve_stats.go
+    - cmd/stats_test.go
+    - cmd/serve_stats_test.go
+  "p9-web-ui":
+    - cmd/serve.go
+    - cmd/serve_stats.go
+    - cmd/serve_process.go
+    - internal/webui/server.go
+    - internal/webui/render.go
+    - internal/webui/process.go
+    - internal/webui/assets/
+    - cmd/serve_test.go
+    - cmd/serve_stats_test.go
+    - cmd/serve_process_test.go
+    - internal/webui/server_test.go
+    - internal/webui/render_test.go
+    - internal/webui/process_test.go
+  "1-sqlite-backend":
+    - internal/cache/sqlite_store.go
+    - internal/cache/schema.sql
+    - internal/cache/migrate.go
+    - internal/cache/normalize.go
+    - internal/cache/normalize_keys.go
+    - internal/cache/store.go
+    - internal/cache/sqlite_store_test.go
+    - internal/cache/migrate_test.go
+    - internal/cache/normalize_test.go
+    - internal/cache/query_equiv_test.go
+    - internal/cache/store_test.go
+    - internal/cache/per_type_freshness_test.go
+  "p10-repository-deletion":
+    - cmd/repo.go
+    - internal/cache/store.go
+    - internal/cache/sqlite_store.go
+    - internal/cache/file_store.go
+    - cmd/repo_test.go
+    - internal/cache/store_test.go
+    - internal/cache/sqlite_store_test.go
+  "p11-json-rpc":
+    - cmd/rpc.go
+    - cmd/remote.go
+    - internal/rpc/server.go
+    - internal/rpc/client.go
+    - internal/rpc/protocol.go
+    - internal/rpc/methods_read.go
+    - internal/rpc/methods_cache.go
+    - cmd/rpc_test.go
+    - internal/rpc/methods_test.go
+    - internal/rpc/protocol_test.go
+  "p12-cli-e2e-tests":
+    - internal/integration/integration_test.go
+    - internal/integration/cli_test.go
+    - internal/integration/cli_live_test.go
+  "25-operational-telemetry":
+    - cmd/telemetry.go
+    - cmd/telemetry_toggle.go
+    - cmd/telemetry_wiring.go
+    - internal/telemetry/telemetry.go
+    - internal/telemetry/config.go
+    - internal/telemetry/store.go
+    - internal/telemetry/aggregator.go
+    - internal/telemetry/async.go
+    - internal/github/telemetry.go
+    - internal/cache/instrumented.go
+    - cmd/telemetry_test.go
+    - cmd/telemetry_wiring_test.go
+    - internal/telemetry/telemetry_test.go
+    - internal/telemetry/config_test.go
+    - internal/github/telemetry_test.go
+  "p1-process-flow-report":
+    - cmd/process.go
+    - cmd/serve_process.go
+    - internal/processflow/processflow.go
+    - internal/processflow/github.go
+    - internal/processreport/charts.go
+    - internal/processreport/template.go
+    - internal/processreport/view.go
+    - internal/webui/process.go
+    - cmd/serve_process_test.go
+    - internal/processflow/processflow_test.go
+    - internal/processreport/report_test.go
+    - internal/webui/process_test.go
+  "p2-comment-operations":
+    - cmd/pr_comment.go
+    - cmd/pr_comment_edit.go
+    - cmd/pr_comment_delete.go
+    - cmd/issue_comment.go
+    - cmd/issue_comment_edit.go
+    - cmd/issue_comment_delete.go
+    - cmd/pr_review.go
+    - cmd/pr_review_stash.go
+    - cmd/pr_threads.go
+    - cmd/pr_threads_resolve.go
+    - internal/gh/client.go
+    - internal/gh/issue.go
+    - internal/gh/pr.go
+    - internal/gh/stash.go
+    - cmd/pr_threads_resolve_test.go
+    - internal/gh/pr_test.go

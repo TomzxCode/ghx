@@ -62,26 +62,26 @@ nav:
     - Use Cases: sdlc/context/use-cases.md
   - Features:
     - Issue Browsing:
-      - Requirements: sdlc/features/FEAT-0001-issue-browsing/requirements.md
-      - Specification: sdlc/features/FEAT-0001-issue-browsing/specification.md
+      - Requirements: sdlc/features/p3-issue-browsing/requirements.md
+      - Specification: sdlc/features/p3-issue-browsing/specification.md
     - PR Browsing:
-      - Requirements: sdlc/features/FEAT-0002-pr-browsing/requirements.md
-      - Specification: sdlc/features/FEAT-0002-pr-browsing/specification.md
+      - Requirements: sdlc/features/p4-pr-browsing/requirements.md
+      - Specification: sdlc/features/p4-pr-browsing/specification.md
     - Cache Management:
-      - Requirements: sdlc/features/FEAT-0003-cache-management/requirements.md
-      - Specification: sdlc/features/FEAT-0003-cache-management/specification.md
+      - Requirements: sdlc/features/p5-cache-management/requirements.md
+      - Specification: sdlc/features/p5-cache-management/specification.md
     - Repository Listing:
-      - Requirements: sdlc/features/FEAT-0004-repository-listing/requirements.md
-      - Specification: sdlc/features/FEAT-0004-repository-listing/specification.md
+      - Requirements: sdlc/features/p6-repository-listing/requirements.md
+      - Specification: sdlc/features/p6-repository-listing/specification.md
     - Mock Server:
-      - Requirements: sdlc/features/FEAT-0005-mock-server/requirements.md
-      - Specification: sdlc/features/FEAT-0005-mock-server/specification.md
+      - Requirements: sdlc/features/p7-mock-server/requirements.md
+      - Specification: sdlc/features/p7-mock-server/specification.md
     - Stats Report Analytics:
-      - Requirements: sdlc/features/FEAT-0006-stats-report-analytics/requirements.md
-      - Specification: sdlc/features/FEAT-0006-stats-report-analytics/specification.md
+      - Requirements: sdlc/features/p8-stats-report-analytics/requirements.md
+      - Specification: sdlc/features/p8-stats-report-analytics/specification.md
     - Web UI:
-      - Requirements: sdlc/features/FEAT-0007-web-ui/requirements.md
-      - Specification: sdlc/features/FEAT-0007-web-ui/specification.md
+      - Requirements: sdlc/features/p9-web-ui/requirements.md
+      - Specification: sdlc/features/p9-web-ui/specification.md
 
 markdown_extensions:
   - pymdownx.highlight:

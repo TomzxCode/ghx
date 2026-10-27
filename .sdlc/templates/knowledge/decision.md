@@ -1,18 +1,19 @@
 ---
 status: Proposed
+session_link: "<filled by skill>"
 ---
 
 # Decision: <Short title — the decision as a noun phrase>
 
 **Date:** <YYYY-MM-DD>
-**Status:** <Proposed | Accepted | Deprecated | Superseded by [NNNN]>
+**Status:** <Proposed | Accepted | Deprecated | Superseded by [N]>
 **Deciders:** <Names or roles>
 
 ---
 
 ## Context
 
-<Describe the situation and forces at play. What problem does this decision address?
+<Describe the situation and the factors involved. What problem does this decision address?
 Include relevant constraints: performance, security, team capability, deadlines, existing architecture.>
 
 ## Options Considered

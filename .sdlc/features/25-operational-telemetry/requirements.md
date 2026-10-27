@@ -61,7 +61,7 @@ Order rows by priority: Must first, then Should, then May.
 
 ## Constraints
 
-- The tool is offline-first and must never phone home; this is an existing architectural decision (`.sdlc/context/architecture.md`, `.sdlc/features/FEAT-0008-sqlite-backend/telemetry.md`), and it forbids any remote analytics backend.
+- The tool is offline-first and must never phone home; this is an existing architectural decision (`.sdlc/context/architecture.md`, `.sdlc/features/8-sqlite-backend/telemetry.md`), and it forbids any remote analytics backend.
 - `github.Client.Query` (`internal/github/client.go:151`) is the single funnel for every GraphQL call and is the natural instrumentation seam; `internal/cache.Store` is the single interface for cache operations.
 - The GraphQL client's operation name is not available at the seam today, so callers must supply it.
 - Recording must be safe under the concurrency used by `FetchPRsUpdated` (`prBlocksInFlight` parallel chains), so event writes need to tolerate concurrent callers.

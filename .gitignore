@@ -6,3 +6,4 @@ benchmark-report*.json
 site/
 .venv/
 __pycache__/
+status-report.html

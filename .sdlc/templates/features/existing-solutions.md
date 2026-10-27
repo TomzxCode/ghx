@@ -1,6 +1,7 @@
 ---
 title: "<Feature Name>"
 status: draft
+session_link: "<filled by skill>"
 ---
 
 # Existing Solutions: <Feature Name>
@@ -23,7 +24,7 @@ status: draft
 
 | Solution | Type | License | Maturity | Covers | Gaps |
 |---|---|---|---|---|---|
-| <name + link> | Library / Product / Internal / Standard | MIT / proprietary / ... | Mature / Active / Stale | FR-01, FR-03 | FR-02, NFR-01 |
+| <name + link> | Library / Product / Internal / Standard | MIT / proprietary / ... | Mature / Active / Stale | FR-1, FR-3 | FR-2, NFR-1 |
 
 ## Evaluation
 

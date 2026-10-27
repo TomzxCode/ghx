@@ -9,18 +9,19 @@ Entries under "Wanted" are not supported yet.
 
 | ID | Use case | Actor | Description |
 |---|---|---|---|
-| UC-1 | Feed an agent workflow with repository data | AI agent, automation | Search issues and pull requests and read item details (body, labels, assignees, comments) as structured JSON, repeatedly and cheaply, without spending API calls on every lookup. |
+| UC-1 | Feed an agent workflow with repository data | AI agent, automation | Search issues and pull requests and read item details (body, labels, assignees, comments) as structured JSON, repeatedly and cheaply, through JSON output, a local JSON-RPC 2.0 server (typed methods plus `cli.run`), or `--remote` forwarding, without spending API calls on every lookup. |
 | UC-2 | Keep browsing when GitHub is unreachable or rate-limited | Developer, AI agent | List, filter, and view issues, PRs, and comments from the local cache with no network calls while it is fresh, on github.com or a self-hosted instance. |
-| UC-3 | Re-check one repository without fetching everything again | Developer | Repeated list, filter, and view queries serve from the cache, and delta or windowed refresh keeps it current. |
+| UC-3 | Re-check one repository without fetching everything again | Developer | Repeated list, filter, and view queries serve from the cache, and delta or windowed refresh keeps it current, with `repo list` showing each repository's cache age and hit rates. |
 | UC-4 | Work through a large issue and pull request backlog | Developer, maintainer | Filter issues and PRs in-memory by state, author, assignee, label, milestone, mention, app, branch, and draft, plus free-text search, with indexed predicates on large repositories. |
 | UC-5 | Script against issues and pull requests | Developer, automation | Consume JSON output with gh-compatible field selection and branch on structured results. |
-| UC-6 | Review a pull request from the terminal | Reviewer, AI agent | Inspect review threads and post inline, line-range, and file-level comments or replies, composing them in a pending review or a local stash before posting. |
+| UC-6 | Review a pull request from the terminal | Reviewer, AI agent | Inspect review threads, post inline, line-range, and file-level comments or replies, resolve or reopen threads, and compose comments in a pending review or a local stash before posting. |
 | UC-7 | Take part in a discussion | Comment author | Post comments on issues and pull requests, and edit or delete them afterwards. |
 | UC-8 | Browse issues and pull requests in a local UI | Developer | A GitHub-like local UI with a repository switcher, list and detail views, and a Ctrl+P search palette. |
 | UC-9 | Understand pull request activity and review load | Engineering manager, maintainer | An HTML report of lead times, review engagement, PR sizes, and trends for one or more repositories over a date range. |
 | UC-10 | Find out where ghx spends time | Maintainer | Local recording of API and cache timings, with p50/p95 and retry rates by operation kind, exportable or clearable. |
 | UC-11 | Compare ghx against gh and across storage backends | Maintainer | Timing of equivalent read commands across warm, cold, and forced-refresh scenarios, plus a backend comparison. |
 | UC-12 | Develop and test without hitting GitHub | Contributor, CI | A mock GraphQL server with a scenario builder and simulation generator, optionally injecting recorded latencies. |
+| UC-14 | Understand and forecast the issue and pull request pipeline | Engineering manager, maintainer | A production-line HTML report of issue and PR flow: station inventories with queue ages, cumulative flow, cycle-time distributions, weekly arrivals versus completions, Little's law, queue-pressure trends, and a Monte Carlo forecast of when current items clear, also served by the web UI and its JSON API. |
 
 ## Wanted
 
