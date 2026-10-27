@@ -122,6 +122,8 @@ func richPR(n int) *github.PullRequest {
 			{Type: "User", Login: "bob"},
 			{Type: "Team", Name: "ml-infra-gpu"},
 		},
+		Checks:        &github.PRChecks{State: "FAILURE", Total: 5},
+		ReviewThreads: &github.PRThreadCounts{Total: 4, Open: 2},
 	}
 }
 

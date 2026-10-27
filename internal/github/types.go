@@ -50,6 +50,55 @@ type PullRequest struct {
 	// nil when the record predates the field (an older cache row), and empty
 	// (non-nil) when the PR has no pending review requests.
 	ReviewRequests []ReviewRequest `json:"reviewRequests"`
+	// Checks is the head commit's check rollup. It is nil when the record
+	// predates the field (an older cache row); a record with no checks on its
+	// head commit carries a non-nil rollup with an empty state.
+	Checks *PRChecks `json:"checks,omitempty"`
+	// ReviewThreads counts the review threads, and how many are still open.
+	// It is nil when the record predates the field. Open counts the threads a
+	// single read carried (the first hundred), so a busier pull request
+	// undercounts it; Total comes from the connection and stays exact.
+	ReviewThreads *PRThreadCounts `json:"reviewThreads,omitempty"`
+}
+
+// PRChecks is the head commit's check rollup: the aggregate state GitHub
+// reports and how many check contexts the commit carries. The contexts
+// themselves are not cached; GetPRChecks reads them on demand.
+type PRChecks struct {
+	// State is GitHub's rollup state (SUCCESS, FAILURE, ERROR, PENDING,
+	// EXPECTED), or empty when the commit has no checks.
+	State string `json:"state"`
+	// Total is every check context on the commit, which can exceed the ones
+	// a detail read lists.
+	Total int `json:"total"`
+}
+
+// PRThreadCounts is how many review threads a pull request carries and how
+// many of them are still open.
+type PRThreadCounts struct {
+	Total int `json:"total"`
+	Open  int `json:"open"`
+}
+
+// PRCheck is one check run or commit status reporting on a pull request's head
+// commit. CheckRun entries carry Status and Conclusion; StatusContext entries
+// carry State.
+type PRCheck struct {
+	Type        string `json:"type"`
+	Name        string `json:"name"`
+	Status      string `json:"status,omitempty"`
+	Conclusion  string `json:"conclusion,omitempty"`
+	State       string `json:"state,omitempty"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url,omitempty"`
+}
+
+// PRCheckRollup is a pull request's head-commit rollup with each check that
+// reported on it, as GetPRChecks reads it.
+type PRCheckRollup struct {
+	State  string    `json:"state"`
+	Total  int       `json:"total"`
+	Checks []PRCheck `json:"checks"`
 }
 
 // ReviewRequest is a pending review request on a pull request. Login is set

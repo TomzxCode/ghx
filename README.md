@@ -171,6 +171,10 @@ ghx pr list --json          # every supported field
 ghx pr view 10
 ghx pr view 10 --comments
 ghx pr view 10 --refresh      # force fetch from GitHub and update cache
+
+# List the individual checks behind a PR's head-commit rollup
+ghx pr checks 10
+ghx pr checks 10 --json
 ```
 
 Example output (`pr list`):
@@ -188,6 +192,8 @@ OPEN • opened by octocat • 3 comment(s)
 
 Branch:    feature → main
 Review:    approved
+Checks:    failing
+Threads:   2 open of 4
 Labels:    enhancement
 Assignees: alice, bob
 Created:   2025-01-08 11:00

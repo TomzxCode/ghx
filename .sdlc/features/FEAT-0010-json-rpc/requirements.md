@@ -26,7 +26,7 @@ Order rows by priority: Must first, then Should, then May.
 | ID | Priority | Requirement |
 |---|---|---|
 | FR-01 | Must | The system shall serve JSON-RPC 2.0 over HTTP at `POST /rpc` on a configurable address |
-| FR-02 | Must | The server shall expose typed methods `repo.list`, `repo.delete`, `issue.list`, `issue.view`, `pr.list`, `pr.view`, `pr.threads`, and `cache.refresh` |
+| FR-02 | Must | The server shall expose typed methods `repo.list`, `repo.delete`, `issue.list`, `issue.view`, `pr.list`, `pr.view`, `pr.checks`, `pr.threads`, and `cache.refresh` |
 | FR-03 | Must | The server shall expose `cli.run`, which executes any ghx command and returns its stdout, stderr, and exit code, and shall allow disabling it |
 | FR-04 | Must | The system shall provide `ghx rpc serve`, `ghx rpc call`, `ghx rpc methods`, and `ghx rpc exec` |
 | FR-05 | Must | `ghx rpc call` shall accept params as a JSON argument, read them from stdin with `-`, or read them from a file with `@path` |

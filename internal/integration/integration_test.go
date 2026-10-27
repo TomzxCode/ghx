@@ -877,3 +877,68 @@ func TestClient_FetchPRsUpdated_ParallelPages(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_CachesChecksAndReviewThreads covers the head-commit rollup and
+// thread counts riding along with a cached pull request, and the on-demand
+// read of the individual checks behind the rollup.
+func TestClient_CachesChecksAndReviewThreads(t *testing.T) {
+	now := time.Now().UTC()
+	pr := github.PullRequest{
+		Number:        1,
+		Title:         "Ship it",
+		State:         "OPEN",
+		Author:        github.Actor{Login: "alice"},
+		BaseRefName:   "main",
+		HeadRefName:   "feat/ship",
+		HeadRefOid:    "0123456789abcdef0123456789abcdef01234567",
+		CreatedAt:     now.Add(-24 * time.Hour),
+		UpdatedAt:     now,
+		URL:           "https://github.com/acme/myproject/pull/1",
+		Checks:        &github.PRChecks{State: "FAILURE"},
+		ReviewThreads: &github.PRThreadCounts{Total: 3, Open: 1},
+	}
+	scenario := mockserver.NewScenario(
+		mockserver.WithScenarioPR("acme", "myproject", pr),
+		mockserver.WithScenarioPRChecks("acme", "myproject", 1, []github.PRCheck{
+			{Type: "CheckRun", Name: "build", Status: "COMPLETED", Conclusion: "FAILURE", URL: "https://ci.example/build"},
+			{Type: "StatusContext", Name: "ci/unit", State: "SUCCESS", Description: "All tests passed", URL: "https://ci.example/unit"},
+		}),
+	)
+	srv := startServer(t, scenario)
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	prs, err := client.FetchAllPRs("acme", "myproject", nil)
+	if err != nil {
+		t.Fatalf("FetchAllPRs: %v", err)
+	}
+	if len(prs) != 1 {
+		t.Fatalf("got %d PRs, want 1", len(prs))
+	}
+	if prs[0].Checks == nil || *prs[0].Checks != (github.PRChecks{State: "FAILURE", Total: 2}) {
+		t.Errorf("checks = %+v, want FAILURE with 2 contexts", prs[0].Checks)
+	}
+	if prs[0].ReviewThreads == nil || *prs[0].ReviewThreads != (github.PRThreadCounts{Total: 3, Open: 1}) {
+		t.Errorf("review threads = %+v, want 1 open of 3", prs[0].ReviewThreads)
+	}
+
+	rollup, err := client.GetPRChecks("acme", "myproject", 1)
+	if err != nil {
+		t.Fatalf("GetPRChecks: %v", err)
+	}
+	if rollup.State != "FAILURE" || rollup.Total != 2 {
+		t.Errorf("rollup = %+v, want FAILURE with 2 checks", rollup)
+	}
+	if len(rollup.Checks) != 2 {
+		t.Fatalf("checks = %+v, want 2", rollup.Checks)
+	}
+	if got := rollup.Checks[0]; got.Name != "build" || got.Conclusion != "FAILURE" || got.URL != "https://ci.example/build" {
+		t.Errorf("check run = %+v, want the failing build", got)
+	}
+	if got := rollup.Checks[1]; got.Type != "StatusContext" || got.Name != "ci/unit" || got.State != "SUCCESS" || got.Description != "All tests passed" {
+		t.Errorf("status context = %+v, want the passing unit status", got)
+	}
+}

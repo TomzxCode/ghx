@@ -55,6 +55,7 @@ Error codes: `-32700` parse, `-32600` invalid request, `-32601` method not found
 | `issue.view` | `{repo?, number, refresh?}` | `Issue` |
 | `pr.list` | `{repo?, state?, author?, assignee?, labels?, base?, head?, draft?, search?, app?, limit?}` | `{items:[PullRequest], total, source}` |
 | `pr.view` | `{repo?, number, refresh?}` | `PullRequest` |
+| `pr.checks` | `{repo?, number}` | `{state, total, checks:[PRCheck]}` |
 | `pr.threads` | `{repo?, number, thread?, state?}` | `{threads:[ReviewThread]}` |
 | `cache.refresh` | `{repo?, type?, force?, since?, durationMinutes?, retries?}` | `{repo, issues, prs}` |
 | `cli.run` | `{args:[string], stdin?}` | `{stdout, stderr, exitCode}` |

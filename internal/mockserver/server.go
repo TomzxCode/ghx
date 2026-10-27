@@ -200,7 +200,7 @@ func (s *Server) getPR(vars map[string]interface{}) (interface{}, []gqlError) {
 		if sp.Owner == owner && sp.Repo == repo && sp.Number == number {
 			return map[string]interface{}{
 				"repository": map[string]interface{}{
-					"pullRequest": prToNodeFull(&sp.PullRequest),
+					"pullRequest": prToNodeFull(&sp.PullRequest, sp.Checks),
 				},
 			}, nil
 		}
@@ -442,7 +442,7 @@ func (s *Server) paginatePRsFull(indices []int, pageSize int, vars map[string]in
 
 	nodes := make([]interface{}, 0, end-start)
 	for i := start; i < end; i++ {
-		nodes = append(nodes, prToNodeFull(&s.scenario.PRs[indices[i]].PullRequest))
+		nodes = append(nodes, prToNodeFull(&s.scenario.PRs[indices[i]].PullRequest, s.scenario.PRs[indices[i]].Checks))
 	}
 
 	var nextCursor string
@@ -588,10 +588,12 @@ func prToNodeSummary(pr *github.PullRequest) map[string]interface{} {
 		"url":            pr.URL,
 		"body":           pr.Body,
 		"comments":       commentsSummary(commentCount),
+		"commits":        commitsNode(pr.Checks, nil),
+		"reviewThreads":  reviewThreadsNode(pr.ReviewThreads),
 	}
 }
 
-func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
+func prToNodeFull(pr *github.PullRequest, checks []github.PRCheck) map[string]interface{} {
 	return map[string]interface{}{
 		"number":         pr.Number,
 		"title":          pr.Title,
@@ -616,8 +618,77 @@ func prToNodeFull(pr *github.PullRequest) map[string]interface{} {
 		"reviews":        reviewNodes(pr.Reviews),
 		"timelineItems":  timelineNodes(pr.Timeline),
 		"reviewRequests": reviewRequestNodes(pr.ReviewRequests),
+		"commits":        commitsNode(pr.Checks, checks),
+		"reviewThreads":  reviewThreadsNode(pr.ReviewThreads),
 		"comments":       commentNodes(pr.Comments),
 	}
+}
+
+// commitsNode mirrors the commits(last: 1) { ... statusCheckRollup } selection.
+// A nil rollup on the pull request produces an empty connection, which reads
+// as "not queried"; a rollup with an empty state produces a commit whose
+// statusCheckRollup is null, which reads as "no checks".
+func commitsNode(checks *github.PRChecks, contexts []github.PRCheck) map[string]interface{} {
+	if checks == nil {
+		return map[string]interface{}{"nodes": []interface{}{}}
+	}
+	if checks.State == "" {
+		return map[string]interface{}{"nodes": []interface{}{
+			map[string]interface{}{"commit": map[string]interface{}{"statusCheckRollup": nil}},
+		}}
+	}
+	total := checks.Total
+	if total == 0 {
+		total = len(contexts)
+	}
+	rollup := map[string]interface{}{
+		"state": checks.State,
+		"contexts": map[string]interface{}{
+			"totalCount": total,
+			"nodes":      checkContextNodes(contexts),
+		},
+	}
+	return map[string]interface{}{"nodes": []interface{}{
+		map[string]interface{}{"commit": map[string]interface{}{"statusCheckRollup": rollup}},
+	}}
+}
+
+// checkContextNodes mirrors the contexts connection's union members.
+func checkContextNodes(checks []github.PRCheck) []map[string]interface{} {
+	nodes := make([]map[string]interface{}, 0, len(checks))
+	for _, c := range checks {
+		typ := c.Type
+		if typ == "" {
+			typ = "CheckRun"
+		}
+		node := map[string]interface{}{"__typename": typ}
+		if typ == "StatusContext" {
+			node["context"] = c.Name
+			node["state"] = c.State
+			node["description"] = c.Description
+			node["targetUrl"] = c.URL
+		} else {
+			node["name"] = c.Name
+			node["status"] = c.Status
+			node["conclusion"] = c.Conclusion
+			node["detailsUrl"] = c.URL
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+// reviewThreadsNode mirrors the reviewThreads { totalCount nodes { isResolved } }
+// selection, listing the open threads first.
+func reviewThreadsNode(counts *github.PRThreadCounts) map[string]interface{} {
+	if counts == nil {
+		return map[string]interface{}{"totalCount": 0, "nodes": []interface{}{}}
+	}
+	nodes := make([]interface{}, 0, counts.Total)
+	for i := 0; i < counts.Total; i++ {
+		nodes = append(nodes, map[string]interface{}{"isResolved": i >= counts.Open})
+	}
+	return map[string]interface{}{"totalCount": counts.Total, "nodes": nodes}
 }
 
 func searchNodeFromIssue(issue *github.Issue) map[string]interface{} {
@@ -672,6 +743,8 @@ func searchNodeFromPR(pr *github.PullRequest) map[string]interface{} {
 		"deletions":      pr.Deletions,
 		"reviews":        reviewNodes(pr.Reviews),
 		"timelineItems":  timelineNodes(pr.Timeline),
+		"commits":        commitsNode(pr.Checks, nil),
+		"reviewThreads":  reviewThreadsNode(pr.ReviewThreads),
 		"comments":       commentNodesWithCount(commentCount, pr.Comments),
 	}
 }

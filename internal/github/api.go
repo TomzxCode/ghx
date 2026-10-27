@@ -131,6 +131,49 @@ type issueNode struct {
 	} `json:"comments"`
 }
 
+type statusCheckContextsNode struct {
+	TotalCount int `json:"totalCount"`
+}
+
+type statusCheckRollupNode struct {
+	State    string                  `json:"state"`
+	Contexts statusCheckContextsNode `json:"contexts"`
+}
+
+type statusCheckContextNode struct {
+	Typename    string `json:"__typename"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	State       string `json:"state"`
+	Description string `json:"description"`
+	DetailsURL  string `json:"detailsUrl"`
+	TargetURL   string `json:"targetUrl"`
+	Context     string `json:"context"`
+}
+
+type commitNode struct {
+	Oid               string                 `json:"oid"`
+	StatusCheckRollup *statusCheckRollupNode `json:"statusCheckRollup"`
+}
+
+type commitEdgeNode struct {
+	Commit commitNode `json:"commit"`
+}
+
+type commitsConnection struct {
+	Nodes []commitEdgeNode `json:"nodes"`
+}
+
+type reviewThreadNode struct {
+	IsResolved bool `json:"isResolved"`
+}
+
+type reviewThreadConnection struct {
+	TotalCount int                `json:"totalCount"`
+	Nodes      []reviewThreadNode `json:"nodes"`
+}
+
 type prNode struct {
 	Number         int                            `json:"number"`
 	Title          string                         `json:"title"`
@@ -155,6 +198,8 @@ type prNode struct {
 	Reviews        struct{ Nodes []reviewNode }   `json:"reviews"`
 	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
 	ReviewRequests *reviewRequestConnection       `json:"reviewRequests"`
+	Commits        *commitsConnection             `json:"commits"`
+	ReviewThreads  *reviewThreadConnection        `json:"reviewThreads"`
 	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
@@ -186,6 +231,8 @@ type searchNode struct {
 	Deletions      int                            `json:"deletions"`
 	Reviews        struct{ Nodes []reviewNode }   `json:"reviews"`
 	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
+	Commits        *commitsConnection             `json:"commits"`
+	ReviewThreads  *reviewThreadConnection        `json:"reviewThreads"`
 	Comments       struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
@@ -245,6 +292,8 @@ func nodeToPR(n *prNode) *PullRequest {
 	}
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	applyReviewRequests(pr, n.ReviewRequests)
+	applyChecks(pr, n.Commits)
+	applyReviewThreads(pr, n.ReviewThreads)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.actor())
 	}
@@ -258,6 +307,41 @@ func nodeToPR(n *prNode) *PullRequest {
 		pr.Comments = append(pr.Comments, commentNodeToComment(c))
 	}
 	return pr
+}
+
+// applyChecks fills the head commit's check rollup. A nil connection means the
+// query did not ask for it (or the cache row predates the field), which leaves
+// pr.Checks nil so readers can tell "unknown" from "no checks"; a commit
+// without a rollup records a non-nil rollup with an empty state.
+func applyChecks(pr *PullRequest, conn *commitsConnection) {
+	if conn == nil {
+		return
+	}
+	pr.Checks = &PRChecks{}
+	if len(conn.Nodes) == 0 {
+		return
+	}
+	rollup := conn.Nodes[0].Commit.StatusCheckRollup
+	if rollup == nil {
+		return
+	}
+	pr.Checks.State = rollup.State
+	pr.Checks.Total = rollup.Contexts.TotalCount
+}
+
+// applyReviewThreads fills the review-thread counts. A nil connection means the
+// query did not ask for them (or the cache row predates the field).
+func applyReviewThreads(pr *PullRequest, conn *reviewThreadConnection) {
+	if conn == nil {
+		return
+	}
+	open := 0
+	for _, thread := range conn.Nodes {
+		if !thread.IsResolved {
+			open++
+		}
+	}
+	pr.ReviewThreads = &PRThreadCounts{Total: conn.TotalCount, Open: open}
 }
 
 // applyReviewRequests fills the current review requests. A nil connection
@@ -379,6 +463,8 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 		CommentCount:   n.Comments.TotalCount,
 	}
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
+	applyChecks(pr, n.Commits)
+	applyReviewThreads(pr, n.ReviewThreads)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.actor())
 	}
@@ -754,6 +840,31 @@ const (
 	prPagesPerBlock  = prScanPageSize / prFullPageSize
 )
 
+// prChecksSelection is the head commit's check rollup, shared by the list and
+// detail queries. Only the aggregate state and the number of contexts are
+// cached; GetPRChecks reads the individual checks on demand.
+const prChecksSelection = `
+commits(last: 1) {
+  nodes {
+    commit {
+      statusCheckRollup {
+        state
+        contexts { totalCount }
+      }
+    }
+  }
+}`
+
+// prReviewThreadsSelection counts a pull request's review threads. A single
+// page is read because GitHub cannot filter the connection by resolution
+// state, so a pull request with more than a hundred threads undercounts the
+// open ones; totalCount stays exact.
+const prReviewThreadsSelection = `
+reviewThreads(first: 100) {
+  totalCount
+  nodes { isResolved }
+}`
+
 const listPRsQuery = `
 query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!], $labels: [String!], $baseRefName: String, $headRefName: String, $after: String) {
   repository(owner: $owner, name: $repo) {
@@ -767,6 +878,7 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
         milestone { number title }
         baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
+        ` + prChecksSelection + `
         comments { totalCount }
       }
     }
@@ -823,6 +935,8 @@ query($owner: String!, $repo: String!, $number: Int!) {
       }
       ` + prTimelineSelection + `
       ` + prReviewRequestsSelection + `
+      ` + prChecksSelection + `
+      ` + prReviewThreadsSelection + `
       comments(first: 100) {
         nodes { id author { __typename login } body createdAt updatedAt url }
       }
@@ -844,6 +958,7 @@ query($query: String!, $first: Int!, $after: String) {
         milestone { number title }
         baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
+        ` + prChecksSelection + `
         comments { totalCount }
       }
     }
@@ -870,6 +985,8 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
         }
 ` + prTimelineSelection + `
 ` + prReviewRequestsSelection + `
+` + prChecksSelection + `
+` + prReviewThreadsSelection + `
         comments(first: 100) {
           totalCount
           nodes { id author { __typename login } body createdAt updatedAt url }
@@ -1047,6 +1164,110 @@ func (c *Client) GetPR(owner, repo string, number int) (*PullRequest, error) {
 		return nil, fmt.Errorf("pull request #%d not found", number)
 	}
 	return nodeToPR(result.Repository.PullRequest), nil
+}
+
+// prChecksPageSize is the most check contexts one detail read lists. It is not
+// part of the cached record because a hundred contexts per pull request would
+// dominate a repository-wide sync; GetPRChecks reads them on demand.
+const prChecksPageSize = 100
+
+var prChecksQuery = fmt.Sprintf(`
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              state
+              contexts(first: %d) {
+                totalCount
+                nodes {
+                  __typename
+                  ... on CheckRun { name status conclusion detailsUrl }
+                  ... on StatusContext { context state description targetUrl }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`, prChecksPageSize)
+
+// GetPRChecks reads a pull request's head-commit rollup with each check that
+// reported on it, at most prChecksPageSize of them. A pull request without a
+// rollup returns an empty state and no checks.
+func (c *Client) GetPRChecks(owner, repo string, number int) (*PRCheckRollup, error) {
+	vars := map[string]interface{}{
+		"owner":  owner,
+		"repo":   repo,
+		"number": number,
+	}
+
+	var result struct {
+		Repository struct {
+			PullRequest *struct {
+				Commits struct {
+					Nodes []struct {
+						Commit struct {
+							StatusCheckRollup *struct {
+								State    string `json:"state"`
+								Contexts struct {
+									TotalCount int                      `json:"totalCount"`
+									Nodes      []statusCheckContextNode `json:"nodes"`
+								} `json:"contexts"`
+							} `json:"statusCheckRollup"`
+						} `json:"commit"`
+					} `json:"nodes"`
+				} `json:"commits"`
+			} `json:"pullRequest"`
+		} `json:"repository"`
+	}
+
+	if err := c.QueryCtx(CallContext{
+		Operation: "get_pr_checks",
+		Kind:      telemetry.KindPRGet,
+		Repo:      repoKey(owner, repo),
+	}, prChecksQuery, vars, &result); err != nil {
+		return nil, err
+	}
+	if result.Repository.PullRequest == nil {
+		return nil, fmt.Errorf("pull request #%d not found", number)
+	}
+
+	rollup := &PRCheckRollup{Checks: []PRCheck{}}
+	commits := result.Repository.PullRequest.Commits.Nodes
+	if len(commits) == 0 || commits[0].Commit.StatusCheckRollup == nil {
+		return rollup, nil
+	}
+	status := commits[0].Commit.StatusCheckRollup
+	rollup.State = status.State
+	rollup.Total = status.Contexts.TotalCount
+	for _, n := range status.Contexts.Nodes {
+		check := PRCheck{
+			Type:        n.Typename,
+			Name:        n.Name,
+			Status:      n.Status,
+			Conclusion:  n.Conclusion,
+			State:       n.State,
+			Description: n.Description,
+			URL:         n.DetailsURL,
+		}
+		if n.Typename == "StatusContext" {
+			check.Name = n.Context
+			check.URL = n.TargetURL
+		}
+		if check.Name == "" {
+			continue
+		}
+		rollup.Checks = append(rollup.Checks, check)
+	}
+	if rollup.Total < len(rollup.Checks) {
+		rollup.Total = len(rollup.Checks)
+	}
+	return rollup, nil
 }
 
 // FetchAllPRs retrieves every pull request (all states) with comments for

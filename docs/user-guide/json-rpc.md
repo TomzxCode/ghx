@@ -35,6 +35,7 @@ ghx rpc call issue.list '{"repo":"cli/cli","state":"open","limit":20}'
 ghx rpc call issue.view '{"repo":"cli/cli","number":42}'
 ghx rpc call pr.list '{"repo":"cli/cli","state":"merged","limit":10}'
 ghx rpc call pr.view '{"repo":"cli/cli","number":1234,"refresh":true}'
+ghx rpc call pr.checks '{"repo":"cli/cli","number":1234}'
 ghx rpc call cache.refresh '{"repo":"cli/cli","type":"issues"}'
 ```
 
@@ -113,6 +114,7 @@ ghx --remote issue list
 | `issue.view` | View one issue | `repo`, `number`, `refresh` |
 | `pr.list` | List pull requests | `repo`, `state`, `author`, `assignee`, `labels`, `base`, `head`, `draft`, `search`, `app`, `limit` |
 | `pr.view` | View one pull request | `repo`, `number`, `refresh` |
+| `pr.checks` | List the checks behind a pull request's rollup | `repo`, `number` |
 | `pr.threads` | List review threads | `repo`, `number`, `thread`, `state` |
 | `cache.refresh` | Fetch into the cache, like `ghx cache` | `repo`, `type`, `force`, `since`, `durationMinutes`, `retries` |
 | `cli.run` | Run a ghx command | `args`, `stdin` |

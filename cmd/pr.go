@@ -49,6 +49,9 @@ var (
 	prViewRefresh  bool
 )
 
+// pr checks flags
+var prChecksJSON bool
+
 var prListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List pull requests",
@@ -62,9 +65,23 @@ var prViewCmd = &cobra.Command{
 	RunE:  runPRView,
 }
 
+var prChecksCmd = &cobra.Command{
+	Use:   "checks <number>",
+	Short: "List the checks behind a pull request's head-commit rollup",
+	Long: `Lists each check run and commit status reporting on a pull request's head
+commit, with the aggregate rollup state. The checks are read live: the cached
+pull request record carries only the rollup's state and how many checks there
+are, not the checks themselves.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPRChecks,
+}
+
 func init() {
 	prCmd.AddCommand(prListCmd)
 	prCmd.AddCommand(prViewCmd)
+	prCmd.AddCommand(prChecksCmd)
+
+	prChecksCmd.Flags().BoolVar(&prChecksJSON, "json", false, "Output as JSON")
 
 	prListCmd.Flags().StringVar(&prListApp, "app", "", "Filter by GitHub App author")
 	prListCmd.Flags().StringVarP(&prListAssignee, "assignee", "a", "", "Filter by assignee")
@@ -239,6 +256,36 @@ func runPRView(cmd *cobra.Command, args []string) error {
 	return printPRView(pr, prViewComments, prViewJSON)
 }
 
+// runPRChecks lists the checks behind one pull request's rollup. The cached
+// record carries only the rollup state, so this reads GitHub directly.
+func runPRChecks(cmd *cobra.Command, args []string) error {
+	number, err := strconv.Atoi(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid pull request number: %s", args[0])
+	}
+
+	repo, err := getRepo()
+	if err != nil {
+		return err
+	}
+
+	client, err := newClient(repo.Host)
+	if err != nil {
+		return err
+	}
+
+	rollup, err := client.GetPRChecks(repo.Owner, repo.Name, number)
+	if err != nil {
+		return err
+	}
+	if prChecksJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rollup)
+	}
+	return printPRChecks(rollup)
+}
+
 func formatReviewDecision(d string) string {
 	switch d {
 	case "APPROVED":
@@ -249,6 +296,20 @@ func formatReviewDecision(d string) string {
 		return "review required"
 	default:
 		return d
+	}
+}
+
+// formatCheckState renders a head-commit rollup state for the terminal.
+func formatCheckState(s string) string {
+	switch s {
+	case "SUCCESS":
+		return "passing"
+	case "FAILURE", "ERROR":
+		return "failing"
+	case "PENDING", "EXPECTED":
+		return "running"
+	default:
+		return s
 	}
 }
 
@@ -300,6 +361,44 @@ func printPRList(prs []*github.PullRequest, total int, jsonFields []string, noTr
 	return nil
 }
 
+// printPRChecks renders the head commit's rollup and each check reporting on it.
+func printPRChecks(rollup *github.PRCheckRollup) error {
+	if rollup == nil || len(rollup.Checks) == 0 {
+		fmt.Println("No checks on the head commit.")
+		return nil
+	}
+	fmt.Printf("%s • %d check(s)\n\n", formatCheckState(rollup.State), rollup.Total)
+	w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
+	for _, check := range rollup.Checks {
+		fmt.Fprintf(w, "%s\t%s\n", checkState(check), check.Name)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if rollup.Total > len(rollup.Checks) {
+		fmt.Printf("\nShowing %d of %d checks.\n", len(rollup.Checks), rollup.Total)
+	}
+	return nil
+}
+
+// checkState renders one check's state: a check run reports its conclusion once
+// it finishes and its status while it runs, and a commit status reports a state
+// directly.
+func checkState(check github.PRCheck) string {
+	raw := check.State
+	if check.Type != "StatusContext" {
+		raw = check.Conclusion
+		if check.Status != "" && !strings.EqualFold(check.Status, "COMPLETED") {
+			raw = check.Status
+		}
+	}
+	raw = strings.ToUpper(raw)
+	if formatted := formatCheckState(raw); formatted != raw {
+		return formatted
+	}
+	return strings.ToLower(raw)
+}
+
 func printPRView(pr *github.PullRequest, showComments bool, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
@@ -324,6 +423,12 @@ func printPRView(pr *github.PullRequest, showComments bool, asJSON bool) error {
 	fmt.Printf("Branch:    %s → %s\n", pr.HeadRefName, pr.BaseRefName)
 	if pr.ReviewDecision != "" {
 		fmt.Printf("Review:    %s\n", formatReviewDecision(pr.ReviewDecision))
+	}
+	if pr.Checks != nil && pr.Checks.State != "" {
+		fmt.Printf("Checks:    %s\n", formatCheckState(pr.Checks.State))
+	}
+	if pr.ReviewThreads != nil && pr.ReviewThreads.Total > 0 {
+		fmt.Printf("Threads:   %d open of %d\n", pr.ReviewThreads.Open, pr.ReviewThreads.Total)
 	}
 	if len(pr.Labels) > 0 {
 		names := make([]string, len(pr.Labels))

@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     timeline        TEXT    NOT NULL DEFAULT '[]',
     review_requests TEXT,
     review_decision TEXT,
+    checks          TEXT,
+    review_threads  TEXT,
     additions       INTEGER NOT NULL DEFAULT 0,
     deletions       INTEGER NOT NULL DEFAULT 0,
     row_mtime       TEXT    NOT NULL,

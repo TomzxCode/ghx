@@ -36,6 +36,8 @@ Order rows by priority: Must first, then Should, then May.
 | FR-10 | Must | The system shall serve results from cache when fresh |
 | FR-11 | Should | The system shall filter by search query on title and body |
 | FR-12 | Should | The system shall write pull requests fetched from the API during `list` and `view` to the local cache in the same form `ghx cache` writes (full record, reviews and timeline included) |
+| FR-13 | Should | The system shall cache each pull request's head-commit check rollup state and check count, and its review-thread counts (total and open) |
+| FR-14 | Should | The system shall provide a `pr checks <number>` command that lists the individual checks behind the head commit's rollup, live |
 
 ## Non-Functional Requirements
 

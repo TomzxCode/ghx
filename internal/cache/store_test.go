@@ -81,6 +81,8 @@ func TestSaveLoadIssue(t *testing.T) {
 func TestSaveLoadPR(t *testing.T) {
 	s := newTempStore(t)
 	pr := samplePR(7)
+	pr.Checks = &github.PRChecks{State: "PENDING", Total: 6}
+	pr.ReviewThreads = &github.PRThreadCounts{Total: 3, Open: 2}
 
 	if err := s.SavePR("github.com", "owner", "repo", pr); err != nil {
 		t.Fatalf("SavePR: %v", err)
@@ -95,6 +97,12 @@ func TestSaveLoadPR(t *testing.T) {
 	}
 	if loaded.HeadRefName != "feature-x" {
 		t.Errorf("HeadRefName: got %q, want feature-x", loaded.HeadRefName)
+	}
+	if loaded.Checks == nil || *loaded.Checks != (github.PRChecks{State: "PENDING", Total: 6}) {
+		t.Errorf("Checks: got %+v, want PENDING with 6 contexts", loaded.Checks)
+	}
+	if loaded.ReviewThreads == nil || *loaded.ReviewThreads != (github.PRThreadCounts{Total: 3, Open: 2}) {
+		t.Errorf("ReviewThreads: got %+v, want 2 open of 3", loaded.ReviewThreads)
 	}
 }
 

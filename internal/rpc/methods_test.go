@@ -367,3 +367,57 @@ func TestViewsServeItemWithinConfiguredDuration(t *testing.T) {
 		t.Errorf("pr.view title = %q, want the cached record", gotPR.Title)
 	}
 }
+
+// TestPRChecksListsTheHeadCommitChecks covers the on-demand read behind a
+// pull request's CI badge: the rollup state, the total, and each check.
+func TestPRChecksListsTheHeadCommitChecks(t *testing.T) {
+	now := time.Now().UTC()
+	scenario := mockserver.NewScenario(
+		mockserver.WithScenarioPR("acme", "testrepo", github.PullRequest{
+			Number:     1,
+			Title:      "Mock PR",
+			State:      "OPEN",
+			HeadRefOid: "0123456789abcdef0123456789abcdef01234567",
+			CreatedAt:  now,
+			UpdatedAt:  now,
+			Checks:     &github.PRChecks{State: "FAILURE"},
+		}),
+		mockserver.WithScenarioPRChecks("acme", "testrepo", 1, []github.PRCheck{
+			{Type: "CheckRun", Name: "build", Status: "COMPLETED", Conclusion: "FAILURE", URL: "https://ci.example/build"},
+			{Type: "StatusContext", Name: "ci/unit", State: "SUCCESS", Description: "All tests passed", URL: "https://ci.example/unit"},
+		}),
+	)
+	mock := mockserver.NewServer(scenario)
+	t.Cleanup(mock.Close)
+
+	store := cache.NewStoreWithPath(t.TempDir())
+	t.Cleanup(func() { _ = store.Close() })
+	repo := &gitremote.Repo{Host: "mock", Owner: "acme", Name: "testrepo"}
+	srv := NewServer(Config{
+		Store: store,
+		ClientFactory: func(host string) (*github.Client, error) {
+			return github.NewClientWithURL(mock.URL(), "test-token", host)
+		},
+		DefaultRepo: func() (*gitremote.Repo, error) { return repo, nil },
+		Version:     "test",
+	})
+
+	raw, rpcErr := call(t, srv, "pr.checks", PRChecksParams{Number: 1})
+	if rpcErr != nil {
+		t.Fatalf("pr.checks: %+v", rpcErr)
+	}
+	var rollup github.PRCheckRollup
+	if err := json.Unmarshal(raw, &rollup); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	if rollup.State != "FAILURE" || rollup.Total != 2 {
+		t.Errorf("rollup = %+v, want FAILURE with 2 checks", rollup)
+	}
+	if len(rollup.Checks) != 2 || rollup.Checks[0].Name != "build" || rollup.Checks[1].Name != "ci/unit" {
+		t.Errorf("checks = %+v, want build then ci/unit", rollup.Checks)
+	}
+
+	if _, rpcErr := call(t, srv, "pr.checks", PRChecksParams{Number: 0}); rpcErr == nil {
+		t.Error("pr.checks accepted a non-positive number")
+	}
+}

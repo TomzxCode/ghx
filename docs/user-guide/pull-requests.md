@@ -80,10 +80,22 @@ ghx pr list --state merged --head feat/dark-mode --json number,headRefOid,merged
 ```
 
 Supported fields: `additions`, `assignees`, `author`, `baseRefName`, `body`,
-`closedAt`, `comments`, `createdAt`, `deletions`, `headRefName`, `headRefOid`,
-`isDraft`, `labels`, `mergedAt`, `milestone`, `number`, `reviewDecision`,
-`reviews`, `state`, `title`, `updatedAt`, `url`. An unknown field is rejected
-with the list of valid names.
+`checks`, `closedAt`, `comments`, `createdAt`, `deletions`, `headRefName`,
+`headRefOid`, `isDraft`, `labels`, `mergedAt`, `milestone`, `number`,
+`reviewDecision`, `reviewRequests`, `reviewThreads`, `reviews`, `state`,
+`title`, `updatedAt`, `url`. An unknown field is rejected with the list of
+valid names.
+
+`checks` is the head commit's rollup (`{"state":"SUCCESS","total":8}`) and
+`reviewThreads` the thread counts (`{"total":4,"open":2}`). Both are cached
+with the pull request, so reading them from a fresh cache costs no API call.
+`reviewThreads.open` counts the first hundred threads, so a busier pull request
+undercounts it; `total` is exact.
+
+A list served from the cache carries both. A list that falls back to the API
+carries the rollup but not the thread counts, because thread nodes are too
+heavy to attach to every row of a list page; run `ghx cache` to refresh the
+records first.
 
 Omitting the field list (bare `--json`) outputs every supported field:
 
@@ -125,6 +137,34 @@ ghx pr view 10 --refresh
 ghx pr view 10 --json
 ```
 
+## Show a pull request's checks
+
+```bash
+ghx pr checks 10
+```
+
+The cached pull request record carries the head commit's rollup state and how
+many checks there are, not the checks themselves. `pr checks` reads them live
+and lists each check run and commit status:
+
+```
+failing • 2 check(s)
+
+failing   build
+passing   ci/unit
+```
+
+Two checks can differ in shape: a check run reports a conclusion once it
+finishes and a status while it runs, and a commit status reports a state
+directly. `pr checks` renders both in the same words.
+
+Pass `--json` for the same data as an object: `state`, `total`, and `checks`
+(each with `type`, `name`, and the state fields GitHub reports).
+
+```bash
+ghx pr checks 10 --json
+```
+
 ## Example output
 
 ### pr list
@@ -142,6 +182,8 @@ OPEN • opened by octocat • 3 comment(s)
 
 Branch:    feature → main
 Review:    approved
+Checks:    failing
+Threads:   2 open of 4
 Labels:    enhancement
 Assignees: alice, bob
 Created:   2025-01-08 11:00

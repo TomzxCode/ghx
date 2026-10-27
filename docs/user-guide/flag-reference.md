@@ -109,6 +109,12 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 `comment edit <comment-id>` accepts `--body` / `--body-file`.
 `comment delete <comment-id>` takes no flags.
 
+## pr checks
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--json` | | `false` | Output the rollup and its checks as JSON |
+
 ## pr threads
 
 | Flag | Short | Default | Description |

@@ -138,6 +138,16 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		},
 		{
 			table:  "pull_requests",
+			column: "checks",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN checks TEXT",
+		},
+		{
+			table:  "pull_requests",
+			column: "review_threads",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN review_threads TEXT",
+		},
+		{
+			table:  "pull_requests",
 			column: "author_type",
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN author_type TEXT NOT NULL DEFAULT ''",
 		},
@@ -409,7 +419,7 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 const prCols = `number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 	base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 	url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
-	additions, deletions, row_mtime`
+	checks, review_threads, additions, deletions, row_mtime`
 
 // SavePR writes a single pull request to the database.
 func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
@@ -429,18 +439,25 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 	if pr.ReviewRequests != nil {
 		reviewRequests = mustJSON(pr.ReviewRequests)
 	}
+	var checks, reviewThreads any
+	if pr.Checks != nil {
+		checks = mustJSON(pr.Checks)
+	}
+	if pr.ReviewThreads != nil {
+		reviewThreads = mustJSON(pr.ReviewThreads)
+	}
 	_, err = s.db.Exec(`INSERT OR REPLACE INTO pull_requests
 		(host, owner, repo, number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 		 url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
-		 additions, deletions, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 checks, review_threads, additions, deletions, row_mtime)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login, pr.Author.Type,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
 		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
 		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), mustJSON(pr.Reviews), mustJSON(pr.Timeline),
-		reviewRequests, reviewDecision, pr.Additions, pr.Deletions, tstr(time.Now()),
+		reviewRequests, reviewDecision, checks, reviewThreads, pr.Additions, pr.Deletions, tstr(time.Now()),
 	)
 	if err != nil {
 		return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
@@ -463,6 +480,8 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		url, body, commentsJSON   string
 		reviewsJSON, timelineJSON string
 		reviewRequestsJSON        sql.NullString
+		checksJSON                sql.NullString
+		reviewThreadsJSON         sql.NullString
 		commentCount              int
 		reviewDecision            sql.NullString
 		additions, deletions      int
@@ -471,7 +490,7 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &authorType, &assigneesJSON, &labelsJSON, &milestoneJSON,
 		&baseRef, &headRef, &headRefOid, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
 		&url, &body, &commentCount, &commentsJSON, &reviewsJSON, &timelineJSON, &reviewRequestsJSON,
-		&reviewDecision, &additions, &deletions, &rowMtimeS); err != nil {
+		&reviewDecision, &checksJSON, &reviewThreadsJSON, &additions, &deletions, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
 
@@ -512,6 +531,18 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 	}
 	if reviewRequestsJSON.Valid {
 		if err := decodeJSON(reviewRequestsJSON.String, &pr.ReviewRequests); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if checksJSON.Valid && checksJSON.String != "" {
+		pr.Checks = &github.PRChecks{}
+		if err := decodeJSON(checksJSON.String, pr.Checks); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if reviewThreadsJSON.Valid && reviewThreadsJSON.String != "" {
+		pr.ReviewThreads = &github.PRThreadCounts{}
+		if err := decodeJSON(reviewThreadsJSON.String, pr.ReviewThreads); err != nil {
 			return nil, time.Time{}, err
 		}
 	}

@@ -76,6 +76,12 @@ type PRViewParams struct {
 	Refresh bool   `json:"refresh,omitempty"`
 }
 
+// PRChecksParams selects one pull request's checks.
+type PRChecksParams struct {
+	Repo   string `json:"repo,omitempty"`
+	Number int    `json:"number"`
+}
+
 // RepoListResult is the repo.list response.
 type RepoListResult struct {
 	Repos []RepoInfo `json:"repos"`
@@ -126,6 +132,7 @@ func (s *Server) registerReadMethods() {
 	s.add("issue.view", "View one issue, serving a fresh cached record when possible.", `{"repo":"OWNER/REPO","number":42,"refresh":false}`, s.issueView)
 	s.add("pr.list", "List pull requests with the same filters as `ghx pr list`.", `{"repo":"OWNER/REPO","state":"open","author":"","assignee":"","labels":[],"base":"","head":"","draft":false,"search":"","limit":1000}`, s.prList)
 	s.add("pr.view", "View one pull request, serving a fresh cached record when possible.", `{"repo":"OWNER/REPO","number":10,"refresh":false}`, s.prView)
+	s.add("pr.checks", "List the checks behind one pull request's head-commit rollup.", `{"repo":"OWNER/REPO","number":10}`, s.prChecks)
 	s.add("pr.threads", "List the review threads of one pull request.", `{"repo":"OWNER/REPO","number":10,"thread":"","state":"open"}`, s.prThreads)
 }
 
@@ -440,6 +447,25 @@ func (s *Server) prView(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("caching pull request: %w", err)
 	}
 	return pr, nil
+}
+
+func (s *Server) prChecks(_ context.Context, raw json.RawMessage) (any, error) {
+	var p PRChecksParams
+	if err := decodeParams(raw, &p); err != nil {
+		return nil, err
+	}
+	if p.Number <= 0 {
+		return nil, Errorf(CodeInvalidParams, "number must be a positive pull request number")
+	}
+	repo, err := s.resolveRepo(p.Repo)
+	if err != nil {
+		return nil, err
+	}
+	client, err := s.client(repo.Host)
+	if err != nil {
+		return nil, err
+	}
+	return client.GetPRChecks(repo.Owner, repo.Name, p.Number)
 }
 
 func (s *Server) prThreads(_ context.Context, raw json.RawMessage) (any, error) {

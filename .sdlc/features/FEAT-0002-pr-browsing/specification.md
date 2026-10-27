@@ -7,8 +7,8 @@ status: draft
 
 ## Overview
 
-PR browsing mirrors the issue browsing architecture with two Cobra subcommands (`pr list`, `pr view`) in `cmd/pr.go`.
-It adds PR-specific fields: branch names, draft status, merge/closed timestamps, and review decision.
+PR browsing mirrors the issue browsing architecture with three Cobra subcommands (`pr list`, `pr view`, `pr checks`) in `cmd/pr.go`.
+It adds PR-specific fields: branch names, draft status, merge/closed timestamps, review decision, the head commit's check rollup, and review-thread counts.
 The filtering and display logic follows the same cache-first, API-fallback pattern.
 
 ## Architecture
@@ -61,6 +61,12 @@ Read commands never advance the cache freshness window.
 | reviews | []PRReview | | Submitted reviews (`author`, `state`, `submittedAt`) |
 | timeline | []TimelineEvent | | Draft/ready flips and review-request events |
 | reviewRequests | []ReviewRequest | nil = unknown | Current pending review requests (`type`, `login` for people/bots, `name` for teams) |
+| checks | *PRChecks | nil = unknown | Head commit's rollup: `state` (GitHub's enum, empty means no checks) and `total` (every context on the commit) |
+| reviewThreads | *PRThreadCounts | nil = unknown | `total` review threads and how many are still `open` (counted from the first hundred) |
+
+The checks' individual contexts are deliberately not cached: a hundred contexts per pull request would dominate a repository-wide sync. `GetPRChecks` reads them on demand for `ghx pr checks` and the `pr.checks` RPC method.
+
+`listPRsQuery` and `searchPRsQuery` ask only for the rollup, since thread nodes are too heavy to attach to every row of a list page. `getPRQuery` and `fetchAllPRsQuery` ask for the review-thread counts as well, so a list served from a fresh full cache carries them while a list that falls back to the API does not.
 
 ## API Contracts
 
@@ -95,5 +101,5 @@ Fetches a single PR with up to 100 inline comments.
 ## Out of Scope
 
 - Creating, updating, or merging PRs
-- Review comment threads (only top-level issue-style comments)
-- CI/check status on PRs
+- Review comment thread bodies (their counts are cached; `pr.threads` reads the bodies live)
+- The individual checks on a commit (their count and rollup state are cached; `pr checks` reads them live)

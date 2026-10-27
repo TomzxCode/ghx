@@ -211,3 +211,76 @@ func TestQueriesRequestActorTypename(t *testing.T) {
 		}
 	}
 }
+
+// TestNodeToPRCarriesChecksAndReviewThreads asserts the head commit's rollup
+// and the review-thread counts survive the node conversion, and that a record
+// whose query did not ask for them stays distinguishable from one with none.
+func TestNodeToPRCarriesChecksAndReviewThreads(t *testing.T) {
+	n := &prNode{
+		Commits: &commitsConnection{Nodes: []commitEdgeNode{{Commit: commitNode{
+			StatusCheckRollup: &statusCheckRollupNode{
+				State:    "FAILURE",
+				Contexts: statusCheckContextsNode{TotalCount: 7},
+			},
+		}}}},
+		ReviewThreads: &reviewThreadConnection{
+			TotalCount: 4,
+			Nodes: []reviewThreadNode{
+				{IsResolved: false},
+				{IsResolved: true},
+				{IsResolved: false},
+				{IsResolved: true},
+			},
+		},
+	}
+
+	pr := nodeToPR(n)
+
+	if pr.Checks == nil {
+		t.Fatal("checks = nil, want a rollup")
+	}
+	if pr.Checks.State != "FAILURE" || pr.Checks.Total != 7 {
+		t.Errorf("checks = %+v, want FAILURE with 7 contexts", *pr.Checks)
+	}
+	if pr.ReviewThreads == nil {
+		t.Fatal("review threads = nil, want counts")
+	}
+	if got, want := *pr.ReviewThreads, (PRThreadCounts{Total: 4, Open: 2}); got != want {
+		t.Errorf("review threads = %+v, want %+v", got, want)
+	}
+
+	// A query that did not ask for the connections leaves them unknown.
+	unknown := nodeToPR(&prNode{})
+	if unknown.Checks != nil || unknown.ReviewThreads != nil {
+		t.Errorf("unqueried state = %+v / %+v, want nil", unknown.Checks, unknown.ReviewThreads)
+	}
+
+	// A commit without checks records a non-nil rollup with no state.
+	noChecks := nodeToPR(&prNode{Commits: &commitsConnection{Nodes: []commitEdgeNode{{Commit: commitNode{}}}}})
+	if noChecks.Checks == nil || noChecks.Checks.State != "" || noChecks.Checks.Total != 0 {
+		t.Errorf("check-less commit = %+v, want an empty rollup", noChecks.Checks)
+	}
+}
+
+// TestQueriesRequestCachedChecksAndThreads guards the selections: the cached
+// state is only as complete as the fields the queries ask for.
+func TestQueriesRequestCachedChecksAndThreads(t *testing.T) {
+	for name, q := range map[string]string{
+		"listPRs":     listPRsQuery,
+		"searchPRs":   searchPRsQuery,
+		"getPR":       getPRQuery,
+		"fetchAllPRs": fetchAllPRsQuery,
+	} {
+		if !strings.Contains(q, "statusCheckRollup") {
+			t.Errorf("%s: check rollup selection is missing", name)
+		}
+	}
+	for name, q := range map[string]string{"getPR": getPRQuery, "fetchAllPRs": fetchAllPRsQuery} {
+		if !strings.Contains(q, "reviewThreads(first: 100)") {
+			t.Errorf("%s: review thread selection is missing", name)
+		}
+	}
+	if !strings.Contains(prChecksQuery, "contexts(first: ") {
+		t.Error("prChecksQuery: check contexts selection is missing")
+	}
+}
