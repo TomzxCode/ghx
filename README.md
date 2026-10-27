@@ -230,6 +230,12 @@ The four hit-rate columns show how often each retrieval operation was served fro
 They come from the local telemetry database and are split by operation: issue list, issue view, PR list, and PR view.
 A dash means no retrieval of that kind has been recorded for the repository, for example when telemetry is disabled or was cleared.
 
+Pass `--json` for the same data as a JSON array, optionally limited to a comma-separated list of fields (see the [repositories guide](docs/user-guide/repositories.md#json-output)):
+
+```bash
+ghx repo list --json nameWithOwner,issueCount,prCount,status
+```
+
 Delete the cached data for one repository:
 
 ```bash

@@ -2,10 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
-	"sort"
-	"strings"
 
 	"github.com/tomzxcode/ghx/internal/github"
 )
@@ -59,42 +56,7 @@ func prCommentCount(pr *github.PullRequest) int {
 // field names to emit (deduplicated). An empty list, or the prJSONAll sentinel,
 // selects every supported field.
 func resolvePRJSONFields(raw string) ([]string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == prJSONAll {
-		return sortedPRJSONFields(), nil
-	}
-
-	var fields []string
-	seen := map[string]bool{}
-	for _, name := range strings.Split(raw, ",") {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if _, ok := prJSONFields[name]; !ok {
-			return nil, fmt.Errorf("unknown JSON field: %q\nAvailable fields:\n  %s",
-				name, strings.Join(sortedPRJSONFields(), "\n  "))
-		}
-		if !seen[name] {
-			seen[name] = true
-			fields = append(fields, name)
-		}
-	}
-	if len(fields) == 0 {
-		return nil, fmt.Errorf("no JSON fields specified")
-	}
-	return fields, nil
-}
-
-// sortedPRJSONFields returns every supported field name in lexical order, used
-// for help output and the "available fields" error listing.
-func sortedPRJSONFields() []string {
-	names := make([]string, 0, len(prJSONFields))
-	for name := range prJSONFields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return resolveJSONFieldList(raw, prJSONFields, prJSONAll)
 }
 
 // resolvePRListJSONFields resolves the --json flag value for `pr list`. pflag

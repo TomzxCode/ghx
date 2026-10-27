@@ -149,7 +149,11 @@ Both attempt every thread ID given, report each failure, and exit non-zero if an
 
 ## repo list
 
-No command-specific flags. Uses the global `--cache-dir` for repository data and `--telemetry-db` for the hit-rate columns.
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--json fields` | | | Output JSON with the specified fields (comma-separated; omit for all) |
+
+Uses the global `--cache-dir` for repository data and `--telemetry-db` for the hit-rate data.
 
 ## repo delete
 

@@ -80,5 +80,15 @@ func hitRateLabel(rates map[string]telemetry.CacheHitRate, host, owner, repo, op
 	if total == 0 {
 		return "—"
 	}
-	return fmt.Sprintf("%d%% (%d)", (r.Hits*100+total/2)/total, total)
+	return fmt.Sprintf("%d%% (%d)", hitRatePercent(r.Hits, r.Misses), total)
+}
+
+// hitRatePercent returns a hit rate as a whole percentage, or 0 when no
+// retrievals were recorded.
+func hitRatePercent(hits, misses int) int {
+	total := hits + misses
+	if total == 0 {
+		return 0
+	}
+	return (hits*100 + total/2) / total
 }

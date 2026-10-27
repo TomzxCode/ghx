@@ -2,13 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/gitremote"
-	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
 var repoCmd = &cobra.Command{
@@ -16,12 +18,18 @@ var repoCmd = &cobra.Command{
 	Short: "Work with cached repositories",
 }
 
+// repo list flags
+var repoListJSON string
+
 var repoListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List locally cached repositories",
 	Long: `Lists every repository in the local cache with its issue and PR counts,
 cache age, freshness, and a cache hit rate with the retrieval count per
 operation.
+
+Pass --json to emit the same data as JSON, optionally limited to a
+comma-separated list of fields.
 
 Hit rates are read from the local telemetry database and are split by
 retrieval operation: issue list, issue view, PR list, and PR view. A dash
@@ -46,6 +54,9 @@ from the shared database.`,
 func init() {
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoDeleteCmd)
+
+	repoListCmd.Flags().StringVar(&repoListJSON, "json", "", "Output JSON with the specified fields (comma-separated; omit for all)")
+	repoListCmd.Flags().Lookup("json").NoOptDefVal = repoJSONAll
 }
 
 // repoLabel formats repository coordinates the way the CLI displays them:
@@ -58,6 +69,11 @@ func repoLabel(host, owner, repo string) string {
 }
 
 func runRepoList(cmd *cobra.Command, args []string) error {
+	jsonFields, err := resolveRepoListJSONFields(args)
+	if err != nil {
+		return err
+	}
+
 	store, err := newStore()
 	if err != nil {
 		return err
@@ -68,36 +84,55 @@ func runRepoList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if len(jsonFields) > 0 {
+		return printRepoListJSON(cmd, repos, jsonFields)
+	}
+
 	if len(repos) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No cached repositories found.")
 		return nil
 	}
 
+	now := time.Now()
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 8, 2, ' ', 0)
-	fmt.Fprintln(w, "REPO\tISSUES\tPRS\tCACHED AGE\tSTATUS\tISSUE-LIST\tISSUE-VIEW\tPR-LIST\tPR-VIEW")
+	header := []string{"REPO", "ISSUES", "PRS", "CACHED AGE", "STATUS"}
+	for _, op := range repoHitRateOperations {
+		header = append(header, op.column)
+	}
+	fmt.Fprintln(w, strings.Join(header, "\t"))
 	rates := retrievalHitRates()
 	for _, r := range repos {
-		repoStr := repoLabel(r.Host, r.Owner, r.Repo)
 		age := "—"
-		status := "no cache info"
 		if r.Info != nil {
-			d := time.Since(r.Info.CachedAt)
-			age = formatDuration(d)
-			if d < time.Duration(r.Info.Duration)*time.Minute {
-				status = "fresh"
-			} else {
-				status = "stale"
-			}
+			age = formatDuration(now.Sub(r.Info.CachedAt))
 		}
-		fmt.Fprintf(w, "%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			repoStr, r.IssueCount, r.PRCount, age, status,
-			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalIssueList),
-			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalIssueView),
-			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalPRList),
-			hitRateLabel(rates, r.Host, r.Owner, r.Repo, telemetry.RetrievalPRView))
+		cells := []string{
+			repoLabel(r.Host, r.Owner, r.Repo),
+			strconv.Itoa(r.IssueCount),
+			strconv.Itoa(r.PRCount),
+			age,
+			repoStatus(r.Info, now),
+		}
+		for _, op := range repoHitRateOperations {
+			cells = append(cells, hitRateLabel(rates, r.Host, r.Owner, r.Repo, op.operation))
+		}
+		fmt.Fprintln(w, strings.Join(cells, "\t"))
 	}
 	w.Flush()
 	return nil
+}
+
+// repoStatus classifies a repository's cache metadata: "fresh" while it is
+// within its configured duration, "stale" past it, and "no cache info" when
+// the repository has no cache metadata.
+func repoStatus(info *cache.CacheInfo, now time.Time) string {
+	if info == nil {
+		return "no cache info"
+	}
+	if now.Sub(info.CachedAt) < time.Duration(info.Duration)*time.Minute {
+		return "fresh"
+	}
+	return "stale"
 }
 
 // resolveRepoArg resolves the repository targeted by a command that takes an

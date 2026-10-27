@@ -18,7 +18,7 @@ alice/another-repo        10      3    1d          stale   —           —    
 
 For GitHub Enterprise hosts, the full `HOST/OWNER/REPO` format is displayed.
 
-The status column shows `fresh` when the cache is within its configured duration, and `stale` otherwise.
+The status column shows `fresh` when the cache is within its configured duration, `stale` otherwise, and `no cache info` when the repository has no cache metadata.
 
 The four hit-rate columns report how often each retrieval operation was served from the local cache instead of calling GitHub, with the total number of recorded retrievals in parentheses.
 The counts are read from the local telemetry database and are split by operation: issue list, issue view, PR list, and PR view.
@@ -26,6 +26,36 @@ A dash means no retrieval of that kind has been recorded for the repository, for
 Telemetry is local only; see [Telemetry](telemetry.md).
 
 Use `repo list` to see which repositories are cached and how many issues and PRs each holds.
+
+## JSON output
+
+`--json` takes an optional comma-separated list of fields and emits a compact JSON array, in the same spirit as `gh pr list --json`:
+
+```bash
+ghx repo list --json nameWithOwner,issueCount,prCount,status,hitRates
+```
+
+```json
+[{"hitRates":{"issueList":{"hits":12,"misses":1,"percent":92,"total":13},"issueView":{"hits":4,"misses":1,"percent":80,"total":5},"prList":{"hits":6,"misses":2,"percent":75,"total":8},"prView":{"hits":3,"misses":2,"percent":60,"total":5}},"issueCount":42,"nameWithOwner":"octocat/hello-world","prCount":15,"status":"fresh"}]
+```
+
+Supported fields: `cacheAge`, `cacheDurationMinutes`, `cachedAt`, `hitRates`, `host`, `issueCount`, `name`, `nameWithOwner`, `owner`, `prCount`, `status`.
+An unknown field is rejected with the list of valid names.
+
+- `nameWithOwner` is `OWNER/REPO` on github.com and `HOST/OWNER/REPO` elsewhere, the same label the table shows.
+  `host`, `owner`, and `name` expose the parts.
+- `status` is `fresh` within the repository's configured cache duration, `stale` past it, and `no cache info` when the repository has no cache metadata.
+- `cachedAt` is an RFC3339 timestamp (`null` without cache metadata), `cacheAge` the human-readable age, and `cacheDurationMinutes` the configured window.
+- `hitRates` maps `issueList`, `issueView`, `prList`, and `prView` to `{"hits":n,"misses":n,"total":n,"percent":n}`.
+  An operation with no recorded retrievals is omitted, so an empty object means no hit-rate data at all.
+
+Omitting the field list (bare `--json`) outputs every supported field:
+
+```bash
+ghx repo list --json
+```
+
+An empty cache prints `[]` rather than the plain-text "No cached repositories found." message.
 
 ## Repository identity
 

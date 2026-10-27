@@ -126,6 +126,7 @@ ghx pr view 10 --refresh             # force fetch from GitHub and update cache
 
 ```bash
 ghx repo list                        # locally cached repositories
+ghx repo list --json nameWithOwner,issueCount,status   # same data as JSON
 ```
 
 ### Caching behaviour reference
