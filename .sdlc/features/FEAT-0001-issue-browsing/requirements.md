@@ -30,7 +30,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-05 | Must | The system shall filter issues by milestone (number or title) |
 | FR-06 | Must | The system shall filter issues by search query (matching title and body) |
 | FR-07 | Must | The system shall serve list results from cache when the cache is fresh |
-| FR-08 | Must | The system shall serve view results from cache when less than 60 minutes old |
+| FR-08 | Must | The system shall serve view results from cache when the item was written within the cache's configured duration (60 minutes by default), even when the cache as a whole is stale |
 | FR-09 | Must | The system shall support `--comments` flag on view to display issue comments |
 | FR-10 | Must | The system shall support `--json` output for both list and view |
 | FR-11 | Should | The system shall support `--refresh` flag on view to force API fetch |

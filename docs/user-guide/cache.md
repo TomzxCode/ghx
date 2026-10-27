@@ -151,6 +151,8 @@ A cache is considered **fresh** when `time.Since(cachedAt) < duration × 1 minut
 
 The window decides how read commands behave: when the cache is fresh, `list` and `view` serve entirely from the cache with no API calls; when stale, they fall back to the GitHub API and write what they fetch back into the cache.
 
+The same duration is the per-item window for `view`: an item written within it is served without an API call even when the repository's cache as a whole is stale. A repository with no cache metadata (populated only by `view` and `list` reads) falls back to 60 minutes.
+
 It does not gate `ghx cache` itself, which always refreshes with a delta fetch unless you pass `--if-stale`.
 
 ## Cache behavior per command
@@ -159,7 +161,7 @@ It does not gate `ghx cache` itself, which always refreshes with a delta fetch u
 |---|---|
 | `cache` | Fetches all issues and PRs (all states, with comments). Each run delta-refreshes from the last cache write; `--if-stale` skips the run while the cache is still within `--cache-duration`. Supports `--since` windowed refresh and `--type issues/prs` partial refresh. |
 | `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale, and writes each entry not already cached to the cache in full (comments, reviews, timeline), so the record is identical to what `ghx cache` writes. |
-| `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written less than 60 minutes ago. Otherwise fetches from the API and saves to cache; an item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
+| `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written within the cache's configured duration (60 minutes by default). Otherwise fetches from the API and saves to cache; an item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
 
 ## Notes
 

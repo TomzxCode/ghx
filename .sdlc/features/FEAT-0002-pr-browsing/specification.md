@@ -25,7 +25,7 @@ pr view N ──► runPRView()
                  ├─ Cache fresh? ──Yes──► LoadPR(N) ──► printPRView()
                  │                            │ (missing) ──► fall through to API
                  │
-                 ├─ Individual file fresh (<60m)? ──Yes──► printPRView()
+                 ├─ Individual item within the cache duration? ──Yes──► printPRView()
                  │
                  └─ API ──► GetPR(N) ──► SavePR() ──► printPRView()
 ```

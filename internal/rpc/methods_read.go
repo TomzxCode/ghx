@@ -286,7 +286,7 @@ func (s *Server) issueView(ctx context.Context, raw json.RawMessage) (any, error
 			if issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
 				return issue, nil
 			}
-		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && time.Since(mtime) < 60*time.Minute {
+		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
 			return issue, nil
 		}
 	}
@@ -416,7 +416,7 @@ func (s *Server) prView(ctx context.Context, raw json.RawMessage) (any, error) {
 			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
 				return pr, nil
 			}
-		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && time.Since(mtime) < 60*time.Minute {
+		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
 			return pr, nil
 		}
 	}

@@ -54,11 +54,11 @@ Notes:
 | Scenario | Source | Requests | Writes | Notes |
 |---|---|---|---|---|
 | Cold | API | 1 | Detail record | Fetches comment bodies, reviews, timeline, and diff sizes. |
-| Partial, item cached and younger than 60 minutes | Cache | 0 | None | Only when the record satisfies the requested output. |
+| Partial, item cached within the configured duration | Cache | 0 | None | Only when the record satisfies the requested output. |
 | Partial, item missing or older | API | 1 | Detail record | |
 | Complete, fresh | Cache | 0 | None | Only when the item is present and the record satisfies the requested output. |
 | Complete, fresh, item missing | API | 1 | Detail record | A number newer than the crawl is a normal miss, not an error. |
-| Complete, stale | Cache when the item is younger than 60 minutes and satisfies the request, else API | 0 or 1 | Detail record on an API fetch | The full crawl timestamp is not advanced. |
+| Complete, stale | Cache when the item was written within the configured duration and satisfies the request, else API | 0 or 1 | Detail record on an API fetch | The full crawl timestamp is not advanced. |
 
 ## When a view needs a detail fetch
 

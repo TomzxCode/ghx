@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -262,6 +263,123 @@ func TestPRView_CachedIssueReportsOtherType(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "is an issue, not a pull request") {
 		t.Errorf("error = %q, want the issue type message", err)
+	}
+}
+
+// setItemMtime rewinds the file backend's record for one item so a test can
+// age it independently of the repository's cache metadata.
+func setItemMtime(t *testing.T, dir, kind string, number int, mtime time.Time) {
+	t.Helper()
+	path := filepath.Join(dir, "github.com", "acme", "myproject", kind, strconv.Itoa(number)+".json")
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatalf("aging %s: %v", path, err)
+	}
+}
+
+// TestIssueView_ServesItemWithinConfiguredDuration verifies that an item
+// refreshed within the repository's configured cache duration is a cache hit
+// even when the cache as a whole is days old. The server is closed before the
+// call, so a successful view proves the read never left the cache.
+func TestIssueView_ServesItemWithinConfiguredDuration(t *testing.T) {
+	srv := mockserver.NewServer(readCacheScenario())
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SaveIssue("github.com", "acme", "myproject", &github.Issue{Number: 1, Title: "Cached issue"}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := store.SaveCacheInfoFull("github.com", "acme", "myproject", &cache.CacheInfo{
+		CachedAt: time.Now().Add(-5 * 24 * time.Hour),
+		Duration: 1440,
+		Complete: true,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+	store.Close()
+
+	// The item was refreshed 12 hours ago: inside the 24-hour window, far
+	// outside the old hardcoded 60 minutes.
+	setItemMtime(t, dir, "issues", 1, time.Now().Add(-12*time.Hour))
+	srv.Close()
+
+	out := captureStdout(t, func() {
+		if err := runIssueView(nil, []string{"1"}); err != nil {
+			t.Fatalf("runIssueView: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Cached issue") {
+		t.Errorf("view did not serve the cached item; output:\n%s", out)
+	}
+}
+
+// TestPRView_ServesItemWithinConfiguredDuration is the pull-request counterpart
+// of TestIssueView_ServesItemWithinConfiguredDuration.
+func TestPRView_ServesItemWithinConfiguredDuration(t *testing.T) {
+	srv := mockserver.NewServer(readCacheScenario())
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SavePR("github.com", "acme", "myproject", &github.PullRequest{Number: 7, Title: "Cached PR"}); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	if err := store.SaveCacheInfoFull("github.com", "acme", "myproject", &cache.CacheInfo{
+		CachedAt: time.Now().Add(-5 * 24 * time.Hour),
+		Duration: 1440,
+		Complete: true,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+	store.Close()
+
+	setItemMtime(t, dir, "prs", 7, time.Now().Add(-12*time.Hour))
+	srv.Close()
+
+	out := captureStdout(t, func() {
+		if err := runPRView(nil, []string{"7"}); err != nil {
+			t.Fatalf("runPRView: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Cached PR") {
+		t.Errorf("view did not serve the cached item; output:\n%s", out)
+	}
+}
+
+// TestIssueView_RefetchesItemPastConfiguredDuration verifies the other side of
+// the window: an item older than the repository's configured duration is a
+// miss and is replaced by the fresh API record.
+func TestIssueView_RefetchesItemPastConfiguredDuration(t *testing.T) {
+	srv := mockserver.NewServer(readCacheScenario())
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SaveIssue("github.com", "acme", "myproject", &github.Issue{Number: 1, Title: "stale copy"}); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := store.SaveCacheInfoFull("github.com", "acme", "myproject", &cache.CacheInfo{
+		CachedAt: time.Now().Add(-5 * 24 * time.Hour),
+		Duration: 1440,
+		Complete: true,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+	store.Close()
+
+	setItemMtime(t, dir, "issues", 1, time.Now().Add(-25*time.Hour))
+
+	out := captureStdout(t, func() {
+		if err := runIssueView(nil, []string{"1"}); err != nil {
+			t.Fatalf("runIssueView: %v", err)
+		}
+	})
+	if strings.Contains(out, "stale copy") {
+		t.Errorf("view served an item past the window; output:\n%s", out)
+	}
+	if !strings.Contains(out, "Bug: crash on start") {
+		t.Errorf("view did not fetch the fresh record; output:\n%s", out)
 	}
 }
 

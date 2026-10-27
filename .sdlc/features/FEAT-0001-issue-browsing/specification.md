@@ -25,7 +25,7 @@ issue view N ──► runIssueView()
                     ├─ Cache fresh? ──Yes──► LoadIssue(N) ──► printIssueView()
                     │                              │ (missing) ──► fall through to API
                     │
-                    ├─ Individual file fresh (<60m)? ──Yes──► printIssueView()
+                    ├─ Individual item within the cache duration? ──Yes──► printIssueView()
                     │
                     └─ API ──► GetIssue(N) ──► SaveIssue() ──► printIssueView()
 ```

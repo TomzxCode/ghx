@@ -186,8 +186,9 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 			}
 			logging.Debug("issue view: not in fresh cache, fetching from API", "number", number, "duration", time.Since(lookupStart))
 		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, number); err == nil {
-			// No fresh full cache — serve the individual file when it is recent.
-			if time.Since(mtime) < 60*time.Minute {
+			// No fresh full cache — serve the individual item while it is
+			// within the repository's configured freshness window.
+			if cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
 				logging.Debug("issue view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
 				recordRetrievalOutcome(repo, telemetry.RetrievalIssueView, true)
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)

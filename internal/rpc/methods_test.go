@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -304,5 +306,64 @@ func TestMissingRepoWithNoDefault(t *testing.T) {
 	}
 	if resp.Error == nil || resp.Error.Code != CodeInvalidParams {
 		t.Fatalf("expected invalid params, got %+v", resp)
+	}
+}
+
+// TestViewsServeItemWithinConfiguredDuration verifies that issue.view and
+// pr.view serve an item written within the repository's configured cache
+// duration even when the cache as a whole is days old. The mock server is
+// closed first, so a successful call proves the read stayed in the cache.
+func TestViewsServeItemWithinConfiguredDuration(t *testing.T) {
+	srv, mock, store, repo := newMockServer(t)
+
+	issue := &github.Issue{Number: 1, Title: "cached issue"}
+	pr := &github.PullRequest{Number: 2, Title: "cached pr"}
+	if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue); err != nil {
+		t.Fatalf("SaveIssue: %v", err)
+	}
+	if err := store.SavePR(repo.Host, repo.Owner, repo.Name, pr); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	if err := store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, &cache.CacheInfo{
+		CachedAt: time.Now().Add(-5 * 24 * time.Hour),
+		Duration: 1440,
+		Complete: true,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+
+	aged := time.Now().Add(-12 * time.Hour)
+	for _, path := range []string{
+		filepath.Join(store.Location(), repo.Host, repo.Owner, repo.Name, "issues", "1.json"),
+		filepath.Join(store.Location(), repo.Host, repo.Owner, repo.Name, "prs", "2.json"),
+	} {
+		if err := os.Chtimes(path, aged, aged); err != nil {
+			t.Fatalf("aging %s: %v", path, err)
+		}
+	}
+	mock.Close()
+
+	raw, rpcErr := call(t, srv, "issue.view", IssueViewParams{Number: 1})
+	if rpcErr != nil {
+		t.Fatalf("issue.view: %+v", rpcErr)
+	}
+	var gotIssue github.Issue
+	if err := json.Unmarshal(raw, &gotIssue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	if gotIssue.Title != "cached issue" {
+		t.Errorf("issue.view title = %q, want the cached record", gotIssue.Title)
+	}
+
+	raw, rpcErr = call(t, srv, "pr.view", PRViewParams{Number: 2})
+	if rpcErr != nil {
+		t.Fatalf("pr.view: %+v", rpcErr)
+	}
+	var gotPR github.PullRequest
+	if err := json.Unmarshal(raw, &gotPR); err != nil {
+		t.Fatalf("decode pr: %v", err)
+	}
+	if gotPR.Title != "cached pr" {
+		t.Errorf("pr.view title = %q, want the cached record", gotPR.Title)
 	}
 }

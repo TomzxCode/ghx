@@ -41,6 +41,28 @@ func (i *CacheInfo) PRsUpdatedAt() time.Time {
 	return i.CachedAt
 }
 
+// DefaultItemFreshness is the window in which a single cached issue or pull
+// request is served without a refetch when the repository has no cache
+// metadata, for example a cache populated only by view and list reads.
+const DefaultItemFreshness = 60 * time.Minute
+
+// IsItemFresh reports whether a cached issue or pull request last written at
+// cachedAt may be served without a refetch. The window is the repository's
+// configured cache duration, so an item refreshed within that window is a hit
+// even when the repository's cache as a whole is stale. A repository with no
+// cache metadata falls back to DefaultItemFreshness, and a non-positive
+// duration (the cache is never fresh) makes every item stale.
+func IsItemFresh(store Store, host, owner, repo string, cachedAt time.Time) bool {
+	window := DefaultItemFreshness
+	if info, err := store.LoadCacheInfo(host, owner, repo); err == nil && info != nil {
+		window = time.Duration(info.Duration) * time.Minute
+	}
+	if window <= 0 {
+		return false
+	}
+	return time.Since(cachedAt) < window
+}
+
 // CachedRepo describes a repository found in the local cache.
 type CachedRepo struct {
 	Host       string
