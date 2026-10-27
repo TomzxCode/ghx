@@ -37,6 +37,7 @@ Order rows by priority: Must first, then Should, then May.
 | FR-12 | Should | The serve API shall support machine-readable JSON responses for repos, issue/PR lists, issue/PR details, and search |
 | FR-13 | May | The UI shall show a friendly empty state with `ghx cache` instructions when no repositories are cached |
 | FR-14 | Should | The UI shall let the user switch between light and dark themes, remember the choice across visits, and follow the system preference on first load |
+| FR-15 | Should | The serve UI shall sort issue and PR lists by updated date, creation date, comment count, number, or title in either direction, and group them by state, author, or label with collapsible groups |
 
 ## Non-Functional Requirements
 
@@ -69,6 +70,7 @@ Order rows by priority: Must first, then Should, then May.
 - [ ] FR-09: The binary serves the UI with no external ghx-owned asset files
 - [ ] FR-10: `--host`, `--port`, and `--open` behave as documented
 - [ ] FR-12: `/api/repos` and the list/detail endpoints return valid JSON
+- [ ] FR-15: Changing the sort reorders the rows, changing the grouping adds collapsible group headers, and the choices survive a reload through the URL
 
 ## Open Questions
 

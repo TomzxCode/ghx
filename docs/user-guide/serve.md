@@ -20,7 +20,10 @@ ghx serve --host 127.0.0.1 --port 9000 --open
 ## Using the UI
 
 - **Repository switcher**: the dropdown in the top bar lists all cached repositories (as produced by `ghx repo list`) with their issue and PR counts.
-- **List view**: tabs for Issues and Pull requests with open/closed/all filters (merged for PRs) and a text filter over titles.
+- **List view**: tabs for Issues and Pull requests with open/closed/all filters (merged for PRs), a text filter over titles, sorting, and grouping.
+  Sort by recently updated (the default), recently created, most comments, number, or title, and use the arrow button to reverse the direction.
+  Group rows by state, author, or label, and click a group header to fold it; when grouping by label, an item appears under each label it carries.
+  The filter, sort, and grouping choices are kept in the page URL, so a view can be bookmarked or shared.
 - **Detail view**: click a row to see the state badge, metadata (author, dates, labels, assignees, milestone, branches), a timeline of the item's events, the rendered markdown body, and the comment thread.
   The timeline sits above the body and records the opening, comments, submitted reviews, draft and ready-for-review transitions, review requests, and the merge or close.
   A run of identical events by the same person (for example five comment reviews in a row) is condensed into one node labeled with a count, such as `(x5)`.
@@ -111,6 +114,7 @@ Example API calls:
 ```bash
 curl -s http://127.0.0.1:8080/api/repos
 curl -s "http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues?state=all"
+curl -s "http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues?state=all&sort=created&order=asc"
 curl -s http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/issues/42
 curl -s "http://127.0.0.1:8080/api/search?q=login&scope=all"
 curl -X POST http://127.0.0.1:8080/api/repos/github.com/octocat/hello-world/refresh

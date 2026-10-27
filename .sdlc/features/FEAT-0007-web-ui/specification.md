@@ -23,8 +23,8 @@ ghx serve ──► runServe()
                   │         ├─ GET  /                 ──► index.html (embedded)
                   │         ├─ GET  /assets/*         ──► embedded FS (app.js, style.css)
                   │         ├─ GET  /api/repos        ──► ListCachedRepos + counts
-                  │         ├─ GET  /api/repos/{host}/{owner}/{repo}/issues?state=&q=
-                  │         ├─ GET  /api/repos/{host}/{owner}/{repo}/prs?state=&q=
+                  │         ├─ GET  /api/repos/{host}/{owner}/{repo}/issues?state=&q=&sort=&order=
+                  │         ├─ GET  /api/repos/{host}/{owner}/{repo}/prs?state=&q=&sort=&order=
                   │         ├─ GET  /api/repos/{host}/{owner}/{repo}/issues/{n}
                   │         ├─ GET  /api/repos/{host}/{owner}/{repo}/prs/{n}
                   │         ├─ POST /api/repos/{host}/{owner}/{repo}/refresh
@@ -61,6 +61,7 @@ The refresh handler calls back into the shared fetch logic extracted from `cmd/c
 | labels | array | `{name, color}` entries |
 | author | string | Author login |
 | commentCount | int | Comment count |
+| createdAt | string | RFC3339 creation timestamp |
 | updatedAt | string | RFC3339 timestamp |
 | url | string | GitHub URL |
 
@@ -91,11 +92,14 @@ After sorting, runs of consecutive events with the same kind, actor, and detail 
 
 Returns `{"repos": [RepoSummary...]}` sorted by owner then repo name.
 
-### GET /api/repos/{host}/{owner}/{repo}/issues|prs?state=&q=
+### GET /api/repos/{host}/{owner}/{repo}/issues|prs?state=&q=&sort=&order=
 
 - `state`: `open` (default), `closed`, `all`; PRs additionally accept `merged`
 - `q`: case-insensitive substring match on title and body
-- Returns `{"items": [ItemSummary...]}` sorted by `updatedAt` descending
+- `sort`: `updated` (default), `created`, `number`, `comments`, or `title`
+- `order`: `asc` or `desc`; defaults to the sort key's natural direction (descending for every key except `title`, which is ascending)
+- Returns `{"items": [ItemSummary...]}` sorted by the requested key and direction, defaulting to `updatedAt` descending; ties fall back to the higher number, then the newer update
+- An unknown `sort` or `order` returns 400
 - Unknown repository returns 404
 
 ### GET /api/repos/{host}/{owner}/{repo}/issues|prs/{number}
@@ -121,7 +125,7 @@ Returns `ItemDetail` as JSON; 404 when the item is not cached.
 | Route | View |
 |---|---|
 | `#/` | Empty state or first cached repo |
-| `#/{owner}/{repo}` | List view (tab + filter in query: `#/owner/repo?tab=issues&state=open`) |
+| `#/{owner}/{repo}` | List view (tab, filter, sort, and grouping in query: `#/owner/repo?tab=issues&state=open&sort=title&order=asc&group=state`) |
 | `#/{owner}/{repo}/issues/{n}` | Issue detail |
 | `#/{owner}/{repo}/pulls/{n}` | PR detail |
 
@@ -129,9 +133,9 @@ Returns `ItemDetail` as JSON; 404 when the item is not cached.
 
 | Component | Responsibility |
 |---|---|
-| Root app | Reactive store: repos, current repo, tab, state filter, items, detail, theme, refreshing map; hash parsing |
+| Root app | Reactive store: repos, current repo, tab, state filter, sort, order, grouping, items, detail, theme, refreshing map; hash parsing |
 | RepoSelect | Dropdown of cached repositories with issue/PR counts |
-| ItemList | GitHub-style rows: state icon (open green, closed purple for issues, merged purple, draft grey for PRs), number, title, colored label chips, author, comment count, updated date |
+| ItemList | GitHub-style rows: state icon (open green, closed purple for issues, merged purple, draft grey for PRs), number, title, colored label chips, author, comment count, updated date (creation date when sorting by creation). A toolbar sets the state filter, sort key and direction, grouping, and the title filter. Grouping buckets rows by state, author, or label with collapsible header rows that show a count; label grouping lists an item once per label it carries |
 | ItemDetail | State badge, title, meta line, horizontal event timeline with an absolute/relative time toggle (persisted), sidebar (reviewers for PRs, labels, assignees, milestone, GitHub link), rendered markdown body, comment list |
 | ThemeToggle | Switches daisyUI's `data-theme` between light and dark; persists to localStorage; defaults to the system preference |
 | Palette | Overlay triggered by Ctrl+P/Cmd+P or `/`; fuzzy filter over `#N title` entries; arrow keys + Enter to jump, Esc to close |
@@ -150,6 +154,8 @@ Palette matching scores entries by: exact number match, prefix match on title wo
 | Markdown | goldmark with GFM extensions, raw HTML disabled | Server-side rendering keeps the frontend dumb; safe by default |
 | Assets | `go:embed` for ghx-owned files | Single-binary distribution; only Vue, daisyUI, and the Tailwind browser build load from CDN |
 | Refresh | Shared fetch function with per-repo mutex | One implementation of resume logic (NFR-03); prevents parallel fetch clobbering (NFR-02) |
+| List sorting | Server-side `sort` and `order` parameters | Keeps ordering in the documented API contract, so the UI and other API consumers share one implementation |
+| List grouping | Client-side buckets over the sorted list | Presentation-only layout; label grouping needs one item in several buckets |
 | Binding | Loopback by default | The API exposes cached data and a mutation trigger; no auth layer is planned |
 
 ## Risks and Unknowns

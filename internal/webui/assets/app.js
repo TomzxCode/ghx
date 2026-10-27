@@ -108,6 +108,17 @@
 
   // --- State ----------------------------------------------------------------
 
+  // List sorting runs on the server (sort + order query parameters); grouping
+  // is a presentation concern handled in the browser.
+  const SORTS = ['updated', 'created', 'comments', 'number', 'title'];
+  const SORT_DEFAULT_ORDER = { updated: 'desc', created: 'desc', comments: 'desc', number: 'desc', title: 'asc' };
+  const GROUPS = ['state', 'author', 'label'];
+  const STATE_ORDER = ['open', 'draft', 'merged', 'closed'];
+
+  function defaultOrder(sort) {
+    return SORT_DEFAULT_ORDER[sort] || 'desc';
+  }
+
   const state = reactive({
     repos: [],
     route: parseHash(),
@@ -124,6 +135,12 @@
     })(),
     tab: 'issues',
     stateFilter: 'open',
+    sort: 'updated',
+    order: 'desc',
+    group: '',
+    // collapsedGroups holds the group keys the user folded shut, keyed by
+    // grouping mode plus bucket so switching modes starts expanded again.
+    collapsedGroups: {},
     query: '',
     items: [],
     itemsCount: 0,
@@ -217,7 +234,7 @@
     state.error = '';
     try {
       const kind = state.tab === 'prs' ? 'prs' : 'issues';
-      const params = new URLSearchParams({ state: state.stateFilter });
+      const params = new URLSearchParams({ state: state.stateFilter, sort: state.sort, order: state.order });
       if (state.query) params.set('q', state.query);
       const data = await api('/api/repos/' + repo.host + '/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/' + kind + '?' + params);
       if (seq !== fetchSeq) return;
@@ -307,6 +324,7 @@
       const repoKey = r.owner + '/' + r.repo;
       if (lastListRepoKey !== repoKey) {
         state.query = '';
+        state.collapsedGroups = {};
         lastListRepoKey = repoKey;
       }
       state.tab = r.params.get('tab') === 'prs' ? 'prs' : 'issues';
@@ -315,6 +333,12 @@
       // issues filter when switching tabs (e.g. via back/forward).
       const allowed = state.tab === 'prs' ? ['open', 'closed', 'merged', 'all'] : ['open', 'closed', 'all'];
       state.stateFilter = allowed.includes(s) ? s : 'open';
+      const sort = (r.params.get('sort') || '').toLowerCase();
+      state.sort = SORTS.includes(sort) ? sort : 'updated';
+      const order = (r.params.get('order') || '').toLowerCase();
+      state.order = order === 'asc' || order === 'desc' ? order : defaultOrder(state.sort);
+      const group = (r.params.get('group') || '').toLowerCase();
+      state.group = GROUPS.includes(group) ? group : '';
       loadItems();
       return;
     }
@@ -345,6 +369,11 @@
       if (state.stateFilter !== 'open' && !(tab === 'issues' && state.stateFilter === 'merged')) {
         params.set('state', state.stateFilter);
       }
+      // Carry the list's sort and grouping so returning to the list keeps the
+      // view the user left.
+      if (state.sort !== 'updated') params.set('sort', state.sort);
+      if (state.order !== defaultOrder(state.sort)) params.set('order', state.order);
+      if (state.group) params.set('group', state.group);
       const qs = params.toString();
       go(base + (qs ? '?' + qs : ''));
       return;
@@ -356,6 +385,126 @@
     updateHashQuery(changes);
   }
   function setFilter(state2) { updateHashQuery({ state: state2 === 'open' ? null : state2 }); }
+
+  // setSort applies a sort key and its natural direction (newest or largest
+  // first, titles A-Z), writing both to the URL. The server does the sorting.
+  function setSort(sort) {
+    const next = SORTS.includes(sort) ? sort : 'updated';
+    // The new key starts in its natural direction, which is that key's
+    // default, so the URL only needs the key.
+    updateHashQuery({ sort: next === 'updated' ? null : next, order: null });
+  }
+
+  function toggleOrder() {
+    const next = state.order === 'desc' ? 'asc' : 'desc';
+    updateHashQuery({ order: next === defaultOrder(state.sort) ? null : next });
+  }
+
+  function setGroup(group) {
+    updateHashQuery({ group: GROUPS.includes(group) ? group : null });
+  }
+
+  function orderTitle() {
+    return 'Sorted ' + (state.order === 'asc' ? 'ascending' : 'descending') + '; click to reverse';
+  }
+
+  function toggleGroup(key) {
+    if (state.collapsedGroups[key]) delete state.collapsedGroups[key];
+    else state.collapsedGroups[key] = true;
+  }
+
+  // --- List grouping ----------------------------------------------------------
+
+  // itemStateKey folds drafts into their own bucket so grouping reads like the
+  // state badges on each row.
+  function itemStateKey(item) {
+    if (item.state === 'merged') return 'merged';
+    if (item.isDraft && item.state === 'open') return 'draft';
+    return item.state === 'closed' ? 'closed' : 'open';
+  }
+
+  function stateKeyLabel(key) {
+    switch (key) {
+      case 'draft': return 'Draft';
+      case 'merged': return 'Merged';
+      case 'closed': return 'Closed';
+      default: return 'Open';
+    }
+  }
+
+  // groupItems buckets the server-sorted items by the current grouping, keeping
+  // the list order inside each bucket. Label grouping puts an item under every
+  // label it carries, so one item can appear in several groups. No grouping
+  // yields a single unlabelled bucket.
+  function groupItems(items, group) {
+    if (!group) return [{ key: '', label: '', items }];
+    const buckets = new Map();
+    const add = (key, label, item) => {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.items.push(item);
+      else buckets.set(key, { key, label, items: [item] });
+    };
+    for (const item of items) {
+      if (group === 'state') {
+        const key = itemStateKey(item);
+        add(key, stateKeyLabel(key), item);
+      } else if (group === 'author') {
+        add((item.author || '').toLowerCase(), item.author || 'Unknown', item);
+      } else if (item.labels && item.labels.length) {
+        for (const label of item.labels) add('label:' + label.name, label.name, item);
+      } else {
+        add('__none__', 'No labels', item);
+      }
+    }
+    const out = [...buckets.values()];
+    if (group === 'state') {
+      out.sort((a, b) => STATE_ORDER.indexOf(a.key) - STATE_ORDER.indexOf(b.key));
+    } else {
+      out.sort((a, b) => {
+        const aNone = a.key === '__none__';
+        const bNone = b.key === '__none__';
+        if (aNone !== bNone) return aNone ? 1 : -1;
+        return a.label.localeCompare(b.label, undefined, { sensitivity: 'base' });
+      });
+    }
+    return out;
+  }
+
+  // listRows flattens groups into table rows: a header row per group (only when
+  // grouping) followed by its items, unless the group is collapsed.
+  function listRows() {
+    const rows = [];
+    for (const bucket of groupItems(state.items, state.group)) {
+      if (state.group) {
+        const key = state.group + ':' + bucket.key;
+        const collapsed = !!state.collapsedGroups[key];
+        rows.push({
+          type: 'group',
+          key: 'g:' + key,
+          groupKey: key,
+          label: bucket.label,
+          count: bucket.items.length,
+          collapsed,
+        });
+        if (collapsed) continue;
+      }
+      for (const item of bucket.items) {
+        rows.push({ type: 'item', key: 'i:' + bucket.key + ':' + item.kind + ':' + item.number, item });
+      }
+    }
+    return rows;
+  }
+
+  function onRowClick(row) {
+    if (row.type === 'group') toggleGroup(row.groupKey);
+    else go(itemUrl(row.item));
+  }
+
+  // itemTime returns the timestamp the active sort is about, so the date column
+  // explains the row order instead of always showing the update time.
+  function itemTime(item) {
+    return state.sort === 'created' ? (item.createdAt || item.updatedAt) : item.updatedAt;
+  }
 
   // --- Palette ----------------------------------------------------------------
 
@@ -567,6 +716,14 @@
         },
         setTab,
         setFilter,
+        setSort,
+        toggleOrder,
+        setGroup,
+        toggleGroup,
+        orderTitle,
+        listRows,
+        onRowClick,
+        itemTime,
         activeTab,
         refreshCurrent,
         refreshTitle() {
@@ -641,7 +798,6 @@
       };
     },
     methods: {
-      go2(hash) { go(hash); },
       repoIssues() {
         const repo = currentRepo();
         if (!repo) return '';
@@ -707,23 +863,7 @@
           Pull requests <span class="badge badge-sm badge-neutral">{{ repoPRs() }}</span>
         </button>
       </nav>
-      <div class="filters flex items-center gap-2 ml-auto" v-if="state.route.name === 'list'">
-        <select :value="state.stateFilter" @change="setFilter($event.target.value)" class="state-select select select-sm select-bordered bg-base-100 text-base-content border-base-300 focus:outline-none">
-          <template v-if="state.tab === 'prs'">
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-            <option value="merged">Merged</option>
-            <option value="all">All</option>
-          </template>
-          <template v-else>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-            <option value="all">All</option>
-          </template>
-        </select>
-        <input class="filter-input input input-sm input-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-48" v-model="state.query" type="search" placeholder="Filter titles...">
-      </div>
-      <div class="flex-1" v-else></div>
+      <div class="flex-1"></div>
       <a class="btn btn-sm btn-ghost text-neutral-content" :href="statsUrl()" title="Pull request activity report">
         Stats
       </a>
@@ -754,22 +894,69 @@
     </div>
 
     <div v-else-if="state.route.name === 'list'" class="list-view">
+      <div class="list-toolbar flex flex-wrap items-center gap-2 mb-3">
+        <select :value="state.stateFilter" @change="setFilter($event.target.value)" class="state-select select select-sm select-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-auto" aria-label="Filter by state" title="Filter by state">
+          <template v-if="state.tab === 'prs'">
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+            <option value="merged">Merged</option>
+            <option value="all">All</option>
+          </template>
+          <template v-else>
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+            <option value="all">All</option>
+          </template>
+        </select>
+        <select :value="state.sort" @change="setSort($event.target.value)" class="sort-select select select-sm select-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-auto" aria-label="Sort by" title="Sort by">
+          <option value="updated">Recently updated</option>
+          <option value="created">Recently created</option>
+          <option value="comments">Most comments</option>
+          <option value="number">Number</option>
+          <option value="title">Title</option>
+        </select>
+        <button type="button" class="btn btn-sm btn-square btn-ghost" @click="toggleOrder()" :title="orderTitle()" :aria-label="orderTitle()">
+          <svg v-if="state.order === 'asc'" viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 2.5 12.5 8H9.5v5.5h-3V8H3.5z"></path></svg>
+          <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="M8 13.5 3.5 8h3V2.5h3V8h3z"></path></svg>
+        </button>
+        <select :value="state.group" @change="setGroup($event.target.value)" class="group-select select select-sm select-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-auto" aria-label="Group by" title="Group by">
+          <option value="">No grouping</option>
+          <option value="state">Group by state</option>
+          <option value="author">Group by author</option>
+          <option value="label">Group by label</option>
+        </select>
+        <input class="filter-input input input-sm input-bordered bg-base-100 text-base-content border-base-300 focus:outline-none w-48 ml-auto" v-model="state.query" type="search" placeholder="Filter titles...">
+      </div>
       <div v-if="state.loading" class="text-center py-16 text-base-content/60">
         <span class="loading loading-spinner loading-md text-primary"></span> Loading...
       </div>
       <div class="card bg-base-100 border border-base-300 overflow-hidden" v-else-if="state.items.length">
         <table class="table">
           <tbody>
-            <tr v-for="item in state.items" :key="item.kind + item.number" class="hover cursor-pointer" @click="go2(itemUrl(item))">
-              <td class="w-10 pl-4" v-html="stateIcon(item)"></td>
-              <td>
-                <a class="item-title font-semibold hover:text-primary" :href="itemUrl(item)" @click.stop>{{ item.title }}</a>
-                <span class="badge badge-sm label-chip" v-for="l in item.labels" :key="l.name" :style="labelStyle(l)">{{ l.name }}</span>
+            <tr
+              v-for="row in listRows()"
+              :key="row.key"
+              :class="row.type === 'group' ? 'group-row' : 'hover cursor-pointer'"
+              @click="onRowClick(row)"
+            >
+              <td v-if="row.type === 'group'" colspan="6" class="group-cell py-2">
+                <button type="button" class="group-toggle" :aria-expanded="!row.collapsed" @click.stop="toggleGroup(row.groupKey)">
+                  <svg class="group-chevron" :class="{ collapsed: row.collapsed }" viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true"><path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"></path></svg>
+                  <span class="font-semibold">{{ row.label }}</span>
+                  <span class="badge badge-sm">{{ row.count }}</span>
+                </button>
               </td>
-              <td class="text-right text-base-content/60 whitespace-nowrap">#{{ item.number }}</td>
-              <td class="text-right text-base-content/60 whitespace-nowrap">{{ item.author }}</td>
-              <td class="text-right text-base-content/60 whitespace-nowrap w-12">{{ item.commentCount || '' }}</td>
-              <td class="text-right text-base-content/60 whitespace-nowrap pr-4" :title="fmtDate(item.updatedAt)">{{ relTime(item.updatedAt) }}</td>
+              <template v-else>
+                <td class="w-10 pl-4" v-html="stateIcon(row.item)"></td>
+                <td>
+                  <a class="item-title font-semibold hover:text-primary" :href="itemUrl(row.item)" @click.stop>{{ row.item.title }}</a>
+                  <span class="badge badge-sm label-chip" v-for="l in row.item.labels" :key="l.name" :style="labelStyle(l)">{{ l.name }}</span>
+                </td>
+                <td class="text-right text-base-content/60 whitespace-nowrap">#{{ row.item.number }}</td>
+                <td class="text-right text-base-content/60 whitespace-nowrap">{{ row.item.author }}</td>
+                <td class="text-right text-base-content/60 whitespace-nowrap w-12">{{ row.item.commentCount || '' }}</td>
+                <td class="text-right text-base-content/60 whitespace-nowrap pr-4" :title="fmtDate(itemTime(row.item))">{{ relTime(itemTime(row.item)) }}</td>
+              </template>
             </tr>
           </tbody>
         </table>

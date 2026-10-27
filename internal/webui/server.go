@@ -203,6 +203,7 @@ type ItemSummary struct {
 	Author       string      `json:"author"`
 	Labels       []LabelChip `json:"labels"`
 	CommentCount int         `json:"commentCount"`
+	CreatedAt    time.Time   `json:"createdAt"`
 	UpdatedAt    time.Time   `json:"updatedAt"`
 	URL          string      `json:"url"`
 	Host         string      `json:"host,omitempty"`
@@ -399,6 +400,11 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, host, owner,
 		state = "open"
 	}
 	q := strings.ToLower(query.Get("q"))
+	sortKey, desc, err := parseListSort(query.Get("sort"), query.Get("order"))
+	if err != nil {
+		httpError(w, http.StatusBadRequest, "%s", err.Error())
+		return
+	}
 
 	if !validState(kind, state) {
 		httpError(w, http.StatusBadRequest, "invalid state %q for %s (use open, closed, merged, or all)", state, kind)
@@ -421,9 +427,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, host, owner,
 		}
 		filtered = append(filtered, item)
 	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].UpdatedAt.After(filtered[j].UpdatedAt)
-	})
+	sortSummaries(filtered, sortKey, desc)
 	writeJSON(w, http.StatusOK, map[string]any{"items": filtered})
 }
 
@@ -731,6 +735,7 @@ func issueSummary(issue *github.Issue) ItemSummary {
 		Author:       issue.Author.Login,
 		Labels:       labelChips(issue.Labels),
 		CommentCount: commentCount(issue.CommentCount, len(issue.Comments)),
+		CreatedAt:    issue.CreatedAt,
 		UpdatedAt:    issue.UpdatedAt,
 		URL:          issue.URL,
 	}
@@ -750,6 +755,7 @@ func prSummary(pr *github.PullRequest) ItemSummary {
 		Author:       pr.Author.Login,
 		Labels:       labelChips(pr.Labels),
 		CommentCount: commentCount(pr.CommentCount, len(pr.Comments)),
+		CreatedAt:    pr.CreatedAt,
 		UpdatedAt:    pr.UpdatedAt,
 		URL:          pr.URL,
 	}
@@ -1052,6 +1058,74 @@ func stateMatches(itemState, filter string) bool {
 		return true
 	}
 	return itemState == filter
+}
+
+// listSortDefaults maps each accepted list sort key to its default direction
+// (true means descending). Title defaults to ascending because it reads
+// naturally A-Z.
+var listSortDefaults = map[string]bool{
+	"updated":  true,
+	"created":  true,
+	"number":   true,
+	"comments": true,
+	"title":    false,
+}
+
+// parseListSort validates the sort and order query parameters and returns the
+// sort key plus the direction. Both may be empty, in which case the list keeps
+// its default (most recently updated first). An explicit order overrides the
+// key's default direction.
+func parseListSort(rawSort, rawOrder string) (string, bool, error) {
+	key := strings.ToLower(strings.TrimSpace(rawSort))
+	if key == "" {
+		key = "updated"
+	}
+	desc, ok := listSortDefaults[key]
+	if !ok {
+		return "", false, fmt.Errorf("invalid sort %q (use updated, created, number, comments, or title)", rawSort)
+	}
+	switch strings.ToLower(strings.TrimSpace(rawOrder)) {
+	case "":
+	case "asc":
+		desc = false
+	case "desc":
+		desc = true
+	default:
+		return "", false, fmt.Errorf("invalid order %q (use asc or desc)", rawOrder)
+	}
+	return key, desc, nil
+}
+
+// sortSummaries orders items by the given key and direction. Equal keys fall
+// back to the higher number, then the more recently updated item, so repeated
+// requests return a stable order.
+func sortSummaries(items []ItemSummary, key string, desc bool) {
+	sort.SliceStable(items, func(i, j int) bool {
+		a, b := items[i], items[j]
+		var cmp int
+		switch key {
+		case "created":
+			cmp = a.CreatedAt.Compare(b.CreatedAt)
+		case "number":
+			cmp = a.Number - b.Number
+		case "comments":
+			cmp = a.CommentCount - b.CommentCount
+		case "title":
+			cmp = strings.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title))
+		default: // updated
+			cmp = a.UpdatedAt.Compare(b.UpdatedAt)
+		}
+		if cmp == 0 {
+			if a.Number != b.Number {
+				return a.Number > b.Number
+			}
+			return a.UpdatedAt.After(b.UpdatedAt)
+		}
+		if desc {
+			return cmp > 0
+		}
+		return cmp < 0
+	})
 }
 
 // paletteScore scores a palette query against an item: 3 for an exact number

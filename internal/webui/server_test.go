@@ -202,6 +202,64 @@ func TestListIssuesFiltering(t *testing.T) {
 	}
 }
 
+func TestListSorting(t *testing.T) {
+	store := newTestStore(t)
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	issues := []*github.Issue{
+		makeIssue(1, "alpha task", "OPEN", "", base),
+		makeIssue(2, "Gamma task", "OPEN", "", base.Add(-time.Hour)),
+		makeIssue(3, "Beta task", "OPEN", "", base.Add(-2*time.Hour)),
+	}
+	// One issue gets extra comments so comment sorting is observable; the
+	// others keep the single cached comment makeIssue attaches.
+	issues[0].CommentCount = 5
+	seedRepo(t, store, "github.com", "acme", "testrepo", issues, nil)
+	h := newTestServer(store, nil).Handler()
+
+	numbers := func(qs string) string {
+		t.Helper()
+		_, body := get(t, h, "/api/repos/github.com/acme/testrepo/issues?state=all"+qs)
+		out := make([]string, 0, len(issues))
+		for _, item := range items(t, body) {
+			out = append(out, strconv.Itoa(int(item["number"].(float64))))
+		}
+		return strings.Join(out, ",")
+	}
+
+	// The default is updated descending, and createdAt is exposed on summaries.
+	_, body := get(t, h, "/api/repos/github.com/acme/testrepo/issues?state=all")
+	first := items(t, body)[0]
+	if first["createdAt"] == nil {
+		t.Fatalf("expected createdAt on the summary: %v", first)
+	}
+	cases := []struct {
+		name string
+		qs   string
+		want string
+	}{
+		{"default updated desc", "", "1,2,3"},
+		{"created asc", "&sort=created&order=asc", "3,2,1"},
+		{"number asc", "&sort=number&order=asc", "1,2,3"},
+		{"number desc", "&sort=number", "3,2,1"},
+		{"comments desc", "&sort=comments", "1,3,2"},
+		{"title asc by default", "&sort=title", "1,3,2"},
+		{"title desc", "&sort=title&order=desc", "2,3,1"},
+	}
+	for _, tc := range cases {
+		if got := numbers(tc.qs); got != tc.want {
+			t.Fatalf("%s: got %s, want %s", tc.name, got, tc.want)
+		}
+	}
+
+	// Invalid values are rejected rather than silently ignored.
+	for _, qs := range []string{"&sort=stars", "&order=sideways"} {
+		rec, _ := get(t, h, "/api/repos/github.com/acme/testrepo/issues?state=all"+qs)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %q, got %d", qs, rec.Code)
+		}
+	}
+}
+
 func TestListPRsMergedState(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
