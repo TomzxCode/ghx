@@ -135,6 +135,13 @@ Cache updated. Valid for 60 minute(s).
 ```
 
 The two `Cached` lines appear in whichever order the portions finish.
+On a terminal, each portion gets a row from the start of the run, stacked one above the other.
+Each row's description names its state (`starting`, `scanning`, `caching`).
+A row's count runs from the items already in the cache to the number the cache will hold at the end of the run, so a refresh starts part filled instead of at zero; the `starting` row shows the cached count, and a portion with nothing to fetch shows `<n>/<n>` with `up to date`.
+Once it is caching, the row shows the item rate and estimated time left.
+While the PR delta window is being scanned, the row is a full bar whose total grows with the number of items scanned.
+A finished portion keeps its row while the other one still runs.
+The remaining GitHub API points appear on a line of their own below the rows.
 
 ## How freshness works
 

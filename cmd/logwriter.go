@@ -4,21 +4,19 @@ import (
 	"io"
 	"os"
 	"sync"
-
-	"github.com/schollz/progressbar/v3"
 )
 
-// activeBar is the progress bar currently rendering to stderr, if any. When
+// activeBar is the progress display currently rendering to stderr, if any. When
 // set, log output is routed through logWriter so a log line never lands in the
 // middle of a rendered bar.
 var (
 	activeBarMu sync.Mutex
-	activeBar   *progressbar.ProgressBar
+	activeBar   barRenderer
 )
 
 // setActiveBar registers (or clears, when nil) the progress bar that log
 // writes must clear before printing.
-func setActiveBar(bar *progressbar.ProgressBar) {
+func setActiveBar(bar barRenderer) {
 	activeBarMu.Lock()
 	activeBar = bar
 	activeBarMu.Unlock()

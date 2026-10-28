@@ -3,13 +3,11 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 
 	"github.com/tomzxcode/ghx/internal/cache"
@@ -116,13 +114,15 @@ func parseSinceDate(s string) (time.Time, error) {
 // FetchEvent describes progress during a repository fetch. Phase is "issues",
 // "prs", or "prs-scan" (the newest-first walk locating the delta window);
 // Kind is "start", "batch", or "done"; Message carries the human-readable
-// phase description on start (empty for silent phases); Done is the number of
-// items written (or scanned for prs-scan) so far; Total is the server-reported
-// total (0 when unknown).
+// phase description on start (empty for silent phases); Cached is the number of
+// items of that type already in the cache when the phase started; Done is the
+// number of items written (or scanned for prs-scan) so far; Total is the
+// server-reported total (0 when unknown).
 type FetchEvent struct {
 	Phase   string
 	Kind    string
 	Message string
+	Cached  int
 	Done    int
 	Total   int
 }
@@ -203,13 +203,21 @@ func runCache(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	var phases []string
+	if fetchIssues {
+		phases = append(phases, "issues")
+	}
+	if fetchPRs {
+		phases = append(phases, "prs")
+	}
+
 	if _, _, err := fetchRepoData(store, client, repo, info, FetchOptions{
 		Force:       cacheForce,
 		Since:       sinceTime,
 		FetchIssues: fetchIssues,
 		FetchPRs:    fetchPRs,
 		Duration:    cacheDuration,
-		OnProgress:  cliFetchProgress(client, fetchIssues && fetchPRs),
+		OnProgress:  cliFetchProgress(client, phases...),
 	}); err != nil {
 		return err
 	}
@@ -381,6 +389,10 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 
 	var issueCount, prCount int
 
+	// Count what each portion will have cached already, so the progress rows can
+	// show the cache growing from there instead of from zero.
+	cachedIssues, cachedPRs := cachedItemCounts(store, repo)
+
 	fetchIssues := func() error {
 		// Issues are fetched oldest-first. `since = IssueCursor` either resumes
 		// an interrupted fetch (cursor mid-history) or delta-updates a complete
@@ -388,13 +400,13 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 		// beginning. An explicit --since overrides the cursor for this run.
 		switch {
 		case issueSince != nil && !completeAtStart:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Resuming issues from %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Resuming issues from %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 		case issueSince != nil && opts.Since != nil:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Fetching issues created or updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Fetching issues created or updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 		case issueSince != nil:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Fetching issues updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Fetching issues updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 		default:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Message: fmt.Sprintf("Caching issues for %s/%s...", repo.Owner, repo.Name)})
+			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Caching issues for %s/%s...", repo.Owner, repo.Name)})
 		}
 		issueHandler := func(batch []*github.Issue, total int) error {
 			for _, issue := range batch {
@@ -432,7 +444,7 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 			return saveInfo()
 		}
 		if prCold {
-			notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Caching pull requests for %s/%s...", repo.Owner, repo.Name)})
+			notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Caching pull requests for %s/%s...", repo.Owner, repo.Name)})
 			if _, err := client.FetchAllPRs(repo.Owner, repo.Name, prHandler); err != nil {
 				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
 				return fmt.Errorf("fetching pull requests: %w", err)
@@ -441,9 +453,9 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 			// Both delta/resume (cursor) and an explicit --since use the same
 			// newest-first connection walk with an exact-timestamp cutoff.
 			if opts.Since != nil {
-				notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Fetching pull requests created or updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+				notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Fetching pull requests created or updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 			} else {
-				notify(FetchEvent{Phase: "prs", Kind: "start", Message: fmt.Sprintf("Fetching pull requests updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
+				notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Fetching pull requests updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
 			}
 			// Phase 1 (locating the window) gets its own spinner bar so
 			// users see progress before full pages start arriving.
@@ -515,215 +527,22 @@ func finalizeFetch(store cache.Store, repo *gitremote.Repo, info *cache.CacheInf
 	return issueCount, prCount, nil
 }
 
-// cliFetchProgress renders fetch events as CLI status lines and progress bars.
-// Phases map onto labelled bars; unknown phases still print their messages.
-//
-// concurrent is true when issues and pull requests are fetched at the same
-// time. Their events then interleave, so they share one bar: two live bars
-// cannot share a terminal line without overwriting each other.
-func cliFetchProgress(client *github.Client, concurrent bool) FetchProgress {
-	if concurrent {
-		return combinedProgress(client)
+// cachedItemCounts reports how many issues and pull requests are already cached
+// for repo, so progress rows can show the cache growing from what it holds
+// instead of from zero. A repository with nothing cached reports zeros.
+func cachedItemCounts(store cache.Store, repo *gitremote.Repo) (issues, prs int) {
+	repos, err := store.ListCachedRepos()
+	if err != nil {
+		return 0, 0
 	}
-	type phaseBar struct {
-		tracker *progressTracker
-	}
-	phases := map[string]*phaseBar{}
-	return func(ev FetchEvent) {
-		p := phases[ev.Phase]
-		if p == nil {
-			p = &phaseBar{}
-			phases[ev.Phase] = p
-		}
-		switch ev.Kind {
-		case "start":
-			if ev.Message != "" {
-				fmt.Println(ev.Message)
-			}
-		case "batch":
-			if p.tracker == nil {
-				p.tracker = newProgressTracker(fetchPhaseLabel(ev.Phase), rateLimitStatus(client))
-			}
-			p.tracker.setTotal(ev.Total)
-			p.tracker.set(ev.Done)
-		case "done":
-			if p.tracker != nil {
-				p.tracker.done()
-				p.tracker = nil
-			}
-			switch ev.Phase {
-			case "issues":
-				fmt.Printf("Cached %d issue(s).\n", ev.Done)
-			case "prs":
-				fmt.Printf("Cached %d pull request(s).\n", ev.Done)
-			}
+	for _, r := range repos {
+		if strings.EqualFold(r.Host, repo.Host) &&
+			strings.EqualFold(r.Owner, repo.Owner) &&
+			strings.EqualFold(r.Repo, repo.Name) {
+			return r.IssueCount, r.PRCount
 		}
 	}
-}
-
-// combinedProgress renders the concurrently fetched portions on a single bar.
-// The bar counts issues and pull requests together and shows each portion's own
-// figure in its description. fetchRepoData delivers events one at a time, so no
-// locking is needed here.
-func combinedProgress(client *github.Client) FetchProgress {
-	p := &combinedBar{
-		status: rateLimitStatus(client),
-		totals: map[string]int{},
-		done:   map[string]int{},
-		writer: progressWriter(),
-	}
-	return p.handle
-}
-
-// combinedBar is the one progress bar shared by concurrent portions.
-type combinedBar struct {
-	status func() string
-	writer io.Writer
-	bar    *progressbar.ProgressBar
-	phases []string // portions that reported at least one item, in first-seen order
-	totals map[string]int
-	done   map[string]int
-	max    int
-	active int // portions that started and have not finished yet
-}
-
-func (p *combinedBar) handle(ev FetchEvent) {
-	switch ev.Kind {
-	case "start":
-		if ev.Phase == "issues" || ev.Phase == "prs" {
-			p.active++
-		}
-		if ev.Message != "" {
-			p.println(ev.Message)
-		}
-	case "batch":
-		// The prs-scan phase locates the delta window and has no fixed total,
-		// so it would keep the shared bar spinning. The full-page phase that
-		// follows reports the real total.
-		if ev.Phase == "prs-scan" {
-			return
-		}
-		p.record(ev.Phase, ev.Done, ev.Total)
-	case "done":
-		if ev.Phase == "prs-scan" {
-			return
-		}
-		p.finish(ev.Phase, ev.Done)
-	}
-}
-
-// record updates the shared count with one portion's progress.
-func (p *combinedBar) record(phase string, done, total int) {
-	if _, seen := p.done[phase]; !seen {
-		p.phases = append(p.phases, phase)
-	}
-	p.done[phase] = done
-	if total > 0 {
-		p.totals[phase] = total
-	}
-	p.ensureBar()
-	p.updateMax()
-	sum := 0
-	for _, ph := range p.phases {
-		sum += p.done[ph]
-	}
-	p.bar.Describe(p.describe())
-	p.bar.Set(sum)
-}
-
-// ensureBar creates the shared bar as a spinner on the first item. It becomes
-// determinate once every portion has reported a total (see updateMax).
-func (p *combinedBar) ensureBar() {
-	if p.bar != nil {
-		return
-	}
-	p.max = -1
-	p.bar = newProgressBar("caching", 0, p.writer)
-	if p.writer == os.Stderr {
-		setActiveBar(p.bar)
-	}
-}
-
-// updateMax sets the bar maximum to the sum of the portions' totals, once all
-// of them are known.
-func (p *combinedBar) updateMax() {
-	sum := 0
-	for _, ph := range p.phases {
-		if p.totals[ph] <= 0 {
-			return // still a spinner until every portion's total is known
-		}
-		sum += p.totals[ph]
-	}
-	if sum <= 0 || sum == p.max {
-		return
-	}
-	p.max = sum
-	p.bar.ChangeMax(sum)
-}
-
-// describe renders the per-portion figures plus the live rate limit status.
-func (p *combinedBar) describe() string {
-	parts := make([]string, 0, len(p.phases))
-	for _, ph := range p.phases {
-		if total := p.totals[ph]; total > 0 {
-			parts = append(parts, fmt.Sprintf("%s %d/%d", fetchPhaseLabel(ph), p.done[ph], total))
-		} else {
-			parts = append(parts, fmt.Sprintf("%s %d", fetchPhaseLabel(ph), p.done[ph]))
-		}
-	}
-	return "caching (" + strings.Join(parts, ", ") + ")" + p.status()
-}
-
-// finish closes one portion: its summary is printed outside the bar, and the
-// bar is finished once no portion is left running.
-func (p *combinedBar) finish(phase string, count int) {
-	p.active--
-	last := p.active <= 0
-	if p.bar != nil {
-		if last {
-			if !p.bar.IsFinished() && p.bar.GetMax() > 0 {
-				p.bar.Finish()
-			}
-			fmt.Fprintln(p.writer)
-			if p.writer == os.Stderr {
-				setActiveBar(nil)
-			}
-		} else {
-			_ = p.bar.Clear() // keep the summary line clear of the bar
-		}
-	}
-	switch phase {
-	case "issues":
-		fmt.Printf("Cached %d issue(s).\n", count)
-	case "prs":
-		fmt.Printf("Cached %d pull request(s).\n", count)
-	}
-	if p.bar != nil && !last {
-		_ = p.bar.RenderBlank()
-	}
-}
-
-// println prints a message without landing it in the middle of the bar.
-func (p *combinedBar) println(msg string) {
-	if p.bar == nil {
-		fmt.Println(msg)
-		return
-	}
-	_ = p.bar.Clear()
-	fmt.Println(msg)
-	_ = p.bar.RenderBlank()
-}
-
-// fetchPhaseLabel maps a fetch phase onto its progress bar label.
-func fetchPhaseLabel(phase string) string {
-	switch phase {
-	case "prs":
-		return "pull requests"
-	case "prs-scan":
-		return "scanning pull requests"
-	default:
-		return phase
-	}
+	return 0, 0
 }
 
 // advanceCursor sets *cur to t when t is later than the current value (or when
@@ -735,107 +554,4 @@ func advanceCursor(cur **time.Time, t time.Time) {
 	if *cur == nil || t.After(**cur) {
 		*cur = &t
 	}
-}
-
-// rateLimitStatus returns a status closure for progress trackers that
-// surfaces the live x-ratelimit-remaining value from the last API response,
-// or an empty suffix before the first response arrives.
-func rateLimitStatus(client *github.Client) func() string {
-	return func() string {
-		if n := client.RateLimitRemaining(); n >= 0 {
-			return fmt.Sprintf(" | %d points left", n)
-		}
-		return ""
-	}
-}
-
-// progressTracker adapts github batch callbacks onto a schollz progress bar.
-// The bar is created lazily on the first set/setTotal so it can adopt the
-// server-reported total (determinate bar) or fall back to a spinner when the
-// total is unknown.
-type progressTracker struct {
-	label  string
-	status func() string // optional extra status appended to the description
-	writer io.Writer
-	bar    *progressbar.ProgressBar
-	maxSet bool
-}
-
-// newProgressTracker creates a bar tracker. status, when non-nil, is
-// evaluated on every update and appended to the bar description (used to show
-// the live rate limit remaining).
-func newProgressTracker(label string, status func() string) *progressTracker {
-	return &progressTracker{label: label, status: status, writer: progressWriter()}
-}
-
-// describe refreshes the bar description with the current status suffix.
-func (t *progressTracker) describe() {
-	if t.bar == nil || t.status == nil {
-		return
-	}
-	t.bar.Describe(t.label + t.status())
-}
-
-// newProgressBar creates a schollz bar configured like every ghx bar: spinner
-// mode when max is not positive, a fixed width, and no ETA prediction.
-func newProgressBar(label string, max int, writer io.Writer) *progressbar.ProgressBar {
-	if max <= 0 {
-		max = -1 // -1 selects spinner mode for an unknown length
-	}
-	return progressbar.NewOptions(max,
-		progressbar.OptionSetDescription(label),
-		progressbar.OptionSetWriter(writer),
-		progressbar.OptionShowCount(),
-		progressbar.OptionSetWidth(30),
-		progressbar.OptionSetPredictTime(false),
-		progressbar.OptionThrottle(50*time.Millisecond),
-	)
-}
-
-func (t *progressTracker) setTotal(total int) {
-	if t.bar == nil {
-		t.bar = newProgressBar(t.label, total, t.writer)
-		if t.writer == os.Stderr {
-			setActiveBar(t.bar)
-		}
-	} else if total > 0 && !t.maxSet {
-		t.bar.ChangeMax(total)
-		t.maxSet = true
-	}
-	if total > 0 {
-		t.maxSet = true
-	}
-	t.describe()
-}
-
-func (t *progressTracker) set(current int) {
-	if t.bar == nil {
-		t.setTotal(0)
-	}
-	t.describe()
-	t.bar.Set(current)
-}
-
-// done finalises the bar: fills a determinate bar if it did not naturally
-// complete, then emits a trailing newline.
-func (t *progressTracker) done() {
-	if t.bar == nil {
-		return
-	}
-	if !t.bar.IsFinished() && t.bar.GetMax() > 0 {
-		t.bar.Finish()
-	}
-	fmt.Fprintln(t.writer)
-	if t.writer == os.Stderr {
-		setActiveBar(nil)
-	}
-}
-
-// progressWriter returns os.Stderr when it is a terminal device, otherwise
-// io.Discard so progress bars never clutter captured or piped output.
-func progressWriter() io.Writer {
-	if fi, err := os.Stderr.Stat(); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
-		return os.Stderr
-	}
-	return io.Discard
 }

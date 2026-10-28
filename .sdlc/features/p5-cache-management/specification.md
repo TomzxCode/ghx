@@ -12,7 +12,7 @@ Cache metadata tracks the last fetch timestamp and configured duration.
 Every plain run delta-refreshes from the last cache write; the freshness window governs read commands, not the fetch itself.
 `--if-stale` restores the no-op behavior while the cache is fresh, and `--force` discards resume state for a full re-fetch.
 Delta fetches use the `since` parameter on issues and client-side timestamp comparison on PRs to only fetch updated items.
-A progress bar (`schollz/progressbar/v3`) renders to stderr during each fetch, driven by the GraphQL connection `totalCount`; it is suppressed when stderr is not a terminal.
+The `cache` command renders one progress row per portion to stderr, driven by the GraphQL connection `totalCount` plus the number of items already cached, so a refresh starts from what the cache already holds; it is suppressed when stderr is not a terminal.
 
 ## Architecture
 

@@ -47,5 +47,5 @@ The project was previously named `gh-cached`; it has since grown from a read-onl
 - Performance telemetry is local-only (SQLite at `~/.local/share/ghx/telemetry.db`), recorded by default, never uploaded, and a failure to record never fails or slows a command
 - Token resolution chain: `GH_TOKEN`, then `GITHUB_TOKEN`, then `gh auth token`
 - Local servers (web UI and JSON-RPC) bind to the loopback interface by default (e.g. `127.0.0.1`)
-- Single binary with no external runtime dependencies beyond a GitHub token; external Go dependencies are limited to cobra, progressbar/v3, goldmark, yaml.v3, and modernc.org/sqlite
+- Single binary with no external runtime dependencies beyond a GitHub token; external Go dependencies are limited to cobra, goldmark, yaml.v3, and modernc.org/sqlite
 - GitHub API rate limits apply when the cache is cold or stale; cached reads are offline-capable and avoid them

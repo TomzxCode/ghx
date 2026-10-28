@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -193,42 +192,5 @@ func TestCache_FailingPortionKeepsOtherPortion(t *testing.T) {
 	store := cache.NewStoreWithPath(cacheDir)
 	if _, _, err := store.LoadIssue("github.com", "acme", "myproject", 1); err != nil {
 		t.Errorf("issue #1 should stay cached despite the PR failure: %v", err)
-	}
-}
-
-// TestCombinedProgress_TracksBothPortions verifies the shared bar counts both
-// portions, adopts the sum of their totals, and finishes after the last one.
-func TestCombinedProgress_TracksBothPortions(t *testing.T) {
-	p := &combinedBar{
-		status: func() string { return "" },
-		totals: map[string]int{},
-		done:   map[string]int{},
-		writer: io.Discard,
-	}
-	p.handle(FetchEvent{Phase: "issues", Kind: "start", Message: "Caching issues..."})
-	p.handle(FetchEvent{Phase: "prs", Kind: "start", Message: "Caching pull requests..."})
-	p.handle(FetchEvent{Phase: "issues", Kind: "batch", Done: 5, Total: 10})
-	p.handle(FetchEvent{Phase: "prs", Kind: "batch", Done: 2, Total: 4})
-
-	if p.max != 14 {
-		t.Errorf("bar maximum = %d, want the sum of both totals (14)", p.max)
-	}
-	desc := p.describe()
-	for _, want := range []string{"issues 5/10", "pull requests 2/4"} {
-		if !strings.Contains(desc, want) {
-			t.Errorf("description %q does not contain %q", desc, want)
-		}
-	}
-
-	p.handle(FetchEvent{Phase: "issues", Kind: "done", Done: 5})
-	if p.active != 1 {
-		t.Errorf("active portions = %d, want 1 while pull requests still run", p.active)
-	}
-	p.handle(FetchEvent{Phase: "prs", Kind: "done", Done: 2})
-	if p.active != 0 {
-		t.Errorf("active portions = %d, want 0 after both finished", p.active)
-	}
-	if !p.bar.IsFinished() {
-		t.Error("the shared bar should be finished after the last portion")
 	}
 }

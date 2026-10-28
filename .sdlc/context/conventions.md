@@ -48,7 +48,7 @@
 
 ## Coding Standards
 
-- Use the Go standard library where possible; external dependencies are limited to `spf13/cobra` (CLI), `schollz/progressbar/v3` (progress bar), `gopkg.in/yaml.v3`, `yuin/goldmark` (markdown to HTML for the web UI), and `modernc.org/sqlite` (default cache backend)
+- Use the Go standard library where possible; external dependencies are limited to `spf13/cobra` (CLI), `gopkg.in/yaml.v3`, `yuin/goldmark` (markdown to HTML for the web UI), and `modernc.org/sqlite` (default cache backend)
 - Read and write API calls are split by package: `internal/github` holds GraphQL queries (reads), `internal/gh` holds GraphQL mutations (comment, review, and thread writes)
 - Commands use `RunE` and return errors; wrap chains with `fmt.Errorf("context: %w", err)`; user-facing errors are lowercase sentences that name the fix (e.g. `#5 is a pull request, not an issue; use "ghx pr view 5"`)
 - Env var fallbacks exist for some flags (`GHX_STORAGE`, `GHX_RPC_URL`, `GHX_TELEMETRY`); the flag takes precedence and the help text says both

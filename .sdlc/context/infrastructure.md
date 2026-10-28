@@ -14,7 +14,6 @@ Update this file when tooling, environments, or deployment procedures change.
 |---|---|---|
 | Language | Go (module `github.com/tomzxcode/ghx`) | 1.26.0 (from `go.mod`) |
 | CLI framework | `spf13/cobra` | v1.10.2 |
-| Progress bar | `schollz/progressbar/v3` | v3.19.1 |
 | Markdown rendering (web UI) | `yuin/goldmark` | v1.8.6 |
 | YAML parsing | `gopkg.in/yaml.v3` | v3.0.1 |
 | Database (cache, telemetry) | `modernc.org/sqlite` (pure Go, no CGO) | v1.60.1 |
