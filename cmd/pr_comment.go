@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/tomzxcode/ghx/internal/cache"
 	gh "github.com/tomzxcode/ghx/internal/gh"
 	"github.com/tomzxcode/ghx/internal/logging"
 )
@@ -139,6 +142,12 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	unlock, err := lockPR(owner, name, prNumber)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 
 	if commentStash != "" {
 		stashIdx := 0
@@ -306,4 +315,31 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Created comment %s on PR #%d\n", commentID, prNumber)
 	return nil
+}
+
+// lockPR serializes comment mutations for one pull request. A non-pending
+// comment creates a review, adds the comment, and submits it; two calls at
+// once would race on the single pending review GitHub allows per user.
+func lockPR(owner, name string, number int) (func(), error) {
+	dir := cacheDir
+	if dir == "" {
+		dir = cache.DefaultDir()
+	}
+	lockDir := filepath.Join(dir, "locks")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create lock directory: %w", err)
+	}
+	path := filepath.Join(lockDir, fmt.Sprintf("%s-%s-%d.lock", owner, name, number))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open lock file: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("lock pull request: %w", err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
 }
