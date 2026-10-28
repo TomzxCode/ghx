@@ -177,6 +177,7 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 
 	var reviewId string
 	var stashIdx int = -1
+	var prID string
 	if commentPending {
 		reviewId, err = gh.FindOrCreatePendingReview(owner, name, prNumber)
 		if err != nil {
@@ -199,6 +200,18 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 			if err := gh.DeleteReview(suspendedReviewId); err != nil {
 				return fmt.Errorf("discard pending review: %w", err)
 			}
+		}
+		// Create a review for this comment and submit it. Without an explicit
+		// review, GitHub attaches the comment to the current user's pending
+		// review, and a concurrent call can submit that review before the
+		// comment is added, leaving the comment pending.
+		prID, err = gh.GetPRNodeID(owner, name, prNumber)
+		if err != nil {
+			return err
+		}
+		reviewId, err = gh.CreatePendingReview(prID)
+		if err != nil {
+			return fmt.Errorf("create review: %w", err)
 		}
 	}
 
@@ -236,6 +249,11 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		if !commentPending {
+			if err := gh.SubmitReview(reviewId, "COMMENT", ""); err != nil {
+				return fmt.Errorf("submit review: %w", err)
+			}
+		}
 		if commentPending {
 			fmt.Printf("Added pending reply to thread %s (comment %s, review %s)\n", commentReplyThread, commentID, reviewId)
 		} else {
@@ -244,9 +262,11 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	prID, err := gh.GetPRNodeID(owner, name, prNumber)
-	if err != nil {
-		return err
+	if prID == "" {
+		prID, err = gh.GetPRNodeID(owner, name, prNumber)
+		if err != nil {
+			return err
+		}
 	}
 
 	if commentFile != "" {
@@ -263,6 +283,11 @@ func runPRComment(cmd *cobra.Command, args []string) error {
 		threadID, err := gh.AddReviewThread(prID, reviewId, body, commentFile, line, startLine, commentSide, subjectType)
 		if err != nil {
 			return err
+		}
+		if !commentPending {
+			if err := gh.SubmitReview(reviewId, "COMMENT", ""); err != nil {
+				return fmt.Errorf("submit review: %w", err)
+			}
 		}
 
 		if commentPending {
