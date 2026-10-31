@@ -52,8 +52,9 @@ export GH_TOKEN=<token>
 ### Target repository
 
 All commands accept `--repo [HOST/]OWNER/REPO` (or `-R`). When omitted, the repo
-is auto-detected from the `origin` remote of the current directory. Confirm the
-target before running expensive or write operations:
+is auto-detected from the `origin` remote of the current directory. The search
+commands are the exception: they cover every cached repository unless `--repo`
+is given. Confirm the target before running expensive or write operations:
 
 ```bash
 git remote get-url origin
@@ -129,6 +130,33 @@ ghx repo list                        # locally cached repositories
 ghx repo list --json nameWithOwner,issueCount,status   # same data as JSON
 ```
 
+### Search the cache
+
+`ghx search` reads only the local cache and never calls the API. It searches
+title, body, and comments, and covers every cached repository unless `--repo`
+limits it to one:
+
+```bash
+ghx search issues login              # all cached repos
+ghx search issues "memory leak"      # phrase
+ghx search issues login safari       # all terms must match
+ghx search prs crash --state merged
+ghx search prs --draft
+ghx search issues --assignee @me     # @me reads gh's local config, no API call
+ghx search issues --no-assignee --created '>=2026-01-01'
+ghx search issues --include-prs --sort comments
+ghx search prs --review-requested @me --checks failure
+ghx search issues --repo owner/repo --label bug
+ghx search prs --json=number,title,state,repository
+ghx search issues login --template '{{.repository.nameWithOwner}}#{{.number}}'
+```
+
+Filters cover labels, milestones, missing values, dates, comment counts, owners,
+mentions, commenters, involvement, merge state, checks, reviews, and requested
+reviewers. `--sort` and `--order` control ordering. The `gh search` flags that
+need repository metadata, reactions, projects, or server-side ranking are not
+available.
+
 ### Caching behaviour reference
 
 | Command | Cache behaviour |
@@ -136,6 +164,7 @@ ghx repo list --json nameWithOwner,issueCount,status   # same data as JSON
 | `cache` | Fetches all issues/PRs (all states, with comments); writes one JSON file each. Each run delta-refreshes; `--if-stale` skips while the cache is fresh. |
 | `issue list` / `pr list` | Reads all cached files and filters in memory when the full cache is fresh; falls back to the GitHub API otherwise. |
 | `issue view` / `pr view` | Serves from the per-item file when it is < 60 min old; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, always fetches from the API, and updates the cache. |
+| `search issues` / `search prs` | Reads only the local cache, across every cached repository unless `--repo` is given. Never calls the API. |
 
 ---
 

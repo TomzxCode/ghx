@@ -6,7 +6,7 @@ These flags apply to all commands.
 
 | Flag | Description |
 |---|---|
-| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory. |
+| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. |
 | `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
@@ -17,6 +17,10 @@ These flags apply to all commands.
 | `--rpc-token string` | Bearer token sent with `--remote` (also `GHX_RPC_TOKEN`). |
 | `--version`, `-v` | Print version. |
 | `--help`, `-h` | Show help. |
+
+User filters accept `@me`: `--author` and `--assignee` on `issue list`, `pr list`, `search issues`, and `search prs`, plus `--commenter`, `--mentions`, `--involves`, `--review-requested`, and `--reviewed-by` on search.
+It resolves to the login gh stores locally (`gh config get -h <host> user`).
+The lookup is local and makes no API call; it fails with an error when gh has no stored user, for example when authenticating only through `GH_TOKEN`.
 
 ## cache
 
@@ -39,8 +43,8 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--state string` | `-s` | `open` | Filter by state: `open`, `closed`, or `all` |
-| `--author string` | `-A` | | Filter by author |
-| `--assignee string` | `-a` | | Filter by assignee |
+| `--author string` | `-A` | | Filter by author (login or `@me`) |
+| `--assignee string` | `-a` | | Filter by assignee (login or `@me`) |
 | `--label strings` | `-l` | | Filter by label (repeat for AND logic) |
 | `--milestone string` | `-m` | | Filter by milestone number or title |
 | `--mention string` | | | Filter by mention |
@@ -74,8 +78,8 @@ Copies cached repositories from the file backend into the SQLite backend (`cache
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--state string` | `-s` | `open` | Filter by state: `open`, `closed`, `merged`, or `all` |
-| `--author string` | `-A` | | Filter by author |
-| `--assignee string` | `-a` | | Filter by assignee |
+| `--author string` | `-A` | | Filter by author (login or `@me`) |
+| `--assignee string` | `-a` | | Filter by assignee (login or `@me`) |
 | `--label strings` | `-l` | | Filter by label (repeat for AND logic) |
 | `--base string` | `-B` | | Filter by base branch name |
 | `--head string` | `-H` | | Filter by head branch name |
@@ -159,6 +163,84 @@ Uses the global `--cache-dir` for repository data and `--telemetry-db` for the h
 ## repo delete
 
 Takes an optional positional `[HOST/]OWNER/REPO` argument; when omitted, the repository is resolved from `--repo` or the current directory's git remote. Uses only the global `--cache-dir` and `--storage`.
+
+## search issues
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--state string` | `-s` | `all` | Filter by state: `open`, `closed`, or `all` |
+| `--author string` | `-A` | | Filter by author (login or `@me`) |
+| `--assignee string` | `-a` | | Filter by assignee (login or `@me`) |
+| `--label strings` | `-l` | | Filter by label (repeat for AND logic) |
+| `--milestone string` | `-m` | | Filter by milestone number or title |
+| `--app string` | | | Filter by GitHub App author (approximate) |
+| `--owner strings` | | | Filter on repository owner (repeatable) |
+| `--no-assignee` | | `false` | Items with no assignee |
+| `--no-label` | | `false` | Items with no label |
+| `--no-milestone` | | `false` | Items with no milestone |
+| `--created date` | | | Filter on creation date |
+| `--updated date` | | | Filter on last update date |
+| `--closed date` | | | Filter on close date |
+| `--comments number` | | | Filter on comment count |
+| `--commenter user` | | | Filter on comments by user |
+| `--mentions user` | | | Filter on user mentions |
+| `--team-mentions string` | | | Filter on team mentions (`org/team`) |
+| `--involves user` | | | Author, assignee, commenter, or mentioned user |
+| `--match strings` | | | Restrict the query to `title`, `body`, and/or `comments` (default all three) |
+| `--sort string` | | `updated` | Sort results: `updated`, `created`, or `comments` |
+| `--order string` | | `desc` | Result order: `asc` or `desc` |
+| `--include-prs` | | `false` | Include cached pull requests, marked `[PR]` |
+| `--limit int` | `-L` | `30` | Maximum number of results (`0` for no limit) |
+| `--json fields` | | | Output JSON with the specified fields (use `--json=field1,field2`; bare `--json` for all) |
+| `--template string` | `-t` | | Format each result with a Go template over the JSON fields |
+| `--no-truncate` | | `false` | Don't truncate long titles |
+
+Positional `[<query>...]` arguments are matched case-insensitively against title, body, and comments; every term must match.
+Every cached repository is searched unless `--repo` or `--owner` limits the search.
+Date values accept `YYYY-MM-DD`, `>DATE`, `>=DATE`, `<DATE`, `<=DATE`, or `START..END`; count values accept `N`, `>N`, `>=N`, `<N`, `<=N`, or `START..END`.
+
+## search prs
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--state string` | `-s` | `all` | Filter by state: `open`, `closed`, `merged`, or `all` |
+| `--author string` | `-A` | | Filter by author (login or `@me`) |
+| `--assignee string` | `-a` | | Filter by assignee (login or `@me`) |
+| `--label strings` | `-l` | | Filter by label (repeat for AND logic) |
+| `--milestone string` | `-m` | | Filter by milestone number or title |
+| `--base string` | `-B` | | Filter by base branch name |
+| `--head string` | `-H` | | Filter by head branch name |
+| `--draft` | `-d` | `false` | Show only draft PRs |
+| `--merged` | | `false` | Show only merged PRs |
+| `--app string` | | | Filter by GitHub App author (approximate) |
+| `--owner strings` | | | Filter on repository owner (repeatable) |
+| `--no-assignee` | | `false` | Items with no assignee |
+| `--no-label` | | `false` | Items with no label |
+| `--no-milestone` | | `false` | Items with no milestone |
+| `--created date` | | | Filter on creation date |
+| `--updated date` | | | Filter on last update date |
+| `--closed date` | | | Filter on close date |
+| `--merged-at date` | | | Filter on merge date |
+| `--comments number` | | | Filter on comment count |
+| `--commenter user` | | | Filter on comments by user |
+| `--mentions user` | | | Filter on user mentions |
+| `--team-mentions string` | | | Filter on team mentions (`org/team`) |
+| `--involves user` | | | Author, assignee, commenter, or mentioned user |
+| `--checks string` | | | Filter by check status: `pending`, `success`, or `failure` |
+| `--review string` | | | Filter by review status: `none`, `required`, `approved`, or `changes_requested` |
+| `--review-requested user` | | | Filter on a requested reviewer (login, `org/team`, or `@me`) |
+| `--reviewed-by user` | | | Filter on a user who reviewed (login or `@me`) |
+| `--match strings` | | | Restrict the query to `title`, `body`, and/or `comments` (default all three) |
+| `--sort string` | | `updated` | Sort results: `updated`, `created`, or `comments` |
+| `--order string` | | `desc` | Result order: `asc` or `desc` |
+| `--limit int` | `-L` | `30` | Maximum number of results (`0` for no limit) |
+| `--json fields` | | | Output JSON with the specified fields (use `--json=field1,field2`; bare `--json` for all) |
+| `--template string` | `-t` | | Format each result with a Go template over the JSON fields |
+| `--no-truncate` | | `false` | Don't truncate long titles |
+
+Takes the same positional query arguments and date/count grammar as `search issues`.
+Both searches read only the local cache and never call the GitHub API.
+The `gh search` flags covering repository metadata, reactions, interactions, locked issues, projects, semantic search, `--jq`, and `--web` are not available.
 
 ## stats
 

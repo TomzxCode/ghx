@@ -21,6 +21,7 @@ ghx pr list --state all
 
 ```bash
 ghx pr list --author alice
+ghx pr list --author @me             # your pull requests
 ghx pr list --assignee bob
 ```
 

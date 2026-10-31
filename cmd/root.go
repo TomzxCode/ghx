@@ -95,6 +95,7 @@ func init() {
 	rootCmd.AddCommand(prCmd)
 	rootCmd.AddCommand(cacheCmd)
 	rootCmd.AddCommand(repoCmd)
+	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(statsCmd)
 	rootCmd.AddCommand(telemetryCmd)
 }

@@ -21,6 +21,7 @@ ghx issue list --state all
 ```bash
 ghx issue list --author alice
 ghx issue list --assignee bob
+ghx issue list --assignee @me        # issues assigned to you
 ghx issue list --mention carol
 ```
 

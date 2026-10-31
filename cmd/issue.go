@@ -67,8 +67,8 @@ func init() {
 	issueCmd.AddCommand(issueViewCmd)
 
 	issueListCmd.Flags().StringVar(&issueListApp, "app", "", "Filter by GitHub App author")
-	issueListCmd.Flags().StringVarP(&issueListAssignee, "assignee", "a", "", "Filter by assignee")
-	issueListCmd.Flags().StringVarP(&issueListAuthor, "author", "A", "", "Filter by author")
+	issueListCmd.Flags().StringVarP(&issueListAssignee, "assignee", "a", "", "Filter by assignee (login or @me)")
+	issueListCmd.Flags().StringVarP(&issueListAuthor, "author", "A", "", "Filter by author (login or @me)")
 	issueListCmd.Flags().StringSliceVarP(&issueListLabels, "label", "l", nil, "Filter by label")
 	issueListCmd.Flags().IntVarP(&issueListLimit, "limit", "L", 1000, "Maximum number of issues to fetch")
 	issueListCmd.Flags().StringVar(&issueListMention, "mention", "", "Filter by mention")
@@ -94,6 +94,16 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	me := &meResolver{}
+	assignee, err := me.resolve(issueListAssignee, repo.Host)
+	if err != nil {
+		return err
+	}
+	author, err := me.resolve(issueListAuthor, repo.Host)
+	if err != nil {
+		return err
+	}
+
 	store, err := newStore()
 	if err != nil {
 		return err
@@ -105,8 +115,8 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
 			State:     issueListState,
-			Assignee:  issueListAssignee,
-			Author:    issueListAuthor,
+			Assignee:  assignee,
+			Author:    author,
 			Labels:    issueListLabels,
 			Milestone: issueListMilestone,
 			Search:    issueListSearch,
@@ -135,8 +145,8 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	opts := github.IssueListOptions{
 		Limit:     issueListLimit,
 		State:     issueListState,
-		Assignee:  issueListAssignee,
-		Author:    issueListAuthor,
+		Assignee:  assignee,
+		Author:    author,
 		Labels:    issueListLabels,
 		Milestone: issueListMilestone,
 		Mention:   issueListMention,

@@ -84,8 +84,8 @@ func init() {
 	prChecksCmd.Flags().BoolVar(&prChecksJSON, "json", false, "Output as JSON")
 
 	prListCmd.Flags().StringVar(&prListApp, "app", "", "Filter by GitHub App author")
-	prListCmd.Flags().StringVarP(&prListAssignee, "assignee", "a", "", "Filter by assignee")
-	prListCmd.Flags().StringVarP(&prListAuthor, "author", "A", "", "Filter by author")
+	prListCmd.Flags().StringVarP(&prListAssignee, "assignee", "a", "", "Filter by assignee (login or @me)")
+	prListCmd.Flags().StringVarP(&prListAuthor, "author", "A", "", "Filter by author (login or @me)")
 	prListCmd.Flags().StringVarP(&prListBase, "base", "B", "", "Filter by base branch")
 	prListCmd.Flags().BoolVarP(&prListDraft, "draft", "d", false, "Filter by draft state")
 	prListCmd.Flags().StringVarP(&prListHead, "head", "H", "", "Filter by head branch")
@@ -117,6 +117,16 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	me := &meResolver{}
+	assignee, err := me.resolve(prListAssignee, repo.Host)
+	if err != nil {
+		return err
+	}
+	author, err := me.resolve(prListAuthor, repo.Host)
+	if err != nil {
+		return err
+	}
+
 	store, err := newStore()
 	if err != nil {
 		return err
@@ -128,8 +138,8 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
 			State:    prListState,
-			Assignee: prListAssignee,
-			Author:   prListAuthor,
+			Assignee: assignee,
+			Author:   author,
 			Labels:   prListLabels,
 			BaseRef:  prListBase,
 			HeadRef:  prListHead,
@@ -160,8 +170,8 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	opts := github.PRListOptions{
 		Limit:    prListLimit,
 		State:    prListState,
-		Assignee: prListAssignee,
-		Author:   prListAuthor,
+		Assignee: assignee,
+		Author:   author,
 		Labels:   prListLabels,
 		Base:     prListBase,
 		Head:     prListHead,

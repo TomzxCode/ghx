@@ -1,6 +1,6 @@
 # ghx
 
-An extended GitHub CLI. It caches issues, pull requests, and comments to disk to minimise API calls, and provides PR/issue comment operations beyond the standard `gh` CLI: inline review comments, line-range comments, thread replies, pending reviews, and local comment stashes.
+An extended GitHub CLI. It caches issues, pull requests, and comments to disk to minimise API calls, searches that cache directly, and provides PR/issue comment operations beyond the standard `gh` CLI: inline review comments, line-range comments, thread replies, pending reviews, and local comment stashes.
 
 Issue/PR cache lives at `~/.cache/ghx/cache/` (a single `cache.db` by default, or per-repository JSON with `--storage file`). Review-comment stashes live at `~/.cache/ghx/stash/<owner>/<repo>/<pr>`.
 
@@ -39,6 +39,7 @@ Alternatively, if you have the [GitHub CLI](https://cli.github.com) installed an
 ## Usage
 
 All commands accept `--repo [HOST/]OWNER/REPO`. When omitted, the repository is detected from the `origin` remote of the current directory.
+The search commands are the exception: they search every cached repository unless `--repo` is given.
 
 ### Cache
 
@@ -243,6 +244,41 @@ Delete the cached data for one repository:
 ```bash
 ghx repo delete octocat/hello-world
 ```
+
+### Search
+
+Search the local cache across every cached repository, with no API calls:
+
+```bash
+ghx search issues login                  # every cached repo
+ghx search issues "memory leak"          # phrase match
+ghx search issues login safari           # both terms must match
+ghx search prs crash --state merged
+ghx search prs --draft
+ghx search issues --assignee @me
+ghx search issues --no-assignee --created '>=2026-01-01'
+ghx search issues --include-prs --sort comments
+ghx search prs --review-requested @me --checks failure
+ghx search issues login --repo octocat/hello-world --label bug
+ghx search prs --json=number,title,state,repository
+ghx search issues login --template '{{.repository.nameWithOwner}}#{{.number}}'
+```
+
+Example output:
+
+```
+octocat/hello-world#42  Fix login bug   open    2026-10-30
+octocat/hello-world#41  Update README   closed  2026-10-29
+```
+
+`search` reads only the local cache, so run `ghx cache` first.
+Query words are matched case-insensitively against title, body, and comments, and every word must match; `--match` restricts the fields.
+Quoted arguments stay phrases, `--state` defaults to `all`, and `--limit` defaults to 30 (`0` for no limit).
+Filters cover author, assignee, mention, involvement, labels, milestones, missing values, dates, comment counts, owners, merge state, checks, reviews, and requested reviewers.
+`--sort`, `--order`, `--json=fields`, and `--template` control ordering and output.
+`@me` works on the user filters and resolves from gh's local config without an API call.
+The `gh search` flags that need repository metadata, reactions, projects, or server-side ranking are not available.
+See the [search guide](docs/user-guide/search.md).
 
 ### Web UI
 
@@ -478,6 +514,7 @@ a speedup is not read as a like-for-like win.
 | `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Each run fills the uncovered `updatedAt` ranges; `--if-stale` skips the run while the cache is fresh. Supports `--since`, `--workers`, and `--type issues/prs`. |
 | `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. |
 | `issue view` / `pr view` | Serves the individual cached item when it was written within the cache's configured duration (60 minutes by default), or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
+| `search issues` / `search prs` | Reads only the local cache, across every cached repository unless `--repo` limits it to one. Never calls the API and never refreshes; the results are as current as the cache. |
 
 Run a read command with `--log-level debug` to see where its time goes (repository resolution, cache store open, token resolution, the list call, and the cache backfill stages).
 
