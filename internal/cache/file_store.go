@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/tomzxcode/ghx/internal/github"
@@ -15,6 +16,10 @@ import (
 // the per-repository metadata in .cache_info.json.
 type fileStore struct {
 	baseDir string
+
+	// coverageMu serializes the read-modify-write of the coverage file. Segment
+	// workers record coverage concurrently.
+	coverageMu sync.Mutex
 }
 
 func (s *fileStore) repoDir(host, owner, repo string) string {
@@ -379,4 +384,97 @@ func atomicWrite(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
+}
+
+// coveragePath is the coverage file beside .cache_info.json.
+func (s *fileStore) coveragePath(host, owner, repo string) string {
+	return filepath.Join(s.repoDir(host, owner, repo), ".coverage.json")
+}
+
+// loadCoverage reads the kind-to-segments map. A missing file is empty
+// coverage, not an error.
+func (s *fileStore) loadCoverage(host, owner, repo string) (map[string][]Segment, error) {
+	data, err := os.ReadFile(s.coveragePath(host, owner, repo))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string][]Segment{}, nil
+		}
+		return nil, err
+	}
+	var coverage map[string][]Segment
+	if err := json.Unmarshal(data, &coverage); err != nil {
+		return nil, err
+	}
+	if coverage == nil {
+		coverage = map[string][]Segment{}
+	}
+	return coverage, nil
+}
+
+// SaveSegments merges new coverage into the repository's coverage file.
+func (s *fileStore) SaveSegments(host, owner, repo, kind string, segments []Segment) error {
+	s.coverageMu.Lock()
+	defer s.coverageMu.Unlock()
+	coverage, err := s.loadCoverage(host, owner, repo)
+	if err != nil {
+		return err
+	}
+	coverage[kind] = MergeSegments(append(coverage[kind], segments...))
+	data, err := json.MarshalIndent(coverage, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(s.coveragePath(host, owner, repo), data, 0644)
+}
+
+// LoadSegments returns the merged coverage for one kind.
+func (s *fileStore) LoadSegments(host, owner, repo, kind string) ([]Segment, error) {
+	s.coverageMu.Lock()
+	defer s.coverageMu.Unlock()
+	coverage, err := s.loadCoverage(host, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return MergeSegments(coverage[kind]), nil
+}
+
+// DeleteSegments clears the coverage for one kind.
+func (s *fileStore) DeleteSegments(host, owner, repo, kind string) error {
+	s.coverageMu.Lock()
+	defer s.coverageMu.Unlock()
+	coverage, err := s.loadCoverage(host, owner, repo)
+	if err != nil {
+		return err
+	}
+	delete(coverage, kind)
+	data, err := json.MarshalIndent(coverage, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(s.coveragePath(host, owner, repo), data, 0644)
+}
+
+// DeleteType removes one kind's item directory and coverage.
+func (s *fileStore) DeleteType(host, owner, repo, kind string) (int, error) {
+	dir := s.issueDir(host, owner, repo)
+	if kind == "prs" {
+		dir = filepath.Join(s.repoDir(host, owner, repo), "prs")
+	}
+	count := 0
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+				count++
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return 0, err
+	}
+	if err := s.DeleteSegments(host, owner, repo, kind); err != nil {
+		return 0, err
+	}
+	return count, nil
 }

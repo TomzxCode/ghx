@@ -251,11 +251,32 @@ func (s *Server) fetchAllPRs(vars map[string]interface{}) (interface{}, []gqlErr
 
 	filtered := s.filterPRs(owner, repo, nil, vars)
 	key := func(i int) time.Time { return s.scenario.PRs[filtered[i]].PullRequest.UpdatedAt }
-	if strVar(vars, "dir") == "DESC" {
-		// Newest-first, as requested by the delta/resume fetch (FetchPRsUpdated).
+	desc := strVar(vars, "dir") == "DESC"
+	if desc {
+		// Newest-first, as requested by the read-only window walk
+		// (FetchPRsUpdated). Caching walks ascending from its page cursor.
 		sort.Slice(filtered, func(i, j int) bool { return key(i).After(key(j)) })
 	} else {
 		sortByUpdatedAtAsc(filtered, key)
+	}
+
+	// Accept both the numeric test cursor and the keyset cursor the cache
+	// synthesizes for a date seek, mirroring GitHub.
+	if raw := strVar(vars, "after"); raw != "" {
+		if _, err := strconv.Atoi(raw); err != nil {
+			t, ok := github.PRCursorTime(raw)
+			if !ok || s.scenario.RejectSyntheticCursors {
+				return nil, []gqlError{{Message: "This cursor is not valid: " + raw}}
+			}
+			offset := len(filtered)
+			for i := range filtered {
+				if (desc && key(i).Before(t)) || (!desc && !key(i).Before(t)) {
+					offset = i
+					break
+				}
+			}
+			vars["after"] = strconv.Itoa(offset)
+		}
 	}
 	return s.paginatePRsFull(filtered, pageSize, vars), nil
 }
@@ -446,7 +467,9 @@ func (s *Server) paginatePRsFull(indices []int, pageSize int, vars map[string]in
 	}
 
 	var nextCursor string
-	if hasNext {
+	if end > start {
+		// GitHub returns an endCursor for every non-empty page, including the
+		// last one. The cache persists it as its resume position.
 		nextCursor = encodeCursor(end)
 	}
 

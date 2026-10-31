@@ -43,5 +43,18 @@ func Migrate(src, dst Store, host, owner, repo string) (MigrationResult, error) 
 			return res, err
 		}
 	}
+
+	for _, kind := range []string{"issues", "prs"} {
+		segments, err := src.LoadSegments(host, owner, repo, kind)
+		if err != nil {
+			return res, err
+		}
+		if len(segments) == 0 {
+			continue
+		}
+		if err := dst.SaveSegments(host, owner, repo, kind, segments); err != nil {
+			return res, err
+		}
+	}
 	return res, nil
 }

@@ -63,19 +63,25 @@ cache command ──► runCache()
 
 ## Sequences
 
-### Delta cache update
+### Coverage fill
 
 ```
-cache command ──► LoadCacheInfo() ──► get cachedAt timestamp
+cache command ──► LoadSegments(kind) ──► seed legacy cursor as a prefix
                                          │
                                          ▼
-                  FetchAllIssues(since=cachedAt) ──► save updated issues
+                  Uncovered(start, now) ──► gaps
                                          │
                                          ▼
-                  FetchAllPRs(since=cachedAt) ──► save updated PRs
+                  Chunk(gaps, adaptive width) ──► parallel segment walks
                                          │
                                          ▼
-                  SaveCacheInfo() ──► update timestamp
+                  SaveSegments(segment) after each completed walk
+                                         │
+                                         ▼
+                  catch-up tail [now, now'] ──► SaveSegments
+                                         │
+                                         ▼
+                  SaveCacheInfo() ──► timestamps and cursors
 ```
 
 ## Technical Decisions
@@ -83,17 +89,20 @@ cache command ──► LoadCacheInfo() ──► get cachedAt timestamp
 | Decision | Choice | Rationale |
 |---|---|---|
 | One file per item | Individual JSON files | Efficient for single-item lookups without loading all data |
-| Delta via `since` param | Issues use GraphQL `since` filter | Server-side filtering reduces data transfer |
-| Delta via client-side comparison | PRs check `updatedAt` client-side | No `since` filter available on PR GraphQL connection |
-| Progress via `totalCount` | Determinate bar for full fetches and issue deltas; spinner for PR deltas | Issues' `totalCount` is accurate (server-filtered); PR `totalCount` counts all PRs so a spinner is shown during delta scans |
+| Coverage ranges | Half-open `[start, end)` `updatedAt` intervals per type, merged on adjacency | A contiguous cache needs only a union of ranges, not a ledger of runs. Half-open intervals make boundaries unambiguous. |
+| Segment start | Each PR segment starts from a synthesized `(start, 0)` keyset cursor | The PR connection has no date filter; the cursor decodes to `(updatedAt, databaseId)` and GitHub accepts a key that matches no row, so a segment can start anywhere without walking history. |
+| Parallel segments | `--workers` goroutines pull chunks from a shared queue; the width targets four chunks per worker for issues and two per effective PR slot, clamped to 15 minutes to 7 days | Enough pending chunks keep early finishers busy without creating a request per item. Full PR pages are capped at two in flight because GitHub secondary limits punish wider concurrency. |
+| Catch-up tail | After the planned segments, process `[run head, current head]` | An item updated during the run moves above the run head; the tail covers it so a segment cannot be marked covered while a moved item is missing. |
+| Progress window | The number of items in the uncovered gaps, from the search index | GitHub exposes no count for a time range on the connections; a search range supplies it. The cached figure uses the repository total. |
 | No cache eviction | Let cache grow | Simplicity; disk usage is typically small |
 | Repository key casing | Lower-case host/owner/repo | GitHub names are case-insensitive, so one repository maps to one cache entry |
 
 ## Risks and Unknowns
 
-1. PR delta fetch relies on ordering by `updatedAt DESC`; if ordering changes, some updates may be missed
-2. No atomic cache replacement; a failed mid-fetch leaves a partially updated cache
+1. Segment starts rely on the undocumented cursor payload; a rejected cursor leaves that segment uncovered and the next run retries it
+2. No atomic cache replacement; a failed mid-fetch leaves a partially updated cache, but completed segments stay covered
 3. A cache written before key normalization is collapsed on first open: mixed-case rows and directories are lower-cased, keeping the most recent write when two spellings collide
+4. A bot review or an edited review comment may not bump `updatedAt`, so discussion state can lag until a later PR update or an on-demand refresh
 
 ## Out of Scope
 

@@ -122,6 +122,16 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			ddl:    "ALTER TABLE cache_meta ADD COLUMN prs_cached_at TEXT",
 		},
 		{
+			table:  "cache_meta",
+			column: "pr_page_cursor",
+			ddl:    "ALTER TABLE cache_meta ADD COLUMN pr_page_cursor TEXT",
+		},
+		{
+			table:  "cache_meta",
+			column: "pr_floor",
+			ddl:    "ALTER TABLE cache_meta ADD COLUMN pr_floor TEXT",
+		},
+		{
 			table:  "pull_requests",
 			column: "additions",
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN additions INTEGER NOT NULL DEFAULT 0",
@@ -659,10 +669,10 @@ func (s *sqliteStore) SaveCacheInfoFull(host, owner, repo string, info *CacheInf
 		complete = 1
 	}
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO cache_meta
-		(host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor, issues_cached_at, prs_cached_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		(host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor, pr_page_cursor, pr_floor, issues_cached_at, prs_cached_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, tstr(info.CachedAt), info.Duration, complete,
-		nullTime(info.IssueCursor), nullTime(info.PRCursor),
+		nullTime(info.IssueCursor), nullTime(info.PRCursor), info.PRPageCursor, nullTime(info.PRFloor),
 		nullTime(&info.IssuesCachedAt), nullTime(&info.PRsCachedAt),
 	)
 	if err != nil {
@@ -677,17 +687,25 @@ func (s *sqliteStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error
 		cachedAtS                     string
 		duration, complete            int
 		issueCursorS, prCursorS       sql.NullString
+		prPageCursorS, prFloorS       sql.NullString
 		issuesCachedAtS, prsCachedAtS sql.NullString
 	)
-	row := s.db.QueryRow(`SELECT cached_at, duration, complete, issue_cursor, pr_cursor, issues_cached_at, prs_cached_at
+	row := s.db.QueryRow(`SELECT cached_at, duration, complete, issue_cursor, pr_cursor, pr_page_cursor, pr_floor, issues_cached_at, prs_cached_at
 		FROM cache_meta WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
-	if err := row.Scan(&cachedAtS, &duration, &complete, &issueCursorS, &prCursorS, &issuesCachedAtS, &prsCachedAtS); err != nil {
+	if err := row.Scan(&cachedAtS, &duration, &complete, &issueCursorS, &prCursorS, &prPageCursorS, &prFloorS, &issuesCachedAtS, &prsCachedAtS); err != nil {
 		return nil, err
 	}
 	info := &CacheInfo{
 		CachedAt: parseTime(cachedAtS),
 		Duration: duration,
 		Complete: complete != 0,
+	}
+	if prPageCursorS.Valid {
+		info.PRPageCursor = prPageCursorS.String
+	}
+	if prFloorS.Valid && prFloorS.String != "" {
+		t := parseTime(prFloorS.String)
+		info.PRFloor = &t
 	}
 	if issueCursorS.Valid && issueCursorS.String != "" {
 		t := parseTime(issueCursorS.String)
@@ -779,7 +797,7 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	rows, err := s.db.Query(`
 		SELECT u.host, u.owner, u.repo,
 		       m.cached_at, m.duration, m.complete, m.issue_cursor, m.pr_cursor,
-		       m.issues_cached_at, m.prs_cached_at,
+		       m.pr_page_cursor, m.pr_floor, m.issues_cached_at, m.prs_cached_at,
 		       (SELECT COUNT(*) FROM issues i WHERE i.host=u.host AND i.owner=u.owner AND i.repo=u.repo),
 		       (SELECT COUNT(*) FROM pull_requests p WHERE p.host=u.host AND p.owner=u.owner AND p.repo=u.repo)
 		FROM (
@@ -802,11 +820,12 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 			cachedAt                    sql.NullString
 			duration, complete          sql.NullInt64
 			issueCursor, prCursor       sql.NullString
+			prPageCursor, prFloor       sql.NullString
 			issuesCachedAt, prsCachedAt sql.NullString
 		)
 		if err := rows.Scan(&cr.Host, &cr.Owner, &cr.Repo,
 			&cachedAt, &duration, &complete, &issueCursor, &prCursor,
-			&issuesCachedAt, &prsCachedAt,
+			&prPageCursor, &prFloor, &issuesCachedAt, &prsCachedAt,
 			&cr.IssueCount, &cr.PRCount); err != nil {
 			return nil, err
 		}
@@ -815,6 +834,13 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 				CachedAt: parseTime(cachedAt.String),
 				Duration: int(duration.Int64),
 				Complete: complete.Int64 != 0,
+			}
+			if prPageCursor.Valid {
+				info.PRPageCursor = prPageCursor.String
+			}
+			if prFloor.Valid && prFloor.String != "" {
+				t := parseTime(prFloor.String)
+				info.PRFloor = &t
 			}
 			if issueCursor.Valid && issueCursor.String != "" {
 				t := parseTime(issueCursor.String)
@@ -847,7 +873,7 @@ func (s *sqliteStore) DeleteRepo(host, owner, repo string) (bool, error) {
 		return false, err
 	}
 	deleted := false
-	for _, table := range []string{"issues", "pull_requests", "cache_meta"} {
+	for _, table := range []string{"issues", "pull_requests", "cache_meta", "coverage_segments"} {
 		res, err := tx.Exec(
 			`DELETE FROM `+table+` WHERE host = ? AND owner = ? AND repo = ?`,
 			host, owner, repo)
@@ -868,4 +894,102 @@ func (s *sqliteStore) DeleteRepo(host, owner, repo string) (bool, error) {
 		return false, err
 	}
 	return deleted, nil
+}
+
+// SaveSegments merges new coverage into the repository's segments for one kind.
+// The load, merge, delete, and insert run in one transaction so concurrent
+// workers cannot lose an update.
+func (s *sqliteStore) SaveSegments(host, owner, repo, kind string, segments []Segment) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	existing, err := loadSegmentsTx(tx, host, owner, repo, kind)
+	if err != nil {
+		return err
+	}
+	merged := MergeSegments(append(existing, segments...))
+	if _, err := tx.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+		host, owner, repo, kind); err != nil {
+		return err
+	}
+	now := tstr(time.Now())
+	for _, seg := range merged {
+		if _, err := tx.Exec(`INSERT INTO coverage_segments
+			(host, owner, repo, kind, start_at, end_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
+			host, owner, repo, kind, tstr(seg.Start), tstr(seg.End), now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadSegments returns the merged coverage for one kind.
+func (s *sqliteStore) LoadSegments(host, owner, repo, kind string) ([]Segment, error) {
+	segments, err := loadSegmentsTx(s.db, host, owner, repo, kind)
+	if err != nil {
+		return nil, err
+	}
+	return MergeSegments(segments), nil
+}
+
+// DeleteSegments clears the coverage for one kind.
+func (s *sqliteStore) DeleteSegments(host, owner, repo, kind string) error {
+	_, err := s.db.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+		host, owner, repo, kind)
+	return err
+}
+
+// segmentQuerier is satisfied by both *sql.DB and *sql.Tx.
+type segmentQuerier interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
+func loadSegmentsTx(q segmentQuerier, host, owner, repo, kind string) ([]Segment, error) {
+	rows, err := q.Query(`SELECT start_at, end_at FROM coverage_segments
+		WHERE host=? AND owner=? AND repo=? AND kind=? ORDER BY start_at`,
+		host, owner, repo, kind)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Segment
+	for rows.Next() {
+		var startS, endS string
+		if err := rows.Scan(&startS, &endS); err != nil {
+			return nil, err
+		}
+		out = append(out, Segment{Start: parseTime(startS), End: parseTime(endS)})
+	}
+	return out, rows.Err()
+}
+
+// DeleteType removes one kind's cached items and coverage in a transaction.
+func (s *sqliteStore) DeleteType(host, owner, repo, kind string) (int, error) {
+	table := "issues"
+	if kind == "prs" {
+		table = "pull_requests"
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
+	if err != nil {
+		return 0, err
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+		host, owner, repo, kind); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(deleted), nil
 }

@@ -203,3 +203,32 @@ func boolInt(b bool) int {
 
 // Ensure InstrumentedStore satisfies Store at compile time.
 var _ Store = (*InstrumentedStore)(nil)
+
+// SaveSegments records the merge operation.
+func (s *InstrumentedStore) SaveSegments(host, owner, repo, kind string, segments []Segment) error {
+	start := time.Now()
+	err := s.store.SaveSegments(host, owner, repo, kind, segments)
+	s.record(telemetry.KindCacheOther, "SaveSegments", start, len(segments), err)
+	return err
+}
+
+// LoadSegments delegates without recording.
+func (s *InstrumentedStore) LoadSegments(host, owner, repo, kind string) ([]Segment, error) {
+	return s.store.LoadSegments(host, owner, repo, kind)
+}
+
+// DeleteSegments records the removal.
+func (s *InstrumentedStore) DeleteSegments(host, owner, repo, kind string) error {
+	start := time.Now()
+	err := s.store.DeleteSegments(host, owner, repo, kind)
+	s.record(telemetry.KindCacheOther, "DeleteSegments", start, 0, err)
+	return err
+}
+
+// DeleteType records the removal.
+func (s *InstrumentedStore) DeleteType(host, owner, repo, kind string) (int, error) {
+	start := time.Now()
+	n, err := s.store.DeleteType(host, owner, repo, kind)
+	s.record(telemetry.KindCacheOther, "DeleteType", start, n, err)
+	return n, err
+}

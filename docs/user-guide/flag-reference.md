@@ -24,9 +24,10 @@ These flags apply to all commands.
 |---|---|---|
 | `--cache-duration int` | `60` | Minutes before the cache is considered stale |
 | `--if-stale` | `false` | Do nothing when the cache is still fresh instead of delta-refreshing |
-| `--force` | `false` | Discard the resume state and run a full re-fetch |
-| `--since string` | | Only refresh entries created or updated since this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
+| `--force` | `false` | Delete the selected type's cached items and coverage, then re-fetch them (from `--since` when given) |
+| `--since string` | | Ensure coverage starts at this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
 | `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
+| `--workers int` | `2` | Concurrent coverage segments (1-16) |
 | `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |
 
 ### cache migrate

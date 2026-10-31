@@ -145,11 +145,11 @@ func resolveStatsRepos(args []string) ([]*gitremote.Repo, error) {
 
 // loadStatsPRs returns the pull requests used for the report. A fresh cache is
 // served as-is, a stale cache is served with a warning, and an empty cache
-// falls back to the GitHub API. The fallback deliberately uses the search API
-// (FetchPRsUpdated) rather than the plain PR list because the reviewer and
-// time-to-first-comment metrics require comment authors and timestamps, which
-// the list connection does not return. The search API is day-granular and
-// capped at 1000 results.
+// falls back to the GitHub API. The fallback uses the newest-first window walk
+// (FetchPRsUpdated) because the reviewer and time-to-first-comment metrics
+// require comment authors and timestamps, which the plain PR list does not
+// return. Caching does not use that walk: it resumes from its ascending page
+// cursor.
 func loadStatsPRs(store cache.Store, repo *gitremote.Repo, from time.Time) ([]*github.PullRequest, error) {
 	fresh, _ := store.IsCacheFresh(repo.Host, repo.Owner, repo.Name)
 	if prs, err := store.LoadAllPRs(repo.Host, repo.Owner, repo.Name); err == nil && len(prs) > 0 {
@@ -172,7 +172,7 @@ func loadStatsPRs(store cache.Store, repo *gitremote.Repo, from time.Time) ([]*g
 	logging.Info("no cached pull requests, fetching from GitHub",
 		"repo", repo.Owner+"/"+repo.Name,
 		"since", since.Format("2006-01-02"))
-	return client.FetchPRsUpdated(repo.Owner, repo.Name, since, nil, nil)
+	return client.FetchPRsUpdated(repo.Owner, repo.Name, since, nil)
 }
 
 // toLowerSet converts a slice of logins to a lowercase set. An empty input

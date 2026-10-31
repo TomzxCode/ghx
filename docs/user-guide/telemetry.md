@@ -103,8 +103,8 @@ given.
 |---|---|
 | `issue_list`, `issue_get`, `issue_full_fetch`, `issue_search` | Issue listing, view, full cache fetch, search fallback |
 | `pr_list`, `pr_get`, `pr_full_fetch`, `pr_search` | The PR equivalents |
-| `pr_scan` | Phase 1 of a PR delta fetch (the light newest-first walk) |
-| `pr_full_page` | Phase 2 of a PR delta fetch (a full-payload page) |
+| `pr_scan` | Phase 1 of the read-only PR window walk used by `stats` |
+| `pr_full_page` | A full-payload page of the read-only stats window walk |
 | `cache_query_issues`, `cache_query_prs` | Cache-backed list queries |
 | `cache_load_issue`, `cache_load_pr`, `cache_load_all` | Individual and bulk cache reads |
 | `cache_save_issue`, `cache_save_pr` | Cache writes |

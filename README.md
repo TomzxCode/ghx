@@ -49,9 +49,9 @@ ghx cache
 ghx cache --repo cli/cli
 ghx cache --cache-duration 120   # record a 2-hour freshness window for reads
 ghx cache --if-stale             # do nothing while the cache is still fresh
-ghx cache --since 2026-09-01     # refresh entries created/updated since a date
+ghx cache --since 2026-09-01     # ensure coverage starts at a date
 ghx cache --type issues            # refresh only issues (or prs)
-ghx cache --force                  # force full re-fetch
+ghx cache --force                  # delete the selected type and start over
 ```
 
 Example output (first-time run):
@@ -64,15 +64,17 @@ Cached 15 pull request(s).
 Cache updated. Valid for 60 minute(s).
 ```
 
-Example output (subsequent run, delta fetch):
+Example output (subsequent run, catch-up):
 
 ```
 Fetching issues updated since 2025-01-15 10:30 for octocat/hello-world...
 Cached 3 issue(s).
-Fetching PRs updated since 2025-01-15 10:30 for octocat/hello-world...
-Cached 1 pull request(s).
+Fetching pull requests updated since 2025-01-15 10:30 for octocat/hello-world...
+Cached 0 pull request(s).
 Cache updated. Valid for 60 minute(s).
 ```
+
+Coverage is recorded as merged `updatedAt` ranges per type, so an interrupted backfill resumes the unfinished segment and a later run reads only the uncovered ranges. `--workers` tunes the parallel segment pass; the width is chosen from the uncovered duration and full pull request pages are capped at two in flight.
 
 List and view commands serve from the cache when it is fresh, and fall back to the GitHub API otherwise.
 When they fall back, they also write what they fetch into the cache (using the same records `ghx cache` produces), so browsing incrementally warms the cache.
@@ -473,7 +475,7 @@ a speedup is not read as a like-for-like win.
 
 | Command | Cache behaviour |
 |---|---|
-| `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Each run delta-refreshes from the last cache write; `--if-stale` skips the run while the cache is fresh. Supports `--since` windowed refresh and `--type issues/prs` partial refresh. |
+| `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Each run fills the uncovered `updatedAt` ranges; `--if-stale` skips the run while the cache is fresh. Supports `--since`, `--workers`, and `--type issues/prs`. |
 | `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. |
 | `issue view` / `pr view` | Serves the individual cached item when it was written within the cache's configured duration (60 minutes by default), or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
 

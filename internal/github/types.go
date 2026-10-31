@@ -174,3 +174,8 @@ type IssueBatchFunc func(batch []*Issue, total int) error
 
 // PRBatchFunc is the pull-request equivalent of IssueBatchFunc.
 type PRBatchFunc func(batch []*PullRequest, total int) error
+
+// PRPageFunc is invoked for each page of an ascending pull request walk.
+// after is the page's endCursor (empty when the response carried none) and
+// more reports whether another page follows. A non-nil error aborts the walk.
+type PRPageFunc func(batch []*PullRequest, total int, after string, more bool) error

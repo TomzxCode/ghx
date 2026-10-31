@@ -54,8 +54,8 @@ The schema is additive: new fields become nullable columns, and migration is ide
 | `pr_list` | PR list API call | duration_ms, page_size, items_returned, status |
 | `pr_get` | Single PR fetch | duration_ms, status, attempts, retried |
 | `pr_full_fetch` | Full PR window fetch | duration_ms, page_size, items_returned, request_bytes, response_bytes |
-| `pr_scan` | Incremental PR scan page | duration_ms, page_size, items_returned, cursor |
-| `pr_full_page` | One page of a full PR sync | duration_ms, page_size, items_returned, request_bytes, response_bytes |
+| `pr_scan` | Phase 1 of the read-only PR window walk used by `stats` | duration_ms, page_size, items_returned, cursor |
+| `pr_full_page` | A full-payload page of the read-only stats window walk | duration_ms, page_size, items_returned, request_bytes, response_bytes |
 | `issue_search` | Issue search API call | duration_ms, items_returned |
 | `pr_search` | PR search API call | duration_ms, items_returned |
 | `cache_hit` | Read served from the local cache | operation, repo, backend, items, duration_ms |

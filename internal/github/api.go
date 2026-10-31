@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/telemetry"
 )
 
@@ -756,9 +757,20 @@ func (c *Client) GetIssue(owner, repo string, number int) (*Issue, error) {
 // page as it arrives so callers can persist incrementally; a non-nil error from
 // onBatch aborts the fetch.
 func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch IssueBatchFunc) ([]*Issue, error) {
+	return c.FetchIssuesUntil(owner, repo, since, nil, onBatch)
+}
+
+// FetchIssuesUntil is FetchAllIssues with an exclusive upper bound on
+// updatedAt. Items at or after until are dropped and the pagination stops on
+// the page that reaches the bound. A nil until walks to the head.
+func (c *Client) FetchIssuesUntil(owner, repo string, since, until *time.Time, onBatch IssueBatchFunc) ([]*Issue, error) {
 	var issues []*Issue
 	var cursor string
 	total := 0
+	var cutoff time.Time
+	if until != nil {
+		cutoff = until.UTC().Truncate(time.Second)
+	}
 
 	for {
 		vars := map[string]interface{}{
@@ -800,8 +812,14 @@ func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch Is
 		}
 
 		var batch []*Issue
+		stopped := false
 		for i := range result.Repository.Issues.Nodes {
-			batch = append(batch, nodeToIssue(&result.Repository.Issues.Nodes[i]))
+			issue := nodeToIssue(&result.Repository.Issues.Nodes[i])
+			if !cutoff.IsZero() && !issue.UpdatedAt.Before(cutoff) {
+				stopped = true
+				continue
+			}
+			batch = append(batch, issue)
 		}
 		issues = append(issues, batch...)
 
@@ -811,7 +829,7 @@ func (c *Client) FetchAllIssues(owner, repo string, since *time.Time, onBatch Is
 			}
 		}
 
-		if !result.Repository.Issues.PageInfo.HasNextPage {
+		if stopped || !result.Repository.Issues.PageInfo.HasNextPage {
 			break
 		}
 		cursor = result.Repository.Issues.PageInfo.EndCursor
@@ -1271,16 +1289,67 @@ func (c *Client) GetPRChecks(owner, repo string, number int) (*PRCheckRollup, er
 }
 
 // FetchAllPRs retrieves every pull request (all states) with comments for
-// caching, oldest-updated-first. It is intended for the cold/full cache path
-// (delta/resume is handled by FetchPRsUpdated). Pages are capped at 50 PRs:
-// with reviews, timeline items, and comments attached, 100-node pages exceed
-// what GitHub's GraphQL backend reliably evaluates and it responds with 502s.
-// onBatch is invoked per page so callers can persist incrementally; a non-nil
-// error aborts the fetch.
+// caching, oldest-updated-first. It is the cold path of FetchPRsAsc and exists
+// for callers that want one complete pass and no resume position.
 func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRequest, error) {
+	return c.FetchPRsAsc(owner, repo, "", func(batch []*PullRequest, total int, _ string, _ bool) error {
+		if onBatch == nil {
+			return nil
+		}
+		return onBatch(batch, total)
+	})
+}
+
+// FetchPRsAsc retrieves pull requests in updatedAt ascending order, starting
+// after the given page cursor. It is the cache walk:
+//
+//   - A cold fetch starts with an empty cursor and reads from the oldest
+//     updatedAt forward.
+//   - A resumed fetch passes the endCursor persisted after the last fully
+//     written page, so an interrupted backfill continues instead of starting
+//     over.
+//   - A completed cache passes its tail cursor on every run, so the walk
+//     returns only the pull requests updated since that position.
+//
+// Ascending order is what makes the cursor resumable: an item updated while the
+// walk is paused moves to the end of the list, where the walk re-reads it, and
+// an unfetched item can only move further forward. Nothing is skipped.
+//
+// Cursors are opaque and GitHub documents them for use within one traversal.
+// If the stored cursor is rejected on the first request, the walk restarts once
+// from the beginning and logs it. onPage is invoked per page so callers can
+// persist items and the page cursor incrementally; a non-nil error aborts the
+// walk.
+func (c *Client) FetchPRsAsc(owner, repo, after string, onPage PRPageFunc) ([]*PullRequest, error) {
 	var prs []*PullRequest
-	var cursor string
+	err := c.WalkPRsAsc(owner, repo, after, func(batch []*PullRequest, total int, next string, more bool) error {
+		prs = append(prs, batch...)
+		if onPage != nil {
+			return onPage(batch, total, next, more)
+		}
+		return nil
+	})
+	return prs, err
+}
+
+// WalkPRsAsc is FetchPRsAsc without retaining the pages it fetches, for callers
+// that persist each page as it arrives. A full history backfill would otherwise
+// hold every pull request in memory at once.
+func (c *Client) WalkPRsAsc(owner, repo, after string, onPage PRPageFunc) error {
+	return c.WalkPRsAscUntil(owner, repo, after, time.Time{}, onPage)
+}
+
+// WalkPRsAscUntil is WalkPRsAsc with an exclusive upper bound on updatedAt.
+// Pages are filtered to items before stopAt, and the walk stops as soon as it
+// reaches the bound. A zero stopAt walks to the head. Unlike the unbounded
+// walk, a rejected starting cursor is not replaced with a restart from the
+// beginning: callers use this for one coverage segment, and restarting would
+// cross into other segments.
+func (c *Client) WalkPRsAscUntil(owner, repo, after string, stopAt time.Time, onPage PRPageFunc) error {
+	cursor := after
 	total := 0
+	restarted := false
+	stopAt = stopAt.UTC().Truncate(time.Second)
 
 	for {
 		vars := map[string]interface{}{
@@ -1306,14 +1375,25 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 			} `json:"repository"`
 		}
 
-		if err := c.QueryCtx(CallContext{
-			Operation: "fetch_all_prs",
+		err := c.QueryCtx(CallContext{
+			Operation: "fetch_prs_asc",
 			Kind:      telemetry.KindPRFull,
 			Repo:      repoKey(owner, repo),
 			PageSize:  50,
 			Cursor:    cursor != "",
-		}, fetchAllPRsQuery, vars, &result); err != nil {
-			return prs, err
+		}, fetchAllPRsQuery, vars, &result)
+		if err != nil {
+			// A stored cursor can outlive the traversal that produced it. Only
+			// the unbounded walk may recover by restarting from the beginning;
+			// a bounded segment must not leave its range.
+			if stopAt.IsZero() && !restarted && after != "" && cursor == after && isCursorRejection(err) {
+				restarted = true
+				cursor = ""
+				logging.Warn("stored pull request cursor was rejected; restarting the walk from the beginning",
+					"repo", repoKey(owner, repo), "error", err)
+				continue
+			}
+			return err
 		}
 
 		if total == 0 {
@@ -1324,21 +1404,206 @@ func (c *Client) FetchAllPRs(owner, repo string, onBatch PRBatchFunc) ([]*PullRe
 		for i := range result.Repository.PullRequests.Nodes {
 			batch = append(batch, nodeToPR(&result.Repository.PullRequests.Nodes[i]))
 		}
-		prs = append(prs, batch...)
 
-		if onBatch != nil {
-			if err := onBatch(batch, total); err != nil {
-				return prs, err
+		next := result.Repository.PullRequests.PageInfo.EndCursor
+		hasNext := result.Repository.PullRequests.PageInfo.HasNextPage
+		stopped := false
+		if !stopAt.IsZero() {
+			kept := batch[:0]
+			for _, pr := range batch {
+				if !pr.UpdatedAt.Before(stopAt) {
+					stopped = true
+					continue
+				}
+				kept = append(kept, pr)
+			}
+			batch = kept
+			hasNext = hasNext && !stopped
+		}
+		if onPage != nil {
+			if err := onPage(batch, total, next, hasNext); err != nil {
+				return err
 			}
 		}
 
-		if !result.Repository.PullRequests.PageInfo.HasNextPage {
+		if !hasNext {
 			break
 		}
-		cursor = result.Repository.PullRequests.PageInfo.EndCursor
+		cursor = next
 	}
 
-	return prs, nil
+	return nil
+}
+
+// isCursorRejection reports whether err looks like GitHub refusing an opaque
+// pagination cursor, so the walk can restart from the head. Matching on the
+// message is imprecise, but it is only consulted for a stored cursor on the
+// first request of a walk.
+func isCursorRejection(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "cursor") &&
+		(strings.Contains(msg, "invalid") || strings.Contains(msg, "expired") || strings.Contains(msg, "not valid"))
+}
+
+// SearchCount returns the search index's count of items of kind ("issues" or
+// "prs") updated in the given range. It sizes progress rows for coverage gaps.
+// GitHub search ranges are inclusive at both ends, so an item exactly on a
+// boundary can be counted in adjacent queries.
+func (c *Client) SearchCount(owner, repo, kind string, start, end time.Time) (int, error) {
+	term := "is:pr"
+	if kind == "issues" {
+		term = "is:issue"
+	}
+	var updated string
+	switch {
+	case !start.IsZero() && !end.IsZero():
+		updated = fmt.Sprintf("%s..%s", start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339))
+	case !start.IsZero():
+		updated = ">=" + start.UTC().Format(time.RFC3339)
+	case !end.IsZero():
+		updated = "<=" + end.UTC().Format(time.RFC3339)
+	default:
+		return 0, nil
+	}
+	q := fmt.Sprintf("repo:%s/%s %s updated:%s", owner, repo, term, updated)
+	var result struct {
+		Search struct {
+			IssueCount int `json:"issueCount"`
+		} `json:"search"`
+	}
+	if err := c.QueryCtx(CallContext{
+		Operation: "search_count",
+		Kind:      telemetry.KindPRSearch,
+		Repo:      repoKey(owner, repo),
+	}, countPRsQuery, map[string]interface{}{"q": q}, &result); err != nil {
+		return 0, err
+	}
+	return result.Search.IssueCount, nil
+}
+
+const countPRsQuery = `
+query($q: String!) {
+  search(query: $q, type: ISSUE, first: 1) {
+    issueCount
+  }
+}`
+
+// CountIssues returns the total number of issues in the repository, without a
+// state or date filter. It sizes the cache figure in progress rows, which is
+// distinct from the server-filtered count a --since window fetches.
+func (c *Client) CountIssues(owner, repo string) (int, error) {
+	var result struct {
+		Repository struct {
+			Issues struct {
+				TotalCount int `json:"totalCount"`
+			} `json:"issues"`
+		} `json:"repository"`
+	}
+	if err := c.QueryCtx(CallContext{
+		Operation: "count_issues",
+		Kind:      telemetry.KindIssueList,
+		Repo:      repoKey(owner, repo),
+	}, countIssuesQuery, map[string]interface{}{"owner": owner, "repo": repo}, &result); err != nil {
+		return 0, err
+	}
+	return result.Repository.Issues.TotalCount, nil
+}
+
+const countIssuesQuery = `
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    issues(first: 1) {
+      totalCount
+    }
+  }
+}`
+
+// prUpdatedAfter returns the updatedAt timestamps of up to first pull requests
+// after the cursor in the given direction, using the light two-field selection.
+func (c *Client) prUpdatedAfter(owner, repo, after string, first int, dir string) ([]time.Time, error) {
+	vars := map[string]interface{}{
+		"owner": owner,
+		"repo":  repo,
+		"first": first,
+		"dir":   dir,
+	}
+	if after != "" {
+		vars["after"] = after
+	}
+	var result struct {
+		Repository struct {
+			PullRequests struct {
+				Nodes []struct {
+					UpdatedAt time.Time `json:"updatedAt"`
+				} `json:"nodes"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
+	}
+	if err := c.QueryCtx(CallContext{
+		Operation: "probe_prs_after",
+		Kind:      telemetry.KindPRScan,
+		Repo:      repoKey(owner, repo),
+		PageSize:  first,
+		Cursor:    after != "",
+	}, fetchPRsUpdatedLightQuery, vars, &result); err != nil {
+		return nil, err
+	}
+	nodes := result.Repository.PullRequests.Nodes
+	out := make([]time.Time, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, n.UpdatedAt)
+	}
+	return out, nil
+}
+
+// OldestPRUpdatedAt returns the oldest pull request updatedAt, used as the
+// default start for a full coverage backfill.
+func (c *Client) OldestPRUpdatedAt(owner, repo string) (time.Time, error) {
+	ts, err := c.prUpdatedAfter(owner, repo, "", 1, "ASC")
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(ts) == 0 {
+		return time.Time{}, nil
+	}
+	return ts[0], nil
+}
+
+const oldestIssueQuery = `
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    issues(first: 1, states: [OPEN, CLOSED], orderBy: {field: UPDATED_AT, direction: ASC}) {
+      nodes { updatedAt }
+    }
+  }
+}`
+
+// OldestIssueUpdatedAt returns the oldest issue updatedAt, used as the default
+// start for a full coverage backfill.
+func (c *Client) OldestIssueUpdatedAt(owner, repo string) (time.Time, error) {
+	var result struct {
+		Repository struct {
+			Issues struct {
+				Nodes []struct {
+					UpdatedAt time.Time `json:"updatedAt"`
+				} `json:"nodes"`
+			} `json:"issues"`
+		} `json:"repository"`
+	}
+	if err := c.QueryCtx(CallContext{
+		Operation: "oldest_issue",
+		Kind:      telemetry.KindIssueList,
+		Repo:      repoKey(owner, repo),
+	}, oldestIssueQuery, map[string]interface{}{"owner": owner, "repo": repo}, &result); err != nil {
+		return time.Time{}, err
+	}
+	if len(result.Repository.Issues.Nodes) == 0 {
+		return time.Time{}, nil
+	}
+	return result.Repository.Issues.Nodes[0].UpdatedAt, nil
 }
 
 const fetchPRsUpdatedLightQuery = `
@@ -1355,8 +1620,9 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
 }`
 
 // FetchPRsUpdated retrieves pull requests updated at or after since, for
-// delta updates, resuming an interrupted fetch, and --since windows. It runs
-// in two phases:
+// read-only windowed reports such as `ghx stats`. Caching no longer uses this
+// path: the cache resumes from the stored ascending page cursor (FetchPRsAsc),
+// which needs no newest-first walk. It runs in two phases:
 //
 //  1. A lightweight newest-first walk over the pullRequests connection that
 //     reads only number and updatedAt, prScanPageSize at a time, stopping as
@@ -1370,20 +1636,18 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
 //     nodes. The window is divided into prScanPageSize-wide blocks, and each
 //     block is fetched as a chain of pages seeded by the block's cursor;
 //     chains run prBlocksInFlight at a time in parallel. Each page is sized
-//     to the in-window items its block is expected to hold, so a delta with
+//     to the in-window items its block is expected to hold, so a window with
 //     one changed PR costs one small page instead of a full one.
 //
-// onBatch is invoked per completed page (in completion order; caching is
-// order-independent) with total reporting the exact number of in-window PRs
-// so callers can render a determinate progress bar. onScan, when non-nil, is
-// invoked after each phase 1 page with the number of PRs scanned so far, so
-// callers can show progress while the window is being located. A non-nil
-// error from onBatch aborts the fetch.
-func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PRBatchFunc, onScan func(scanned int)) ([]*PullRequest, error) {
+// onBatch is invoked per completed page (in completion order; the walk is
+// order-independent) with total reporting the exact number of in-window PRs so
+// callers can render a determinate progress bar. A non-nil error from onBatch
+// aborts the fetch.
+func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PRBatchFunc) ([]*PullRequest, error) {
 	// Phase 1: locate the window with the light query, recording each
 	// block's start cursor (the light page's own start cursor) so phase 2
 	// can fetch blocks concurrently.
-	var candidateCount, scanned int
+	var candidateCount int
 	blockCursors := []string{""} // blockCursors[b] = after-cursor for block b
 	var blockCandidates []int    // candidates per walked block
 	var cursor string
@@ -1428,7 +1692,6 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 		var pageOldest time.Time
 		count := 0
 		for _, n := range page {
-			scanned++
 			if pageOldest.IsZero() || n.UpdatedAt.Before(pageOldest) {
 				pageOldest = n.UpdatedAt
 			}
@@ -1438,9 +1701,6 @@ func (c *Client) FetchPRsUpdated(owner, repo string, since time.Time, onBatch PR
 		}
 		blockCandidates = append(blockCandidates, count)
 		candidateCount += count
-		if onScan != nil {
-			onScan(scanned)
-		}
 
 		// Newest-first: once a page reaches items older than since, every
 		// later page is older still. The walk continues while pageOldest is
@@ -1748,4 +2008,32 @@ func prStates(state string) []string {
 	default: // "all" or ""
 		return []string{"OPEN", "CLOSED", "MERGED"}
 	}
+}
+
+const countPRsTotalQuery = `
+query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequests(first: 1, states: [OPEN, CLOSED, MERGED]) {
+      totalCount
+    }
+  }
+}`
+
+// CountPRs returns the total number of pull requests in the repository.
+func (c *Client) CountPRs(owner, repo string) (int, error) {
+	var result struct {
+		Repository struct {
+			PullRequests struct {
+				TotalCount int `json:"totalCount"`
+			} `json:"pullRequests"`
+		} `json:"repository"`
+	}
+	if err := c.QueryCtx(CallContext{
+		Operation: "count_prs",
+		Kind:      telemetry.KindPRList,
+		Repo:      repoKey(owner, repo),
+	}, countPRsTotalQuery, map[string]interface{}{"owner": owner, "repo": repo}, &result); err != nil {
+		return 0, err
+	}
+	return result.Repository.PullRequests.TotalCount, nil
 }

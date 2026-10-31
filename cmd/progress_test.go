@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tomzxcode/ghx/internal/github"
 )
@@ -44,28 +45,8 @@ func TestNewMultiProgress_DeclaresEveryRow(t *testing.T) {
 	if !strings.Contains(row, "starting") {
 		t.Errorf("a row with no data yet should say it is starting, got %q", row)
 	}
-	if !strings.Contains(row, "(0/0)") {
+	if !strings.Contains(row, "(0/0 updated)") {
 		t.Errorf("a row with no data yet should be an empty 0/0 bar, got %q", row)
-	}
-}
-
-// TestMultiProgress_ShowsScanProgress verifies the pull request row reports the
-// delta window walk as a bar whose total grows with the scanned count.
-func TestMultiProgress_ShowsScanProgress(t *testing.T) {
-	var out bytes.Buffer
-	p := newTestProgress(&out, "prs")
-	p.handle(FetchEvent{Phase: "prs-scan", Kind: "batch", Done: 312})
-	if !strings.Contains(out.String(), "scanning") {
-		t.Errorf("row should say it is scanning, got %q", out.String())
-	}
-	if !strings.Contains(out.String(), "(312/312") {
-		t.Errorf("row should count the scanned items, got %q", out.String())
-	}
-
-	out.Reset()
-	p.handle(FetchEvent{Phase: "prs-scan", Kind: "batch", Done: 730})
-	if !strings.Contains(out.String(), "(730/730") {
-		t.Errorf("the scan total should grow, got %q", out.String())
 	}
 }
 
@@ -81,29 +62,47 @@ func TestMultiProgress_ShowsCachingState(t *testing.T) {
 }
 
 // TestMultiProgress_AlignsBars verifies rows in different states put their bar
-// at the same column, so a refresh where one portion scans and the other caches
-// still lines up.
+// at the same column, so a refresh where one portion is starting and the other
+// is caching still lines up.
 func TestMultiProgress_AlignsBars(t *testing.T) {
 	var out bytes.Buffer
 	p := newTestProgress(&out, "issues", "prs")
 	p.handle(FetchEvent{Phase: "issues", Kind: "batch", Done: 5, Total: 10})
-	p.handle(FetchEvent{Phase: "prs-scan", Kind: "batch", Done: 300})
+	p.handle(FetchEvent{Phase: "prs", Kind: "start", Cached: 3})
 
 	caching := p.row("issues")
-	scanning := p.row("prs")
+	starting := p.row("prs")
 	cachingBar := strings.Index(caching, "|")
-	scanningBar := strings.Index(scanning, "|")
-	if cachingBar < 0 || scanningBar < 0 {
-		t.Fatalf("both rows should have a bar, got %q and %q", caching, scanning)
+	startingBar := strings.Index(starting, "|")
+	if cachingBar < 0 || startingBar < 0 {
+		t.Fatalf("both rows should have a bar, got %q and %q", caching, starting)
 	}
-	if cachingBar != scanningBar {
-		t.Errorf("bar columns differ: caching at %d (%q), scanning at %d (%q)",
-			cachingBar, caching, scanningBar, scanning)
+	if cachingBar != startingBar {
+		t.Errorf("bar columns differ: caching at %d (%q), other at %d (%q)",
+			cachingBar, caching, startingBar, starting)
 	}
 }
 
-// TestMultiProgress_CountsFromCache verifies a refresh starts from what is
-// already cached and grows to the cache's final size.
+// TestMultiProgress_CacheDenominatorIsRepositoryTotal verifies the cached
+// figure uses the repository total, not the size the cache will reach when the
+// operation ends.
+func TestMultiProgress_CacheDenominatorIsRepositoryTotal(t *testing.T) {
+	var out bytes.Buffer
+	p := newTestProgress(&out, "issues")
+	p.handle(FetchEvent{Phase: "issues", Kind: "start", Cached: 500, CacheTotal: 1000})
+	if row := p.row("issues"); !strings.Contains(row, "500/1000 cached") {
+		t.Errorf("starting row should show the repository total, got %q", row)
+	}
+
+	p.handle(FetchEvent{Phase: "issues", Kind: "batch", Done: 5, Total: 10, CacheTotal: 1000})
+	row := p.row("issues")
+	if !strings.Contains(row, "(5/10 updated, 505/1000 cached") {
+		t.Errorf("cached figure should be a share of the repository, got %q", row)
+	}
+}
+
+// TestMultiProgress_CountsFromCache verifies the bar tracks this run's update
+// while the trailing figures keep the cache's overall fill visible.
 func TestMultiProgress_CountsFromCache(t *testing.T) {
 	var out bytes.Buffer
 	p := newTestProgress(&out, "issues")
@@ -114,11 +113,11 @@ func TestMultiProgress_CountsFromCache(t *testing.T) {
 
 	p.handle(FetchEvent{Phase: "issues", Kind: "batch", Done: 5, Total: 10})
 	row := p.row("issues")
-	if !strings.Contains(row, "(505/510") {
-		t.Errorf("row should count from the cached items, got %q", row)
+	if !strings.Contains(row, "(5/10 updated, 505/510 cached") {
+		t.Errorf("row should separate update progress from cache fill, got %q", row)
 	}
-	if !strings.Contains(row, " 99%") {
-		t.Errorf("row should be 99%% of the final cache, got %q", row)
+	if !strings.Contains(row, " 50%") {
+		t.Errorf("row should be 50%% of this run's window, got %q", row)
 	}
 }
 
@@ -135,8 +134,8 @@ func TestMultiProgress_AlreadySyncedRow(t *testing.T) {
 	if !strings.Contains(row, "100%") || !strings.Contains(row, "up to date") {
 		t.Errorf("a synced portion should show a full row, got %q", row)
 	}
-	if !strings.Contains(row, "(42/42") {
-		t.Errorf("a synced portion should count the cached items, got %q", row)
+	if !strings.Contains(row, "0/0 updated, 42/42 cached, up to date") {
+		t.Errorf("a synced portion should show its cache fill, got %q", row)
 	}
 	if !strings.Contains(out.String(), "up to date") {
 		t.Errorf("the painted stack should show the full row, got %q", out.String())
@@ -168,6 +167,27 @@ func TestMultiProgress_KeepsFinishedRow(t *testing.T) {
 	p.handle(FetchEvent{Phase: "prs", Kind: "done", Done: 4})
 	if p.rows != 0 {
 		t.Errorf("painted rows after the run = %d, want 0", p.rows)
+	}
+}
+
+// TestMultiProgress_FinishedRowFreezesTime verifies a portion that finished
+// keeps its final elapsed time while the other portion is still running.
+func TestMultiProgress_FinishedRowFreezesTime(t *testing.T) {
+	var out bytes.Buffer
+	p := newTestProgress(&out, "issues", "prs")
+	p.handle(FetchEvent{Phase: "issues", Kind: "batch", Done: 10, Total: 10})
+	p.handle(FetchEvent{Phase: "issues", Kind: "done", Done: 10})
+
+	pb := p.portions["issues"]
+	pb.started = time.Now().Add(-10 * time.Second)
+	pb.finishedAt = pb.started.Add(8 * time.Second)
+
+	row := p.row("issues")
+	if !strings.Contains(row, "[8s:0s]") {
+		t.Errorf("finished row should freeze at 8s with 0s left, got %q", row)
+	}
+	if !strings.Contains(row, "10/10 updated") {
+		t.Errorf("finished row should keep its final counts, got %q", row)
 	}
 }
 

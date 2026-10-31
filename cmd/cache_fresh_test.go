@@ -9,8 +9,8 @@ import (
 	"github.com/tomzxcode/ghx/internal/mockserver"
 )
 
-// TestCache_PlainRunDeltaRefreshesFreshCache verifies that a plain run does not
-// short-circuit on a fresh cache: it delta-refreshes and advances the window.
+// TestCache_PlainRunDeltaRefreshesFreshCache verifies that a plain run after
+// coverage is current does not re-fetch and does not short-circuit.
 func TestCache_PlainRunDeltaRefreshesFreshCache(t *testing.T) {
 	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	srv := mockserver.NewServer(sinceScenario(now))
@@ -37,19 +37,15 @@ func TestCache_PlainRunDeltaRefreshesFreshCache(t *testing.T) {
 	if strings.Contains(out, "Cache is still fresh") {
 		t.Errorf("plain run must not short-circuit, got %q", out)
 	}
-	if !strings.Contains(out, "Fetching issues updated since") {
-		t.Errorf("expected issue delta fetch, got %q", out)
+	if strings.Contains(out, "Fetching issues updated since") || strings.Contains(out, "Fetching pull requests updated since") {
+		t.Errorf("a covered cache should have no update window, got %q", out)
 	}
-	if !strings.Contains(out, "Fetching pull requests updated since") {
-		t.Errorf("expected PR delta fetch, got %q", out)
+	// The coverage already reaches now, so the run has nothing to fetch.
+	if got := parseCachedCount(t, out, cachedIssuesRe); got != 0 {
+		t.Errorf("run cached %d issue(s), want 0", got)
 	}
-	// The inclusive cutoff re-fetches the newest item in each type, the one
-	// whose updatedAt equals the cursor. Both counts stay at 1 while idle.
-	if got := parseCachedCount(t, out, cachedIssuesRe); got != 1 {
-		t.Errorf("delta cached %d issue(s), want 1 (the boundary item)", got)
-	}
-	if got := parseCachedCount(t, out, cachedPRsRe); got != 1 {
-		t.Errorf("delta cached %d pull request(s), want 1 (the boundary item)", got)
+	if got := parseCachedCount(t, out, cachedPRsRe); got != 0 {
+		t.Errorf("run cached %d pull request(s), want 0", got)
 	}
 
 	after, err := store.LoadCacheInfo("github.com", "acme", "myproject")
@@ -112,7 +108,7 @@ func TestCache_IfStaleFetchesWhenStale(t *testing.T) {
 	if strings.Contains(out, "Cache is still fresh") {
 		t.Errorf("stale cache must not short-circuit, got %q", out)
 	}
-	if !strings.Contains(out, "Fetching issues updated since") {
-		t.Errorf("expected issue delta fetch, got %q", out)
+	if got := parseCachedCount(t, out, cachedIssuesRe); got != 0 {
+		t.Errorf("run cached %d issue(s), want 0 (coverage already current)", got)
 	}
 }

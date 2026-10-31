@@ -110,6 +110,77 @@ func TestClient_FetchAllPRs(t *testing.T) {
 	}
 }
 
+// TestClient_FetchPRsAsc_ResumesFromPageCursor verifies the cache walk resumes
+// from a stored page cursor instead of restarting the history.
+func TestClient_FetchPRsAsc_ResumesFromPageCursor(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:      3,
+		Repos:         []string{"acme/big"},
+		History:       60 * 24 * time.Hour,
+		IssuesPerRepo: 5,
+		PRsPerRepo:    250, // 5 pages of 50
+		CloseRate:     0.3,
+		MergeRate:     0.3,
+		DraftRate:     0.1,
+		ReviewRate:    0.5,
+		Seed:          17,
+	}
+	srv := mockserver.NewServer(mockserver.Generate(cfg))
+	t.Cleanup(srv.Close)
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	var firstPageCursor string
+	all, err := client.FetchPRsAsc("acme", "big", "", func(_ []*github.PullRequest, _ int, after string, more bool) error {
+		if more && firstPageCursor == "" {
+			firstPageCursor = after
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("FetchPRsAsc: %v", err)
+	}
+	if len(all) != 250 {
+		t.Fatalf("first walk returned %d PRs, want 250", len(all))
+	}
+	if firstPageCursor == "" {
+		t.Fatal("first page reported no cursor to resume from")
+	}
+
+	resumed, err := client.FetchPRsAsc("acme", "big", firstPageCursor, nil)
+	if err != nil {
+		t.Fatalf("FetchPRsAsc resume: %v", err)
+	}
+	if len(resumed) != 200 {
+		t.Errorf("resumed walk returned %d PRs, want 200", len(resumed))
+	}
+	if len(resumed) > 0 && len(all) > 0 && resumed[0].Number == all[0].Number {
+		t.Errorf("resumed walk started at the first PR (#%d); the cursor was ignored", resumed[0].Number)
+	}
+}
+
+// TestClient_FetchPRsAsc_RestartsWhenCursorRejected verifies a stored cursor
+// that GitHub rejects is dropped and the walk restarts from the head.
+func TestClient_FetchPRsAsc_RestartsWhenCursorRejected(t *testing.T) {
+	srv := startServer(t, sampleScenario())
+
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	prs, err := client.FetchPRsAsc("acme", "myproject", "not-a-cursor", nil)
+	if err != nil {
+		t.Fatalf("FetchPRsAsc: %v", err)
+	}
+	if len(prs) != 3 {
+		t.Errorf("restarted walk returned %d PRs, want 3", len(prs))
+	}
+}
+
 func TestClient_FetchAllIssues_ProgressCallback(t *testing.T) {
 	srv := startServer(t, sampleScenario())
 
@@ -601,7 +672,7 @@ func TestClient_FetchPRsUpdated(t *testing.T) {
 		}
 	}
 
-	got, err := client.FetchPRsUpdated("acme", "myproject", cutoff, nil, nil)
+	got, err := client.FetchPRsUpdated("acme", "myproject", cutoff, nil)
 	if err != nil {
 		t.Fatalf("FetchPRsUpdated: %v", err)
 	}
@@ -687,7 +758,7 @@ func TestClient_FetchPRsUpdated_StopsEarly(t *testing.T) {
 	}
 
 	atomic.StoreInt32(&count, 0)
-	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil)
 	if err != nil {
 		t.Fatalf("FetchPRsUpdated: %v", err)
 	}
@@ -786,7 +857,7 @@ func TestClient_FetchPRsUpdated_SizesPagesToWindow(t *testing.T) {
 	pageSizes = nil
 	mu.Unlock()
 
-	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil)
 	if err != nil {
 		t.Fatalf("FetchPRsUpdated: %v", err)
 	}
@@ -857,7 +928,7 @@ func TestClient_FetchPRsUpdated_ParallelPages(t *testing.T) {
 		}
 	}
 
-	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil, nil)
+	got, err := client.FetchPRsUpdated("acme", "big", cutoff, nil)
 	if err != nil {
 		t.Fatalf("FetchPRsUpdated: %v", err)
 	}
@@ -940,5 +1011,81 @@ func TestClient_CachesChecksAndReviewThreads(t *testing.T) {
 	}
 	if got := rollup.Checks[1]; got.Type != "StatusContext" || got.Name != "ci/unit" || got.State != "SUCCESS" || got.Description != "All tests passed" {
 		t.Errorf("status context = %+v, want the passing unit status", got)
+	}
+}
+
+// TestClient_WalkPRsAscUntil verifies the ascending walk stops at an exclusive
+// updatedAt bound and returns only items before it.
+func TestClient_WalkPRsAscUntil(t *testing.T) {
+	cfg := mockserver.SimulationConfig{
+		NumUsers:      3,
+		Repos:         []string{"acme/big"},
+		History:       60 * 24 * time.Hour,
+		IssuesPerRepo: 5,
+		PRsPerRepo:    250,
+		CloseRate:     0.3,
+		MergeRate:     0.3,
+		DraftRate:     0.1,
+		ReviewRate:    0.5,
+		Seed:          31,
+	}
+	srv := mockserver.NewServer(mockserver.Generate(cfg))
+	t.Cleanup(srv.Close)
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	all, err := client.FetchPRsAsc("acme", "big", "", nil)
+	if err != nil {
+		t.Fatalf("FetchPRsAsc: %v", err)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.Before(all[j].UpdatedAt) })
+	cutoff := all[100].UpdatedAt
+
+	var got []*github.PullRequest
+	if err := client.WalkPRsAscUntil("acme", "big", "", cutoff, func(batch []*github.PullRequest, _ int, _ string, _ bool) error {
+		got = append(got, batch...)
+		return nil
+	}); err != nil {
+		t.Fatalf("WalkPRsAscUntil: %v", err)
+	}
+	if len(got) != 100 {
+		t.Errorf("bounded walk returned %d PRs, want 100", len(got))
+	}
+	for _, pr := range got {
+		if !pr.UpdatedAt.Before(cutoff) {
+			t.Errorf("PR #%d updatedAt=%v is at or after the cutoff %v", pr.Number, pr.UpdatedAt, cutoff)
+		}
+	}
+}
+
+// TestClient_FetchIssuesUntil verifies the issue walk drops items at or after
+// the exclusive bound.
+func TestClient_FetchIssuesUntil(t *testing.T) {
+	srv := startServer(t, sampleScenario())
+	client, err := github.NewClientWithURL(srv.URL(), "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+
+	all, err := client.FetchAllIssues("acme", "myproject", nil, nil)
+	if err != nil {
+		t.Fatalf("FetchAllIssues: %v", err)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.Before(all[j].UpdatedAt) })
+	cutoff := all[2].UpdatedAt
+
+	got, err := client.FetchIssuesUntil("acme", "myproject", nil, &cutoff, nil)
+	if err != nil {
+		t.Fatalf("FetchIssuesUntil: %v", err)
+	}
+	if len(got) != 2 {
+		t.Errorf("bounded issue walk returned %d issues, want 2", len(got))
+	}
+	for _, issue := range got {
+		if !issue.UpdatedAt.Before(cutoff) {
+			t.Errorf("issue #%d updatedAt=%v is at or after the cutoff %v", issue.Number, issue.UpdatedAt, cutoff)
+		}
 	}
 }

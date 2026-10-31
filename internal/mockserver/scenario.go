@@ -100,7 +100,10 @@ func (b *ScenarioBuilder) AddIssue(title, body string, age time.Duration, opts .
 	createdAt := b.now.Add(-age)
 	updatedAt := createdAt
 	if age > 0 {
-		updatedAt = createdAt.Add(time.Duration(b.rng.Intn(int(age/2))) * time.Second)
+		window := int(age / 2 / time.Second)
+		if window > 0 {
+			updatedAt = createdAt.Add(time.Duration(b.rng.Intn(window)) * time.Second)
+		}
 	}
 	num := b.nextNumber()
 
@@ -139,7 +142,10 @@ func (b *ScenarioBuilder) AddPR(title, body, headBranch string, age time.Duratio
 	createdAt := b.now.Add(-age)
 	updatedAt := createdAt
 	if age > 0 {
-		updatedAt = createdAt.Add(time.Duration(b.rng.Intn(int(age/2))) * time.Second)
+		window := int(age / 2 / time.Second)
+		if window > 0 {
+			updatedAt = createdAt.Add(time.Duration(b.rng.Intn(window)) * time.Second)
+		}
 	}
 	num := b.nextNumber()
 

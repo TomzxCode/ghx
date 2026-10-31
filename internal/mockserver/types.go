@@ -21,6 +21,11 @@ type ScenarioPR struct {
 type Scenario struct {
 	Issues []ScenarioIssue
 	PRs    []ScenarioPR
+
+	// RejectSyntheticCursors makes the server refuse keyset cursors that do not
+	// point at an existing test row, so tests can exercise the fallback used
+	// when GitHub will not accept a synthesized date seek.
+	RejectSyntheticCursors bool
 }
 
 type ScenarioOption func(*Scenario)

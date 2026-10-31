@@ -190,11 +190,14 @@ func TestSaveCacheInfoFull_PersistsCursorsAndComplete(t *testing.T) {
 	s := newTempStore(t)
 
 	cursor := time.Date(2024, 1, 15, 12, 30, 0, 0, time.UTC)
+	floor := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	if err := s.SaveCacheInfoFull("github.com", "owner", "repo", &CacheInfo{
-		CachedAt:    time.Now(),
-		Duration:    60,
-		Complete:    false,
-		IssueCursor: &cursor,
+		CachedAt:     time.Now(),
+		Duration:     60,
+		Complete:     false,
+		IssueCursor:  &cursor,
+		PRPageCursor: "cursor-abc",
+		PRFloor:      &floor,
 	}); err != nil {
 		t.Fatalf("SaveCacheInfoFull: %v", err)
 	}
@@ -208,6 +211,12 @@ func TestSaveCacheInfoFull_PersistsCursorsAndComplete(t *testing.T) {
 	}
 	if info.IssueCursor == nil || !info.IssueCursor.Equal(cursor) {
 		t.Errorf("IssueCursor = %v, want %v", info.IssueCursor, cursor)
+	}
+	if info.PRPageCursor != "cursor-abc" {
+		t.Errorf("PRPageCursor = %q, want %q", info.PRPageCursor, "cursor-abc")
+	}
+	if info.PRFloor == nil || !info.PRFloor.Equal(floor) {
+		t.Errorf("PRFloor = %v, want %v", info.PRFloor, floor)
 	}
 	// An incomplete cache must not be considered fresh even within duration.
 	if fresh, _ := s.IsCacheFresh("github.com", "owner", "repo"); fresh {

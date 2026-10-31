@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,6 +14,7 @@ import (
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/gitremote"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 var (
@@ -22,6 +24,7 @@ var (
 	cacheSince    string
 	cacheType     string
 	cacheRetries  int
+	cacheWorkers  int
 )
 
 var cacheCmd = &cobra.Command{
@@ -38,14 +41,21 @@ is persisted after every page. If a fetch is interrupted (for example by a GitHu
 rate limit), re-running the command resumes from the last page written rather
 than starting over.
 
-Every run refreshes the cache with a delta fetch from the last cache write, so
-an unchanged repository costs three small requests and a changed one fetches
-only what changed. Pass --if-stale to skip the run entirely while the cache is
-still within --cache-duration, which is useful for scripts that only need the
-cache warm.
+Every run records the updatedAt ranges it has covered and fills only the gaps
+between that coverage and the current head. An interrupted run resumes the
+segment it had not finished. Repeating a run over a covered range does not read
+it again.
 
-Use --since to refresh only entries created or updated on or after a given
-date, instead of the default last-cache-write delta.
+Use --since to ensure coverage starts at a date. Ranges below that date are out
+of scope until a later run asks for an earlier one. --force deletes the selected
+type's cached items and coverage, then fetches them again; with --since it
+rebuilds only that window.
+
+Coverage is processed in segments that run concurrently: --workers sets the
+number of segments in flight. The width is chosen from the uncovered duration:
+issues target four segments per worker, full pull request pages two per slot,
+clamped between 15 minutes and 7 days. At most two pull request pages run at
+once because GitHub's secondary limits punish wider concurrency.
 
 Use --type issues or --type prs to refresh only one of the two; --type both
 (the default) refreshes both, concurrently, so a run takes about as long as the
@@ -70,11 +80,12 @@ to migrate a single repository.`,
 func init() {
 	cacheCmd.AddCommand(cacheMigrateCmd)
 	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", 60, "Cache duration in minutes")
-	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Discard the resume state and run a full re-fetch")
+	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Delete the selected type's cached items and coverage, then re-fetch them (from --since when given)")
 	cacheCmd.Flags().BoolVar(&cacheIfStale, "if-stale", false, "Do nothing when the cache is still fresh instead of delta-refreshing")
-	cacheCmd.Flags().StringVar(&cacheSince, "since", "", "Only refresh entries created or updated since this date (YYYY-MM-DD or RFC3339)")
+	cacheCmd.Flags().StringVar(&cacheSince, "since", "", "Ensure coverage starts at this date (YYYY-MM-DD or RFC3339)")
 	cacheCmd.Flags().StringVar(&cacheType, "type", "both", "Which entries to refresh: issues, prs, or both")
 	cacheCmd.Flags().IntVar(&cacheRetries, "retries", 2, "Retries on transient errors (rate limits, 5xx); 0 means a single attempt. Total attempts = retries + 1")
+	cacheCmd.Flags().IntVar(&cacheWorkers, "workers", 2, "Concurrent coverage segments (1-16)")
 }
 
 // parseSinceDate parses a --since value. Supported formats: RFC3339
@@ -111,20 +122,20 @@ func parseSinceDate(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid --since value %q: use YYYY-MM-DD or RFC3339 (e.g. 2026-09-01T15:04:05Z)", s)
 }
 
-// FetchEvent describes progress during a repository fetch. Phase is "issues",
-// "prs", or "prs-scan" (the newest-first walk locating the delta window);
-// Kind is "start", "batch", or "done"; Message carries the human-readable
-// phase description on start (empty for silent phases); Cached is the number of
-// items of that type already in the cache when the phase started; Done is the
-// number of items written (or scanned for prs-scan) so far; Total is the
-// server-reported total (0 when unknown).
+// FetchEvent describes progress during a repository fetch. Phase is "issues"
+// or "prs"; Kind is "start", "batch", "done", or "notice"; Message carries the
+// human-readable text for a start or notice (empty for silent phases); Cached
+// is the number of items of that type already in the cache when the phase
+// started; Done is the number of items written so far; Total is the number of
+// items this run expects to fetch (0 when unknown).
 type FetchEvent struct {
-	Phase   string
-	Kind    string
-	Message string
-	Cached  int
-	Done    int
-	Total   int
+	Phase      string
+	Kind       string
+	Message    string
+	Cached     int
+	CacheTotal int // total items of this type in the repository (0 unknown)
+	Done       int
+	Total      int // items this run expects to fetch (0 unknown)
 }
 
 // FetchProgress receives fetch progress events. It may be nil.
@@ -132,11 +143,12 @@ type FetchProgress func(ev FetchEvent)
 
 // FetchOptions controls a fetchRepoData run.
 type FetchOptions struct {
-	Force       bool       // discard resume state for the selected portions and full-fetch
-	Since       *time.Time // explicit cutoff overriding the resume cursors
+	Force       bool       // delete the selected types and re-fetch them
+	Since       *time.Time // lower bound for the covered range
 	FetchIssues bool
 	FetchPRs    bool
 	Duration    int           // freshness window recorded on completion; <= 0 leaves the previous value
+	Workers     int           // concurrent coverage segments; 0 uses the default
 	OnProgress  FetchProgress // may be nil
 }
 
@@ -149,10 +161,6 @@ func runCache(cmd *cobra.Command, args []string) error {
 		}
 		sinceTime = &t
 	}
-	if sinceTime != nil && cacheForce {
-		return fmt.Errorf("--force and --since cannot be combined: --force re-fetches everything, --since refreshes a targeted window")
-	}
-
 	// --type selects which portions to refresh. An explicit targeting
 	// (--since or --type != both) always fetches; only --if-stale can skip a
 	// run on a fresh cache.
@@ -199,7 +207,7 @@ func runCache(cmd *cobra.Command, args []string) error {
 	// could not save anything. --if-stale opts into the old no-op behavior for
 	// scripts that only need the cache warm.
 	if cacheIfStale && !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(cacheDuration)*time.Minute {
-		fmt.Printf("Cache is still fresh (within %d minutes); nothing to do. Re-run without --if-stale for a delta refresh, or with --force for a full re-fetch.\n", cacheDuration)
+		fmt.Printf("Cache is still fresh (within %d minutes); nothing to do. Re-run without --if-stale to fill the uncovered ranges, or with --force for a clean rebuild.\n", cacheDuration)
 		return nil
 	}
 
@@ -217,6 +225,7 @@ func runCache(cmd *cobra.Command, args []string) error {
 		FetchIssues: fetchIssues,
 		FetchPRs:    fetchPRs,
 		Duration:    cacheDuration,
+		Workers:     cacheWorkers,
 		OnProgress:  cliFetchProgress(client, phases...),
 	}); err != nil {
 		return err
@@ -302,7 +311,8 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 // fetchRepoData fetches issues and/or pull requests for repo into the store,
 // resuming from (and advancing) the cursors in info. When opts.Force is true
 // the resume state of the selected portions is discarded and a full fetch
-// runs. opts.Since, when set, overrides the cursors with an explicit cutoff.
+// runs. opts.Since, when set, windows issues with the server-side filter and
+// seeds the pull request walk at that instant, recording it as the cache floor.
 // opts.OnProgress may be nil; when set it receives start/batch/done events for
 // each phase. Returns the number of issues and PRs written. On error the store
 // keeps what was written before the failure and info holds the resume cursor
@@ -319,53 +329,85 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 // updates only the timestamp of the portion it fetched, so the other portion
 // keeps its own age. The cache is only marked complete when both portions were
 // fetched.
+const (
+	coverageIssues = "issues"
+	coveragePRs    = "prs"
+)
+
+// coveragePortion is one data type's planned coverage work.
+type coveragePortion struct {
+	kind        string
+	cached      int
+	cacheTotal  int
+	targetStart time.Time
+	segments    []cache.Segment
+	gaps        []cache.Segment
+	planned     []cache.Segment
+	window      int
+	done        atomic.Int64
+}
+
+type coverageWork struct {
+	portion *coveragePortion
+	segment cache.Segment
+}
+
+// coverageSyncer runs a coverage-driven cache refresh: it finds the gaps
+// between what the cache already covers and the current head, processes them
+// as independently seekable segments, and records each completed segment.
+type coverageSyncer struct {
+	store   cache.Store
+	client  *github.Client
+	repo    *gitremote.Repo
+	info    *cache.CacheInfo
+	opts    FetchOptions
+	workers int
+	now     time.Time
+	sem     chan struct{}
+	prSem   chan struct{}
+	notify  func(FetchEvent)
+
+	infoMu     sync.Mutex
+	coverageMu sync.Mutex
+	issues     *coveragePortion
+	prs        *coveragePortion
+}
+
 func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Repo, info *cache.CacheInfo, opts FetchOptions) (int, int, error) {
-	if opts.Force {
-		if opts.FetchIssues {
-			info.IssueCursor = nil
-		}
-		if opts.FetchPRs {
-			info.PRCursor = nil
-		}
-		if opts.FetchIssues && opts.FetchPRs {
-			info.Complete = false
-		}
+	workers := opts.Workers
+	if workers <= 0 {
+		workers = 2
+	}
+	if workers > 16 {
+		workers = 16
+	}
+	prWorkers := workers
+	if prWorkers > maxPRFullPages {
+		prWorkers = maxPRFullPages
+	}
+	s := &coverageSyncer{
+		store:   store,
+		client:  client,
+		repo:    repo,
+		info:    info,
+		opts:    opts,
+		workers: workers,
+		now:     time.Now().UTC().Truncate(time.Second),
+		sem:     make(chan struct{}, workers),
+		prSem:   make(chan struct{}, prWorkers),
 	}
 
-	// --since only applies to a complete cache: applying it to an interrupted
-	// fetch would mark the cache complete while most history is missing, so in
-	// that case finish the full fetch instead and ignore --since.
-	if opts.Since != nil && !info.Complete {
-		fmt.Println("Cache is incomplete; resuming the full fetch (--since ignored).")
-		opts.Since = nil
+	fail := func(err error) (int, int, error) {
+		issues, prs := s.counts()
+		return issues, prs, err
 	}
 
-	if !opts.FetchIssues {
-		fmt.Println("Skipping issues (--type prs).")
-	}
-	if !opts.FetchPRs {
-		fmt.Println("Skipping pull requests (--type issues).")
-	}
-
-	// Resolve both fetch windows before either portion starts: the portions run
-	// concurrently, so nothing may read info while they run (they only advance
-	// their own cursor field, under infoMu).
-	issueSince := info.IssueCursor
-	if opts.Since != nil {
-		issueSince = opts.Since
-	}
-	completeAtStart := info.Complete
-	prCold := info.PRCursor == nil && opts.Since == nil
-	prSince := opts.Since
-	if prSince == nil && info.PRCursor != nil {
-		prSince = info.PRCursor
-	}
-
-	// Both portions emit progress concurrently; serializing the callback keeps
-	// a single-threaded renderer (progress bars, status lines) safe.
 	var progressMu sync.Mutex
-	notify := func(ev FetchEvent) {
+	s.notify = func(ev FetchEvent) {
 		if opts.OnProgress == nil {
+			if ev.Kind == "notice" {
+				fmt.Println(ev.Message)
+			}
 			return
 		}
 		progressMu.Lock()
@@ -373,162 +415,483 @@ func fetchRepoData(store cache.Store, client *github.Client, repo *gitremote.Rep
 		opts.OnProgress(ev)
 	}
 
-	// info is shared: the cursors are advanced and the metadata rewritten by
-	// both portions, so those two operations take the same lock.
-	var infoMu sync.Mutex
-	saveInfo := func() error {
-		infoMu.Lock()
-		defer infoMu.Unlock()
-		return store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info)
-	}
-	advance := func(cur **time.Time, updatedAt time.Time) {
-		infoMu.Lock()
-		defer infoMu.Unlock()
-		advanceCursor(cur, updatedAt)
-	}
-
-	var issueCount, prCount int
-
-	// Count what each portion will have cached already, so the progress rows can
-	// show the cache growing from there instead of from zero.
-	cachedIssues, cachedPRs := cachedItemCounts(store, repo)
-
-	fetchIssues := func() error {
-		// Issues are fetched oldest-first. `since = IssueCursor` either resumes
-		// an interrupted fetch (cursor mid-history) or delta-updates a complete
-		// cache (cursor near newest). nil cursor => cold fetch from the
-		// beginning. An explicit --since overrides the cursor for this run.
-		switch {
-		case issueSince != nil && !completeAtStart:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Resuming issues from %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
-		case issueSince != nil && opts.Since != nil:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Fetching issues created or updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
-		case issueSince != nil:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Fetching issues updated since %s for %s/%s...", issueSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
-		default:
-			notify(FetchEvent{Phase: "issues", Kind: "start", Cached: cachedIssues, Message: fmt.Sprintf("Caching issues for %s/%s...", repo.Owner, repo.Name)})
+	if opts.Force {
+		if opts.FetchIssues {
+			if _, err := store.DeleteType(repo.Host, repo.Owner, repo.Name, coverageIssues); err != nil {
+				return 0, 0, fmt.Errorf("clearing cached issues: %w", err)
+			}
+			info.IssueCursor = nil
+			info.IssuesCachedAt = time.Time{}
 		}
-		issueHandler := func(batch []*github.Issue, total int) error {
+		if opts.FetchPRs {
+			if _, err := store.DeleteType(repo.Host, repo.Owner, repo.Name, coveragePRs); err != nil {
+				return 0, 0, fmt.Errorf("clearing cached pull requests: %w", err)
+			}
+			info.PRCursor = nil
+			info.PRPageCursor = ""
+			info.PRFloor = nil
+			info.PRsCachedAt = time.Time{}
+		}
+		if opts.FetchIssues && opts.FetchPRs {
+			info.Complete = false
+			info.CachedAt = time.Time{}
+		}
+	}
+
+	if !opts.FetchIssues {
+		s.notify(FetchEvent{Kind: "notice", Message: "Skipping issues (--type prs)."})
+	}
+	if !opts.FetchPRs {
+		s.notify(FetchEvent{Kind: "notice", Message: "Skipping pull requests (--type issues)."})
+	}
+
+	cachedIssues, cachedPRs := cachedItemCounts(store, repo)
+	var err error
+	var planErrs []error
+	if s.issues, err = s.plan(coverageIssues, opts.FetchIssues, cachedIssues); err != nil {
+		planErrs = append(planErrs, err)
+		s.issues = nil
+	}
+	if s.prs, err = s.plan(coveragePRs, opts.FetchPRs, cachedPRs); err != nil {
+		planErrs = append(planErrs, err)
+		s.prs = nil
+	}
+	if s.issues == nil && s.prs == nil {
+		return fail(errors.Join(planErrs...))
+	}
+
+	for _, p := range []*coveragePortion{s.issues, s.prs} {
+		if p == nil {
+			continue
+		}
+		s.notify(FetchEvent{Phase: p.kind, Kind: "start", Cached: p.cached, CacheTotal: p.cacheTotal, Message: s.startMessage(p)})
+	}
+
+	var works []coverageWork
+	n := 0
+	if s.issues != nil {
+		n = len(s.issues.planned)
+	}
+	if s.prs != nil && len(s.prs.planned) > n {
+		n = len(s.prs.planned)
+	}
+	for i := 0; i < n; i++ {
+		if s.issues != nil && i < len(s.issues.planned) {
+			works = append(works, coverageWork{portion: s.issues, segment: s.issues.planned[i]})
+		}
+		if s.prs != nil && i < len(s.prs.planned) {
+			works = append(works, coverageWork{portion: s.prs, segment: s.prs.planned[i]})
+		}
+	}
+	if err := s.runWorks(works); err != nil {
+		return fail(err)
+	}
+
+	// Catch-up: anything updated while the planned segments ran has an
+	// updatedAt after s.now, so a tail from s.now to the new head covers it.
+	tail, err := s.tailWorks()
+	if err != nil {
+		return fail(err)
+	}
+	if err := s.runWorks(tail); err != nil {
+		return fail(err)
+	}
+
+	for _, p := range []*coveragePortion{s.issues, s.prs} {
+		if p == nil {
+			continue
+		}
+		if p.done.Load() == 0 {
+			s.notify(FetchEvent{Phase: p.kind, Kind: "batch", Done: 0, Total: 0, Cached: p.cached, CacheTotal: p.cacheTotal})
+		}
+		s.notify(FetchEvent{Phase: p.kind, Kind: "done", Done: int(p.done.Load())})
+	}
+
+	if err := s.finalize(); err != nil {
+		return fail(err)
+	}
+	issues, prs := s.counts()
+	return issues, prs, errors.Join(planErrs...)
+}
+
+// plan loads coverage for one kind, seeds it from the legacy cursors when it is
+// empty, and computes the gaps up to the run's head.
+func (s *coverageSyncer) plan(kind string, enabled bool, cached int) (*coveragePortion, error) {
+	if !enabled {
+		return nil, nil
+	}
+	p := &coveragePortion{kind: kind, cached: cached}
+	segments, err := s.store.LoadSegments(s.repo.Host, s.repo.Owner, s.repo.Name, kind)
+	if err != nil {
+		return nil, fmt.Errorf("loading %s coverage: %w", kindLabel(kind), err)
+	}
+	p.segments = segments
+	if err := s.seedLegacy(p); err != nil {
+		return nil, err
+	}
+
+	var start time.Time
+	if s.opts.Since != nil {
+		start = *s.opts.Since
+	}
+	if start.IsZero() && len(p.segments) > 0 {
+		start = p.segments[0].Start
+	}
+	if start.IsZero() {
+		oldest, err := s.oldestStart(kind)
+		if err != nil {
+			return nil, fmt.Errorf("finding the oldest %s: %w", kindLabel(kind), err)
+		}
+		start = oldest
+	}
+	if start.IsZero() {
+		start = s.now
+	}
+	if start.After(s.now) {
+		start = s.now
+	}
+	p.targetStart = start.UTC().Truncate(time.Second)
+	p.gaps = cache.Uncovered(p.segments, p.targetStart, s.now)
+	chunkSize := s.chunkSize(p.gaps, kind)
+	p.planned = cache.Chunk(p.gaps, chunkSize)
+	planAttrs := []any{
+		"kind", kindLabel(kind),
+		"target_start", p.targetStart.Format(time.RFC3339),
+		"head", s.now.Format(time.RFC3339),
+		"gaps", len(p.gaps),
+		"segment_size", chunkSize,
+		"segments", len(p.planned),
+		"workers", s.workers,
+	}
+	if kind == coveragePRs {
+		prSlots := s.workers
+		if prSlots > maxPRFullPages {
+			prSlots = maxPRFullPages
+		}
+		planAttrs = append(planAttrs, "pr_slots", prSlots)
+	}
+	if len(p.planned) > 0 {
+		planAttrs = append(planAttrs,
+			"first_segment", p.planned[0].Start.Format(time.RFC3339),
+			"last_segment", p.planned[len(p.planned)-1].End.Format(time.RFC3339))
+	}
+	logging.Debug("coverage plan", planAttrs...)
+
+	for _, gap := range p.gaps {
+		if n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, kind, gap.Start, gap.End); err == nil {
+			p.window += n
+		} else {
+			logging.Warn("counting coverage window", "kind", kind, "error", err)
+		}
+	}
+
+	if kind == coverageIssues {
+		if n, err := s.client.CountIssues(s.repo.Owner, s.repo.Name); err == nil {
+			p.cacheTotal = n
+		}
+	} else {
+		if n, err := s.client.CountPRs(s.repo.Owner, s.repo.Name); err == nil {
+			p.cacheTotal = n
+		}
+	}
+	return p, nil
+}
+
+// seedLegacy converts the old cursor model into an initial covered segment. An
+// ascending walk from the beginning covers everything up to its frontier, so
+// the seeded interval never over-claims.
+func (s *coverageSyncer) seedLegacy(p *coveragePortion) error {
+	if len(p.segments) > 0 {
+		return nil
+	}
+	start := epochTime()
+	end := time.Time{}
+	if p.kind == coverageIssues {
+		if s.info.IssueCursor == nil {
+			return nil
+		}
+		end = *s.info.IssueCursor
+	} else {
+		if s.info.PRCursor == nil {
+			return nil
+		}
+		if s.info.PRPageCursor == "" && !s.info.Complete {
+			return nil
+		}
+		if s.info.PRFloor != nil {
+			start = *s.info.PRFloor
+		}
+		end = *s.info.PRCursor
+	}
+	if end.After(s.now) {
+		end = s.now
+	}
+	if !end.After(start) {
+		return nil
+	}
+	seg := cache.Segment{Start: start.UTC().Truncate(time.Second), End: end.UTC().Truncate(time.Second)}
+	if err := s.store.SaveSegments(s.repo.Host, s.repo.Owner, s.repo.Name, p.kind, []cache.Segment{seg}); err != nil {
+		return fmt.Errorf("seeding %s coverage: %w", kindLabel(p.kind), err)
+	}
+	p.segments = []cache.Segment{seg}
+	return nil
+}
+
+func (s *coverageSyncer) oldestStart(kind string) (time.Time, error) {
+	if kind == coverageIssues {
+		return s.client.OldestIssueUpdatedAt(s.repo.Owner, s.repo.Name)
+	}
+	return s.client.OldestPRUpdatedAt(s.repo.Owner, s.repo.Name)
+}
+
+func epochTime() time.Time {
+	return time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
+}
+
+func kindLabel(kind string) string {
+	if kind == coveragePRs {
+		return "pull requests"
+	}
+	return "issues"
+}
+
+const (
+	minCoverageChunk = 15 * time.Minute
+	maxCoverageChunk = 7 * 24 * time.Hour
+
+	// Full PR pages are heavy enough that GitHub's secondary limits punish
+	// wide concurrency. Two in flight is the setting the old windowed fetch
+	// settled on; four still tripped 403s on a multi-day window in testing.
+	maxPRFullPages = 2
+)
+
+// chunkSize picks a segment width from the uncovered duration. Issues target
+// four chunks per worker; full PR pages target two chunks per effective PR
+// slot, since they cannot run more than maxPRFullPages at once.
+func (s *coverageSyncer) chunkSize(gaps []cache.Segment, kind string) time.Duration {
+	var total time.Duration
+	for _, gap := range gaps {
+		total += gap.End.Sub(gap.Start)
+	}
+	if total <= 0 {
+		return 0
+	}
+	perWorker := 4
+	effective := s.workers
+	if kind == coveragePRs {
+		// Full PR pages are capped at maxPRFullPages, so targeting more
+		// segments than those slots can consume only adds cursor requests.
+		if effective > maxPRFullPages {
+			effective = maxPRFullPages
+		}
+		perWorker = 2
+	}
+	size := total / time.Duration(effective*perWorker)
+	if size < minCoverageChunk {
+		size = minCoverageChunk
+	}
+	if size > maxCoverageChunk {
+		size = maxCoverageChunk
+	}
+	return size
+}
+
+func (s *coverageSyncer) startMessage(p *coveragePortion) string {
+	label := "issues"
+	if p.kind == coveragePRs {
+		label = "pull requests"
+	}
+	name := s.repo.Owner + "/" + s.repo.Name
+	if s.opts.Since != nil {
+		if p.kind == coverageIssues {
+			return fmt.Sprintf("Fetching issues created or updated since %s for %s...", s.opts.Since.Format("2006-01-02 15:04"), name)
+		}
+		return fmt.Sprintf("Fetching pull requests updated since %s for %s...", s.opts.Since.Format("2006-01-02 15:04"), name)
+	}
+	if len(p.gaps) > 0 && !p.gaps[0].Start.Equal(p.targetStart) {
+		return fmt.Sprintf("Fetching %s updated since %s for %s...", label, p.gaps[0].Start.Format("2006-01-02 15:04"), name)
+	}
+	return fmt.Sprintf("Caching %s for %s...", label, name)
+}
+
+func (s *coverageSyncer) runWorks(works []coverageWork) error {
+	if len(works) == 0 {
+		return nil
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+	recordErr := func(err error) {
+		if err == nil {
+			return
+		}
+		mu.Lock()
+		errs = append(errs, err)
+		mu.Unlock()
+	}
+	for _, w := range works {
+		w := w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := s.process(w); err != nil {
+				recordErr(fmt.Errorf("%s %s: %w", w.portion.kind, w.segment.Start.Format(time.RFC3339), err))
+				return
+			}
+			if err := s.mark(w); err != nil {
+				recordErr(err)
+			}
+		}()
+	}
+	wg.Wait()
+	return errors.Join(errs...)
+}
+
+func (s *coverageSyncer) process(w coverageWork) error {
+	p := w.portion
+	// Acquire the kind-specific slot before the shared worker slot, so a
+	// queued PR segment does not hold a worker slot that an issue could use.
+	if p.kind == coveragePRs {
+		s.prSem <- struct{}{}
+		s.sem <- struct{}{}
+		defer func() {
+			<-s.sem
+			<-s.prSem
+		}()
+	} else {
+		s.sem <- struct{}{}
+		defer func() { <-s.sem }()
+	}
+
+	if p.kind == coverageIssues {
+		since := w.segment.Start
+		until := w.segment.End
+		_, err := s.client.FetchIssuesUntil(s.repo.Owner, s.repo.Name, &since, &until, func(batch []*github.Issue, _ int) error {
 			for _, issue := range batch {
-				if err := store.SaveIssue(repo.Host, repo.Owner, repo.Name, issue); err != nil {
+				if err := s.store.SaveIssue(s.repo.Host, s.repo.Owner, s.repo.Name, issue); err != nil {
 					return fmt.Errorf("saving issue #%d: %w", issue.Number, err)
 				}
-				advance(&info.IssueCursor, issue.UpdatedAt)
+				s.advance(&s.info.IssueCursor, issue.UpdatedAt)
 			}
-			issueCount += len(batch)
-			notify(FetchEvent{Phase: "issues", Kind: "batch", Done: issueCount, Total: total})
-			return saveInfo() // persist resume cursor after each page
+			if len(batch) == 0 {
+				return nil
+			}
+			n := p.done.Add(int64(len(batch)))
+			s.notify(FetchEvent{Phase: p.kind, Kind: "batch", Done: int(n), Total: p.window, Cached: p.cached, CacheTotal: p.cacheTotal})
+			return nil
+		})
+		return err
+	}
+
+	cursor := github.PRCursorAt(w.segment.Start)
+	return s.client.WalkPRsAscUntil(s.repo.Owner, s.repo.Name, cursor, w.segment.End, func(batch []*github.PullRequest, _ int, _ string, _ bool) error {
+		for _, pr := range batch {
+			if err := s.store.SavePR(s.repo.Host, s.repo.Owner, s.repo.Name, pr); err != nil {
+				return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
+			}
+			s.advance(&s.info.PRCursor, pr.UpdatedAt)
 		}
-		if _, err := client.FetchAllIssues(repo.Owner, repo.Name, issueSince, issueHandler); err != nil {
-			notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
-			return fmt.Errorf("fetching issues: %w", err)
+		if len(batch) == 0 {
+			return nil
 		}
-		notify(FetchEvent{Phase: "issues", Kind: "done", Done: issueCount})
+		n := p.done.Add(int64(len(batch)))
+		s.notify(FetchEvent{Phase: p.kind, Kind: "batch", Done: int(n), Total: p.window, Cached: p.cached, CacheTotal: p.cacheTotal})
 		return nil
-	}
-
-	fetchPRs := func() error {
-		// The pullRequests connection has no server-side date filter, so the
-		// delta/resume/since fetch walks the connection newest-first and stops
-		// at the cutoff (exact timestamps, fetched with the same stable API as
-		// the cold path).
-		prHandler := func(batch []*github.PullRequest, total int) error {
-			for _, pr := range batch {
-				if err := store.SavePR(repo.Host, repo.Owner, repo.Name, pr); err != nil {
-					return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
-				}
-				advance(&info.PRCursor, pr.UpdatedAt)
-			}
-			prCount += len(batch)
-			notify(FetchEvent{Phase: "prs", Kind: "batch", Done: prCount, Total: total})
-			return saveInfo()
-		}
-		if prCold {
-			notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Caching pull requests for %s/%s...", repo.Owner, repo.Name)})
-			if _, err := client.FetchAllPRs(repo.Owner, repo.Name, prHandler); err != nil {
-				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
-				return fmt.Errorf("fetching pull requests: %w", err)
-			}
-		} else {
-			// Both delta/resume (cursor) and an explicit --since use the same
-			// newest-first connection walk with an exact-timestamp cutoff.
-			if opts.Since != nil {
-				notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Fetching pull requests created or updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
-			} else {
-				notify(FetchEvent{Phase: "prs", Kind: "start", Cached: cachedPRs, Message: fmt.Sprintf("Fetching pull requests updated since %s for %s/%s...", prSince.Format("2006-01-02 15:04"), repo.Owner, repo.Name)})
-			}
-			// Phase 1 (locating the window) gets its own spinner bar so
-			// users see progress before full pages start arriving.
-			if _, err := client.FetchPRsUpdated(repo.Owner, repo.Name, *prSince, prHandler, func(scanned int) {
-				notify(FetchEvent{Phase: "prs-scan", Kind: "batch", Done: scanned})
-			}); err != nil {
-				notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
-				notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
-				return fmt.Errorf("fetching pull requests: %w", err)
-			}
-			notify(FetchEvent{Phase: "prs-scan", Kind: "done"})
-		}
-		notify(FetchEvent{Phase: "prs", Kind: "done", Done: prCount})
-		return nil
-	}
-
-	switch {
-	case opts.FetchIssues && opts.FetchPRs:
-		var wg sync.WaitGroup
-		var issueErr, prErr error
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			issueErr = fetchIssues()
-		}()
-		go func() {
-			defer wg.Done()
-			prErr = fetchPRs()
-		}()
-		wg.Wait()
-		if err := errors.Join(issueErr, prErr); err != nil {
-			return issueCount, prCount, err
-		}
-	case opts.FetchIssues:
-		if err := fetchIssues(); err != nil {
-			return issueCount, prCount, err
-		}
-	case opts.FetchPRs:
-		if err := fetchPRs(); err != nil {
-			return issueCount, prCount, err
-		}
-	}
-
-	return finalizeFetch(store, repo, info, opts, issueCount, prCount)
+	})
 }
 
-// finalizeFetch records freshness per data type and persists the final cache
-// info. A partial run only resets the window of the portion it fetched;
-// CachedAt is advanced only when both portions were fetched, so full runs keep
-// the legacy single-timestamp behavior.
-func finalizeFetch(store cache.Store, repo *gitremote.Repo, info *cache.CacheInfo, opts FetchOptions, issueCount, prCount int) (int, int, error) {
+func (s *coverageSyncer) mark(w coverageWork) error {
+	s.coverageMu.Lock()
+	defer s.coverageMu.Unlock()
+	if err := s.store.SaveSegments(s.repo.Host, s.repo.Owner, s.repo.Name, w.portion.kind, []cache.Segment{w.segment}); err != nil {
+		return fmt.Errorf("recording %s coverage: %w", w.portion.kind, err)
+	}
+	return nil
+}
+
+// tailWorks builds the catch-up segments between the run's head and the head
+// observed now. Every item updated during the planned pass falls in this range.
+func (s *coverageSyncer) tailWorks() ([]coverageWork, error) {
+	tailEnd := time.Now().UTC().Truncate(time.Second)
+	if !tailEnd.After(s.now) {
+		return nil, nil
+	}
+	var works []coverageWork
+	for _, p := range []*coveragePortion{s.issues, s.prs} {
+		if p == nil {
+			continue
+		}
+		segments, err := s.store.LoadSegments(s.repo.Host, s.repo.Owner, s.repo.Name, p.kind)
+		if err != nil {
+			return nil, fmt.Errorf("loading %s coverage for catch-up: %w", p.kind, err)
+		}
+		p.segments = segments
+		gaps := cache.Uncovered(segments, s.now, tailEnd)
+		for _, gap := range gaps {
+			if n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, p.kind, gap.Start, gap.End); err == nil {
+				p.window += n
+			}
+		}
+		planned := cache.Chunk(gaps, s.chunkSize(gaps, p.kind))
+		logging.Debug("coverage catch-up", "kind", kindLabel(p.kind),
+			"from", s.now.Format(time.RFC3339), "to", tailEnd.Format(time.RFC3339),
+			"gaps", len(gaps), "segments", len(planned))
+		for _, seg := range planned {
+			works = append(works, coverageWork{portion: p, segment: seg})
+		}
+	}
+	return works, nil
+}
+
+func (s *coverageSyncer) advance(cur **time.Time, t time.Time) {
+	s.infoMu.Lock()
+	defer s.infoMu.Unlock()
+	advanceCursor(cur, t)
+}
+
+func (s *coverageSyncer) counts() (int, int) {
+	issues, prs := 0, 0
+	if s.issues != nil {
+		issues = int(s.issues.done.Load())
+	}
+	if s.prs != nil {
+		prs = int(s.prs.done.Load())
+	}
+	return issues, prs
+}
+
+func (s *coverageSyncer) finalize() error {
 	now := time.Now()
-	if opts.FetchIssues {
-		info.IssuesCachedAt = now
+	if s.issues != nil {
+		s.info.IssuesCachedAt = now
 	}
-	if opts.FetchPRs {
-		info.PRsCachedAt = now
+	if s.prs != nil {
+		s.info.PRsCachedAt = now
 	}
-	if opts.FetchIssues && opts.FetchPRs {
-		info.CachedAt = now
-		info.Complete = true
+	if s.issues != nil && s.prs != nil {
+		s.info.CachedAt = now
+		s.info.Complete = true
 	}
-	if opts.Duration > 0 {
-		info.Duration = opts.Duration
+	if s.opts.Duration > 0 {
+		s.info.Duration = s.opts.Duration
 	}
-	if err := store.SaveCacheInfoFull(repo.Host, repo.Owner, repo.Name, info); err != nil {
-		return issueCount, prCount, fmt.Errorf("saving cache info: %w", err)
+	s.info.PRPageCursor = ""
+	if s.prs != nil {
+		segments, err := s.store.LoadSegments(s.repo.Host, s.repo.Owner, s.repo.Name, coveragePRs)
+		if err != nil {
+			return fmt.Errorf("loading pull request coverage: %w", err)
+		}
+		if len(segments) > 0 {
+			floor := segments[0].Start
+			s.info.PRFloor = &floor
+		}
 	}
-	return issueCount, prCount, nil
+	if err := s.store.SaveCacheInfoFull(s.repo.Host, s.repo.Owner, s.repo.Name, s.info); err != nil {
+		return fmt.Errorf("saving cache info: %w", err)
+	}
+	return nil
 }
 
-// cachedItemCounts reports how many issues and pull requests are already cached
-// for repo, so progress rows can show the cache growing from what it holds
 // instead of from zero. A repository with nothing cached reports zeros.
 func cachedItemCounts(store cache.Store, repo *gitremote.Repo) (issues, prs int) {
 	repos, err := store.ListCachedRepos()

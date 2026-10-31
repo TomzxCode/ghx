@@ -209,7 +209,8 @@ func TestSQLiteRoundTripMatchesFile(t *testing.T) {
 
 	// Cache metadata round-trips.
 	cursor := utc(2024, 7, 8, 9, 10)
-	info := &CacheInfo{CachedAt: utc(2024, 7, 8, 9, 10), Duration: 60, Complete: true, IssueCursor: &cursor}
+	floor := utc(2024, 7, 1, 0, 0)
+	info := &CacheInfo{CachedAt: utc(2024, 7, 8, 9, 10), Duration: 60, Complete: true, IssueCursor: &cursor, PRPageCursor: "cursor-abc", PRFloor: &floor}
 	if err := file.SaveCacheInfoFull(host, owner, repo, info); err != nil {
 		t.Fatalf("file SaveCacheInfoFull: %v", err)
 	}
@@ -428,8 +429,15 @@ func TestSQLiteListCachedRepos(t *testing.T) {
 	if err := sq.SavePR(qHost, "acme", "alpha", richPR(10)); err != nil {
 		t.Fatalf("SavePR alpha: %v", err)
 	}
-	if err := sq.SaveCacheInfo(qHost, "acme", "alpha", 60); err != nil {
-		t.Fatalf("SaveCacheInfo alpha: %v", err)
+	alphaFloor := time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC)
+	if err := sq.SaveCacheInfoFull(qHost, "acme", "alpha", &CacheInfo{
+		CachedAt:     time.Now(),
+		Duration:     60,
+		Complete:     true,
+		PRPageCursor: "cursor-alpha",
+		PRFloor:      &alphaFloor,
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull alpha: %v", err)
 	}
 	// Repo B: rows only, no cache metadata.
 	if err := sq.SaveIssue(qHost, "acme", "beta", richIssue(3)); err != nil {
@@ -456,6 +464,12 @@ func TestSQLiteListCachedRepos(t *testing.T) {
 	}
 	if alpha.Info == nil || !alpha.Info.Complete {
 		t.Errorf("alpha info = %+v, want complete", alpha.Info)
+	}
+	if alpha.Info == nil || alpha.Info.PRPageCursor != "cursor-alpha" {
+		t.Errorf("alpha page cursor = %+v, want %q", alpha.Info, "cursor-alpha")
+	}
+	if alpha.Info == nil || alpha.Info.PRFloor == nil || !alpha.Info.PRFloor.Equal(alphaFloor) {
+		t.Errorf("alpha floor = %+v, want %v", alpha.Info, alphaFloor)
 	}
 	beta, ok := byRepo["beta"]
 	if !ok {

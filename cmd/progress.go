@@ -25,8 +25,8 @@ const (
 	// the width of the longest label.
 	progressLabelWidth = len("pull requests")
 	// progressStateWidth pads state words to the longest one, so a row's bar
-	// starts at the same column whether it says "caching" or "scanning".
-	progressStateWidth = len("scanning")
+	// starts at the same column in every state.
+	progressStateWidth = len("starting")
 )
 
 // progressWriter returns os.Stderr when it is a terminal device, otherwise
@@ -71,12 +71,13 @@ type multiProgress struct {
 // cached plus the items this run fetches, so a refresh starts part filled
 // instead of at zero.
 type portionBar struct {
-	cached   int       // items already in the cache when the run started
-	done     int       // items cached so far this run
-	total    int       // 0 while unknown, -1 for nothing to fetch, else items to fetch
-	scanned  int       // items walked by the prs-scan phase
-	started  time.Time // when the current state began, for rate and elapsed
-	finished bool      // keeps its row until the last portion ends
+	cached     int       // items already in the cache when the run started
+	cacheTotal int       // total items of this type in the repository (0 unknown)
+	done       int       // items cached so far this run
+	total      int       // items this run expects to fetch: 0 unknown, -1 nothing to fetch
+	started    time.Time // when the current state began, for rate and elapsed
+	finished   bool      // keeps its row until the last portion ends
+	finishedAt time.Time // when the portion finished, so its clock stops
 }
 
 // newMultiProgress creates the stacked renderer for the given phases. It
@@ -102,37 +103,31 @@ func newMultiProgress(client *github.Client, phases []string) *multiProgress {
 
 func (p *multiProgress) handle(ev FetchEvent) {
 	switch ev.Kind {
+	case "notice":
+		p.println(ev.Message)
 	case "start":
-		p.stateStarted(ev.Phase, ev.Cached)
+		p.stateStarted(ev.Phase, ev.Cached, ev.CacheTotal)
 		if ev.Message != "" {
 			p.println(ev.Message)
 		}
 	case "batch":
-		// The newest-first walk that locates the delta window reports how many
-		// pull requests it has scanned, not how many it will fetch, so it gets
-		// a different kind of row (see scanRow).
-		if ev.Phase == "prs-scan" {
-			p.scan(ev.Done)
-			return
-		}
-		p.record(ev.Phase, ev.Done, ev.Total)
+		p.record(ev.Phase, ev.Done, ev.Total, ev.CacheTotal)
 	case "done":
-		if ev.Phase == "prs-scan" {
-			return
-		}
 		p.finish(ev.Phase, ev.Done)
 	}
 }
 
 // stateStarted opens a portion's current state: it records how much is already
-// cached and restarts the clock, so the caching rate and ETA do not include the
-// time the delta window walk spent scanning.
-func (p *multiProgress) stateStarted(phase string, cached int) {
+// cached and restarts the clock, so the caching rate and ETA describe this run.
+func (p *multiProgress) stateStarted(phase string, cached, cacheTotal int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pb := p.portionLocked(phase)
 	pb.started = time.Now()
 	pb.cached = cached
+	if cacheTotal > 0 {
+		pb.cacheTotal = cacheTotal
+	}
 }
 
 // portionLocked returns a portion's row, adding it to the stack if the phase
@@ -153,30 +148,23 @@ func (p *multiProgress) newPortion(phase string) *portionBar {
 	return &portionBar{started: time.Now()}
 }
 
-// scan records how many pull requests the delta window walk has looked at, so
-// the pull request row can show the walk as a bar whose total keeps growing.
-func (p *multiProgress) scan(scanned int) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	pb := p.portionLocked("prs")
-	pb.scanned = scanned
-	p.repaint()
-}
-
 // record updates one portion's counters once a page lands. The bar adopts the
 // server-reported fetch total, or the portion is marked as having nothing to
 // fetch when that total is zero.
-func (p *multiProgress) record(phase string, done, total int) {
+func (p *multiProgress) record(phase string, done, total, cacheTotal int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pb := p.portionLocked(phase)
 	if pb.finished {
 		return
 	}
+	if cacheTotal > 0 {
+		pb.cacheTotal = cacheTotal
+	}
 	switch {
 	case total > 0:
 		pb.total = total
-	case pb.total == 0:
+	case done == 0 && pb.total == 0:
 		pb.total = -1
 	}
 	pb.done = done
@@ -191,6 +179,7 @@ func (p *multiProgress) finish(phase string, count int) {
 	defer p.mu.Unlock()
 	pb := p.portionLocked(phase)
 	pb.finished = true
+	pb.finishedAt = time.Now()
 	p.active--
 	last := p.active <= 0
 	p.clear()
@@ -241,84 +230,107 @@ func (p *multiProgress) row(phase string) string {
 		return ""
 	}
 	switch {
-	case pb.total < 0 || (pb.finished && pb.total == 0):
+	case pb.total < 0 || (pb.finished && pb.total == 0 && pb.done == 0):
 		return p.cachingRow(phase, pb, true)
-	case pb.total > 0:
+	case pb.total > 0 || pb.done > 0:
 		return p.cachingRow(phase, pb, false)
-	case pb.scanned > 0:
-		return p.scanRow(phase, pb)
 	default:
 		return p.startingRow(phase, pb)
 	}
 }
 
 // startingRow renders a portion's row before its first page: an empty bar with
-// zero of zero items, plus how much is already cached.
+// zero updated so far, plus how much is already cached out of the repository
+// total.
 func (p *multiProgress) startingRow(phase string, pb *portionBar) string {
-	stats := "0/0"
-	if pb.cached > 0 {
+	stats := "0/0 updated"
+	switch {
+	case pb.cacheTotal > 0:
+		stats += fmt.Sprintf(", %d/%d cached", pb.cached, pb.cacheTotal)
+	case pb.cached > 0:
 		stats += fmt.Sprintf(", %d cached", pb.cached)
 	}
 	return fmt.Sprintf("%s%4d%% |%s| (%s)",
 		p.stateLabel(phase, "starting"), 0, progressCells(0), stats)
 }
 
-// cachingRow renders a portion that is counting items into the cache. The
-// counts run from what is already cached to what the cache will hold at the
-// end, and upToDate marks a portion with nothing left to fetch.
+// cachingRow renders a portion counting the items fetched by this run. The bar
+// and ETA describe the current update, while the trailing figures keep the
+// cache's overall fill visible: "done/window updated, cached/cache total
+// cached". A zero window means the update has no known size yet; the row then
+// shows motion and rate without a percentage.
 func (p *multiProgress) cachingRow(phase string, pb *portionBar, upToDate bool) string {
-	toFetch := pb.total
-	if toFetch < 0 {
-		toFetch = 0
+	window := pb.total
+	if window < 0 {
+		window = 0
 	}
-	total := pb.cached + toFetch
-	done := pb.cached + pb.done
-	percent := 100
-	if total > 0 {
-		percent = done * 100 / total
+	// The search count used to size a seeded walk can lag the live connection
+	// by a few items. Let the denominator grow rather than showing 148/147.
+	if pb.done > window {
+		window = pb.done
 	}
-	if percent > 100 {
+	percent := 0
+	if upToDate {
+		percent = 100
+	} else if window > 0 {
+		percent = pb.done * 100 / window
+		if percent > 100 {
+			percent = 100
+		}
+	} else if pb.done > 0 {
 		percent = 100
 	}
 
+	cacheTotal := pb.cacheTotal
+	if cacheTotal <= 0 {
+		cacheTotal = pb.cached + window
+	}
+	cacheDone := pb.cached + pb.done
+	if cacheDone > cacheTotal {
+		cacheDone = cacheTotal
+	}
+
 	desc := p.stateLabel(phase, "caching")
-	stats := fmt.Sprintf("%d/%d", done, total)
-	if upToDate {
-		return fmt.Sprintf("%s%4d%% |%s| (%s, up to date)",
-			desc, percent, progressCells(percent), stats)
+	var stats string
+	switch {
+	case upToDate:
+		stats = fmt.Sprintf("0/0 updated, %d/%d cached, up to date", cacheDone, cacheTotal)
+	case window > 0:
+		stats = fmt.Sprintf("%d/%d updated, %d/%d cached", pb.done, window, cacheDone, cacheTotal)
+	default:
+		stats = fmt.Sprintf("%d updated, %d/%d cached", pb.done, cacheDone, cacheTotal)
 	}
 
 	since := time.Since(pb.started)
+	if pb.finished && !pb.finishedAt.IsZero() {
+		// A finished portion keeps its row while the other one runs, but its
+		// clock must not keep ticking.
+		since = pb.finishedAt.Sub(pb.started)
+	}
 	elapsed := since.Round(time.Second)
+	if upToDate {
+		return fmt.Sprintf("%s%4d%% |%s| (%s)", desc, percent, progressCells(percent), stats)
+	}
 	if pb.done <= 0 || since <= 0 {
-		return fmt.Sprintf("%s%4d%% |%s| (%s) [%s]",
-			desc, percent, progressCells(percent), stats, elapsed)
+		return fmt.Sprintf("%s%4d%% |%s| (%s) [%s]", desc, percent, progressCells(percent), stats, elapsed)
 	}
 
 	rate := float64(pb.done) / since.Seconds()
 	stats += ", " + itemRate(rate)
-	remaining := total - done
+	if window <= 0 {
+		return fmt.Sprintf("%s%4d%% |%s| (%s) [%s]",
+			desc, percent, progressCells(percent), stats, elapsed)
+	}
+	remaining := window - pb.done
 	if remaining < 0 {
 		remaining = 0
 	}
 	left := time.Duration(float64(remaining) / rate * float64(time.Second)).Round(time.Second)
+	if pb.finished {
+		left = 0
+	}
 	return fmt.Sprintf("%s%4d%% |%s| (%s) [%s:%s]",
 		desc, percent, progressCells(percent), stats, elapsed, left)
-}
-
-// scanRow renders the pull request row while the delta window walk runs. The
-// walk has no total to count against, so the bar stays full and its total grows
-// with the number of items scanned: the row shows motion and rate, not
-// completion.
-func (p *multiProgress) scanRow(phase string, pb *portionBar) string {
-	since := time.Since(pb.started)
-	stats := fmt.Sprintf("%d/%d", pb.scanned, pb.scanned)
-	if since >= time.Second {
-		stats += ", " + itemRate(float64(pb.scanned)/since.Seconds())
-	}
-	return fmt.Sprintf("%s%4d%% |%s| (%s) [%s]",
-		p.stateLabel(phase, "scanning"), 100, progressCells(100), stats,
-		since.Round(time.Second))
 }
 
 // progressCells renders the bar cells between its two borders for a percentage.

@@ -80,7 +80,24 @@ CREATE TABLE IF NOT EXISTS cache_meta (
     complete         INTEGER NOT NULL,
     issue_cursor     TEXT,
     pr_cursor        TEXT,
+    pr_page_cursor   TEXT,
+    pr_floor         TEXT,
     issues_cached_at TEXT,
     prs_cached_at    TEXT,
     PRIMARY KEY (host, owner, repo)
 );
+
+-- Half-open updatedAt ranges the cache has covered per data kind. Adjacent
+-- segments are merged as they are recorded.
+CREATE TABLE IF NOT EXISTS coverage_segments (
+    host       TEXT NOT NULL,
+    owner      TEXT NOT NULL,
+    repo       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    start_at   TEXT NOT NULL,
+    end_at     TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (host, owner, repo, kind, start_at)
+);
+CREATE INDEX IF NOT EXISTS idx_coverage_segments_kind
+    ON coverage_segments(host, owner, repo, kind, start_at);

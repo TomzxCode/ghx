@@ -166,3 +166,27 @@ func (s *normalizeStore) Close() error { return s.store.Close() }
 
 // Ensure normalizeStore satisfies Store at compile time.
 var _ Store = (*normalizeStore)(nil)
+
+// SaveSegments stores coverage under the normalized repository key.
+func (s *normalizeStore) SaveSegments(host, owner, repo, kind string, segments []Segment) error {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.SaveSegments(host, owner, repo, kind, segments)
+}
+
+// LoadSegments reads coverage under the normalized repository key.
+func (s *normalizeStore) LoadSegments(host, owner, repo, kind string) ([]Segment, error) {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.LoadSegments(host, owner, repo, kind)
+}
+
+// DeleteSegments clears coverage under the normalized repository key.
+func (s *normalizeStore) DeleteSegments(host, owner, repo, kind string) error {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.DeleteSegments(host, owner, repo, kind)
+}
+
+// DeleteType removes one kind under the normalized repository key.
+func (s *normalizeStore) DeleteType(host, owner, repo, kind string) (int, error) {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.DeleteType(host, owner, repo, kind)
+}

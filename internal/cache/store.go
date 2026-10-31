@@ -14,7 +14,20 @@ type CacheInfo struct {
 	Duration    int        `json:"duration"`              // minutes
 	Complete    bool       `json:"complete,omitempty"`    // last full fetch reached the newest item
 	IssueCursor *time.Time `json:"issueCursor,omitempty"` // max updatedAt written for issues (resume point)
-	PRCursor    *time.Time `json:"prCursor,omitempty"`    // max updatedAt written for PRs (resume point)
+	PRCursor    *time.Time `json:"prCursor,omitempty"`    // max updatedAt written for PRs (frontier)
+
+	// PRPageCursor is the GraphQL endCursor of the last fully written page of
+	// the ascending pull request walk. The pullRequests connection has no
+	// server-side date filter, so this page cursor is the resume position: an
+	// interrupted backfill continues from it, and a completed cache reads only
+	// the pages after it on later runs.
+	PRPageCursor string `json:"prPageCursor,omitempty"`
+
+	// PRFloor is the oldest updatedAt the pull request cache promises to cover.
+	// It is set when a walk starts at a requested date (--since) instead of the
+	// beginning of the repository's history. Nil means coverage is unbounded
+	// below.
+	PRFloor *time.Time `json:"prFloor,omitempty"`
 
 	// IssuesCachedAt and PRsCachedAt record when each data type was last
 	// refreshed. A partial run (--type issues|prs) updates only the type it
@@ -125,6 +138,17 @@ type Store interface {
 	// repository. It reports whether anything was deleted, so callers can
 	// distinguish "removed" from "nothing cached" without a prior read.
 	DeleteRepo(host, owner, repo string) (bool, error)
+
+	// DeleteType removes every cached item of one kind ("issues" or "prs") and
+	// its coverage. It reports how many item rows were deleted.
+	DeleteType(host, owner, repo, kind string) (int, error)
+	// SaveSegments records covered half-open updatedAt ranges for one kind
+	// ("issues" or "prs"), merging them with the existing coverage.
+	SaveSegments(host, owner, repo, kind string, segments []Segment) error
+	// LoadSegments returns the merged coverage segments for one kind.
+	LoadSegments(host, owner, repo, kind string) ([]Segment, error)
+	// DeleteSegments clears the coverage for one kind.
+	DeleteSegments(host, owner, repo, kind string) error
 
 	// QueryIssues returns the cached issues matching q. Backends may push the
 	// scalar predicates to indexed storage, but the returned set is identical
