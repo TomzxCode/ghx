@@ -346,6 +346,40 @@ func TestPRView_ServesItemWithinConfiguredDuration(t *testing.T) {
 	}
 }
 
+// TestPRView_ServesItemWithResumeOnlyMetadata verifies that a repository whose
+// cache metadata holds only the resume state of an interrupted fetch still
+// serves recent items from the cache. Earlier versions persisted the cursors
+// after every page but wrote the duration on completion, so an interrupted run
+// left a zero-duration record that used to disable item freshness entirely.
+func TestPRView_ServesItemWithResumeOnlyMetadata(t *testing.T) {
+	srv := mockserver.NewServer(readCacheScenario())
+	dir := t.TempDir()
+	withReadFlags(t, srv.URL(), dir)
+
+	store := cache.NewStoreWithPath(dir)
+	if err := store.SavePR("github.com", "acme", "myproject", &github.PullRequest{Number: 7, Title: "Cached PR"}); err != nil {
+		t.Fatalf("SavePR: %v", err)
+	}
+	cursor := time.Now().Add(-time.Hour)
+	if err := store.SaveCacheInfoFull("github.com", "acme", "myproject", &cache.CacheInfo{
+		PRCursor:     &cursor,
+		PRPageCursor: "Y3Vyc29yOnYyOpK5MjAyNi0xMC0wMVQwMDowMDowMFo=",
+	}); err != nil {
+		t.Fatalf("SaveCacheInfoFull: %v", err)
+	}
+	store.Close()
+	srv.Close()
+
+	out := captureStdout(t, func() {
+		if err := runPRView(nil, []string{"7"}); err != nil {
+			t.Fatalf("runPRView: %v", err)
+		}
+	})
+	if !strings.Contains(out, "Cached PR") {
+		t.Errorf("view did not serve the cached item; output:\n%s", out)
+	}
+}
+
 // TestIssueView_RefetchesItemPastConfiguredDuration verifies the other side of
 // the window: an item older than the repository's configured duration is a
 // miss and is replaced by the fresh API record.

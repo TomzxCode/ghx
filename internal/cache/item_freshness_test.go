@@ -23,10 +23,11 @@ func TestIsItemFresh(t *testing.T) {
 	const host, owner, repo = "github.com", "acme", "big"
 
 	cases := []struct {
-		name      string
-		info      *CacheInfo // nil leaves the repository without cache metadata
-		itemAge   time.Duration
-		wantFresh bool
+		name       string
+		info       *CacheInfo // nil leaves the repository without cache metadata
+		resumeOnly bool       // save info exactly as given, without a completion time
+		itemAge    time.Duration
+		wantFresh  bool
 	}{
 		{
 			name:      "no metadata uses the default window",
@@ -39,6 +40,20 @@ func TestIsItemFresh(t *testing.T) {
 			info:      nil,
 			itemAge:   DefaultItemFreshness + time.Minute,
 			wantFresh: false,
+		},
+		{
+			name:       "resume-only metadata uses the default window",
+			info:       &CacheInfo{},
+			resumeOnly: true,
+			itemAge:    DefaultItemFreshness - time.Minute,
+			wantFresh:  true,
+		},
+		{
+			name:       "resume-only metadata rejects an item past the default window",
+			info:       &CacheInfo{},
+			resumeOnly: true,
+			itemAge:    DefaultItemFreshness + time.Minute,
+			wantFresh:  false,
 		},
 		{
 			name:      "configured duration extends the window",
@@ -75,8 +90,10 @@ func TestIsItemFresh(t *testing.T) {
 
 					if tc.info != nil {
 						info := *tc.info
-						info.CachedAt = time.Now().Add(-30 * 24 * time.Hour)
-						info.Complete = true
+						if !tc.resumeOnly {
+							info.CachedAt = time.Now().Add(-30 * 24 * time.Hour)
+							info.Complete = true
+						}
 						if err := s.SaveCacheInfoFull(host, owner, repo, &info); err != nil {
 							t.Fatalf("SaveCacheInfoFull: %v", err)
 						}

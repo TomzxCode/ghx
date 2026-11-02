@@ -203,6 +203,7 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 				recordRetrievalOutcome(repo, telemetry.RetrievalIssueView, true)
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
+			logging.Debug("issue view: cached item is stale, fetching from API", "number", number, "age", time.Since(mtime))
 		}
 	}
 

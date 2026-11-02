@@ -229,6 +229,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 				recordRetrievalOutcome(repo, telemetry.RetrievalPRView, true)
 				return printPRView(pr, prViewComments, prViewJSON)
 			}
+			logging.Debug("pr view: cached item is stale, fetching from API", "number", number, "age", time.Since(mtime))
 		}
 	}
 
