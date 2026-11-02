@@ -54,6 +54,23 @@ func (i *CacheInfo) PRsUpdatedAt() time.Time {
 	return i.CachedAt
 }
 
+// IssuesFreshAt reports whether the issue portion was refreshed within the
+// recorded freshness window at now.
+func (i *CacheInfo) IssuesFreshAt(now time.Time) bool {
+	if i == nil {
+		return false
+	}
+	return now.Sub(i.IssuesUpdatedAt()) < time.Duration(i.Duration)*time.Minute
+}
+
+// PRsFreshAt is the pull-request counterpart of IssuesFreshAt.
+func (i *CacheInfo) PRsFreshAt(now time.Time) bool {
+	if i == nil {
+		return false
+	}
+	return now.Sub(i.PRsUpdatedAt()) < time.Duration(i.Duration)*time.Minute
+}
+
 // DefaultItemFreshness is the window in which a single cached issue or pull
 // request is served without a refetch when the repository has no cache
 // metadata, for example a cache populated only by view and list reads.
@@ -81,8 +98,19 @@ func (i *CacheInfo) hasPolicy() bool {
 // duration recorded as a policy (the cache is never fresh) makes every item
 // stale.
 func IsItemFresh(store Store, host, owner, repo string, cachedAt time.Time) bool {
+	info, err := store.LoadCacheInfo(host, owner, repo)
+	if err != nil {
+		info = nil
+	}
+	return IsItemFreshAt(info, cachedAt)
+}
+
+// IsItemFreshAt is IsItemFresh for a caller that already loaded the
+// repository's metadata, so one read can answer both the whole-cache and
+// per-item checks.
+func IsItemFreshAt(info *CacheInfo, cachedAt time.Time) bool {
 	window := DefaultItemFreshness
-	if info, err := store.LoadCacheInfo(host, owner, repo); err == nil && info.hasPolicy() {
+	if info.hasPolicy() {
 		window = time.Duration(info.Duration) * time.Minute
 	}
 	if window <= 0 {

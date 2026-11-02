@@ -210,10 +210,13 @@ func runPRView(cmd *cobra.Command, args []string) error {
 	defer store.Close()
 
 	if !prViewRefresh {
+		// One metadata read answers both checks: whether the full cache is
+		// fresh, and how long an individual item may be served.
+		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
 		// When a full cache is fresh, serve the item from it. A missing item is
 		// treated as a cache miss (fetched and cached below) rather than an
 		// error, so browsing fills gaps the full cache does not cover.
-		if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+		if info.PRsFreshAt(time.Now()) {
 			lookupStart := time.Now()
 			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
 				logging.Debug("pr view: served from cache", "number", number, "source", "full-cache", "duration", time.Since(lookupStart))
@@ -224,7 +227,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, number); err == nil {
 			// No fresh full cache — serve the individual item while it is
 			// within the repository's configured freshness window.
-			if cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
+			if cache.IsItemFreshAt(info, mtime) {
 				logging.Debug("pr view: served from cache", "number", number, "source", "item", "age", time.Since(mtime))
 				recordRetrievalOutcome(repo, telemetry.RetrievalPRView, true)
 				return printPRView(pr, prViewComments, prViewJSON)

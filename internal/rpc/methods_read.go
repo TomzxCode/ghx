@@ -289,11 +289,12 @@ func (s *Server) issueView(ctx context.Context, raw json.RawMessage) (any, error
 	}
 
 	if !p.Refresh {
-		if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
+		if info.IssuesFreshAt(time.Now()) {
 			if issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
 				return issue, nil
 			}
-		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
+		} else if issue, mtime, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFreshAt(info, mtime) {
 			return issue, nil
 		}
 	}
@@ -419,11 +420,12 @@ func (s *Server) prView(ctx context.Context, raw json.RawMessage) (any, error) {
 	}
 
 	if !p.Refresh {
-		if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
+		if info.PRsFreshAt(time.Now()) {
 			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
 				return pr, nil
 			}
-		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFresh(store, repo.Host, repo.Owner, repo.Name, mtime) {
+		} else if pr, mtime, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil && cache.IsItemFreshAt(info, mtime) {
 			return pr, nil
 		}
 	}

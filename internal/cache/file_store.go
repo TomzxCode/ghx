@@ -230,7 +230,7 @@ func (s *fileStore) IsIssuesCacheFresh(host, owner, repo string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return time.Since(info.IssuesUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+	return info.IssuesFreshAt(time.Now()), nil
 }
 
 // IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
@@ -239,7 +239,7 @@ func (s *fileStore) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return time.Since(info.PRsUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+	return info.PRsFreshAt(time.Now()), nil
 }
 
 // IsCacheFreshWithDuration reports whether the cache is complete and both

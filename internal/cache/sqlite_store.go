@@ -65,10 +65,6 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
-	if err := migrateSQLiteSchema(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrating schema: %w", err)
-	}
 	version, err := sqliteUserVersion(db)
 	if err != nil {
 		db.Close()
@@ -80,17 +76,29 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 			return nil, fmt.Errorf("normalizing cache keys: %w", err)
 		}
 	}
-	if _, err := execLogged(db, "Schema", fmt.Sprintf("PRAGMA user_version = %d", schemaVersionKeysNormalized)); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("setting schema version: %w", err)
+	// An up-to-date database skips the column probes and the version write, so
+	// opening the cache costs a single PRAGMA. A newer version (written by a
+	// later ghx) is left alone rather than stamped down.
+	if version < schemaVersionCurrent {
+		if err := migrateSQLiteSchema(db); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("migrating schema: %w", err)
+		}
+		if _, err := execLogged(db, "Schema", fmt.Sprintf("PRAGMA user_version = %d", schemaVersionCurrent)); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("setting schema version: %w", err)
+		}
 	}
 	return normalize(&sqliteStore{db: db, path: path}), nil
 }
 
 // migrateSQLiteSchema applies additive column migrations to databases created
 // by an earlier schema revision. schema.sql runs CREATE TABLE IF NOT EXISTS, so
-// a column added to an existing table must be added here instead.
+// a column added to an existing table must be added here instead. Each table's
+// columns are read once, however many migrations it needs, and a migration just
+// applied updates the cached column set.
 func migrateSQLiteSchema(db *sql.DB) error {
+	columns := map[string]map[string]bool{}
 	for _, m := range []struct{ table, column, ddl string }{
 		{
 			table:  "pull_requests",
@@ -163,28 +171,36 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN author_type TEXT NOT NULL DEFAULT ''",
 		},
 	} {
-		has, err := columnExists(db, m.table, m.column)
-		if err != nil {
-			return err
+		cols, ok := columns[m.table]
+		if !ok {
+			var err error
+			cols, err = tableColumns(db, m.table)
+			if err != nil {
+				return err
+			}
+			columns[m.table] = cols
 		}
-		if has {
+		if cols[m.column] {
 			continue
 		}
 		if _, err := execLogged(db, "Migrate", m.ddl); err != nil {
 			return fmt.Errorf("adding %s.%s: %w", m.table, m.column, err)
 		}
+		cols[m.column] = true
 	}
 	return nil
 }
 
-// columnExists reports whether table already has the named column.
-func columnExists(db *sql.DB, table, column string) (bool, error) {
+// tableColumns returns a table's column names, read once per table so a run of
+// migrations for the same table does not repeat the probe.
+func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 	rows, err := queryLogged(db, "Migrate", `PRAGMA table_info(`+table+`)`)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer rows.Close()
 
+	cols := map[string]bool{}
 	for rows.Next() {
 		var (
 			cid       int
@@ -195,14 +211,18 @@ func columnExists(db *sql.DB, table, column string) (bool, error) {
 			pk        int
 		)
 		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err != nil {
-			return false, err
+			return nil, err
 		}
-		if name == column {
-			return true, nil
-		}
+		cols[name] = true
 	}
-	return false, rows.Err()
+	return cols, rows.Err()
 }
+
+// schemaVersionCurrent is the SQLite user_version written once the schema and
+// its additive column migrations are up to date. Bump it whenever a migration is
+// added to migrateSQLiteSchema, so an up-to-date database skips the column
+// probes on later opens.
+const schemaVersionCurrent = 4
 
 // Kind reports the backend name.
 func (s *sqliteStore) Kind() string { return "sqlite" }
@@ -809,7 +829,7 @@ func (s *sqliteStore) IsIssuesCacheFresh(host, owner, repo string) (bool, error)
 	if err != nil {
 		return false, err
 	}
-	return time.Since(info.IssuesUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+	return info.IssuesFreshAt(time.Now()), nil
 }
 
 // IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
@@ -818,7 +838,7 @@ func (s *sqliteStore) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return time.Since(info.PRsUpdatedAt()) < time.Duration(info.Duration)*time.Minute, nil
+	return info.PRsFreshAt(time.Now()), nil
 }
 
 // IsCacheFreshWithDuration reports whether the cache is complete and both
