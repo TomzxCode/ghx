@@ -14,6 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/logging"
 )
 
 //go:embed schema.sql
@@ -55,12 +56,12 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 		"PRAGMA synchronous = NORMAL",
 		"PRAGMA foreign_keys = ON",
 	} {
-		if _, err := db.Exec(pragma); err != nil {
+		if _, err := execLogged(db, "Open", pragma); err != nil {
 			db.Close()
 			return nil, fmt.Errorf("applying %q: %w", pragma, err)
 		}
 	}
-	if _, err := db.Exec(schemaSQL); err != nil {
+	if _, err := execLogged(db, "Schema", schemaSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("applying schema: %w", err)
 	}
@@ -79,7 +80,7 @@ func NewSQLiteStore(baseDir string) (Store, error) {
 			return nil, fmt.Errorf("normalizing cache keys: %w", err)
 		}
 	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersionKeysNormalized)); err != nil {
+	if _, err := execLogged(db, "Schema", fmt.Sprintf("PRAGMA user_version = %d", schemaVersionKeysNormalized)); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("setting schema version: %w", err)
 	}
@@ -169,7 +170,7 @@ func migrateSQLiteSchema(db *sql.DB) error {
 		if has {
 			continue
 		}
-		if _, err := db.Exec(m.ddl); err != nil {
+		if _, err := execLogged(db, "Migrate", m.ddl); err != nil {
 			return fmt.Errorf("adding %s.%s: %w", m.table, m.column, err)
 		}
 	}
@@ -178,7 +179,7 @@ func migrateSQLiteSchema(db *sql.DB) error {
 
 // columnExists reports whether table already has the named column.
 func columnExists(db *sql.DB, table, column string) (bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	rows, err := queryLogged(db, "Migrate", `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return false, err
 	}
@@ -282,6 +283,70 @@ type rowScanner interface {
 	Scan(dest ...any) error
 }
 
+// sqlRunner is satisfied by *sql.DB and *sql.Tx, so the logging helpers cover
+// statements run inside and outside a transaction.
+type sqlRunner interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	Query(query string, args ...any) (*sql.Rows, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// maxQueryArgLen caps one bound argument's rendering, so a debug line stays
+// readable when the argument is a cached body or a JSON collection.
+const maxQueryArgLen = 60
+
+// logSQL emits one debug line per statement: the store operation, the SQL with
+// its whitespace collapsed, the bound arguments, and how long it took. The
+// duration covers the statement's execution, not the caller's row scanning.
+func logSQL(op, query string, args []any, start time.Time, err error) {
+	if !logging.DebugEnabled() {
+		return
+	}
+	attrs := []any{"operation", op, "sql", strings.Join(strings.Fields(query), " ")}
+	if len(args) > 0 {
+		attrs = append(attrs, "args", formatQueryArgs(args))
+	}
+	attrs = append(attrs, "duration", time.Since(start))
+	if err != nil {
+		attrs = append(attrs, "error", err)
+	}
+	logging.Debug("sqlite query", attrs...)
+}
+
+// formatQueryArgs renders bound arguments on one line, truncating each value.
+func formatQueryArgs(args []any) string {
+	parts := make([]string, len(args))
+	for i, arg := range args {
+		s := fmt.Sprint(arg)
+		if len(s) > maxQueryArgLen {
+			s = s[:maxQueryArgLen] + "..."
+		}
+		parts[i] = s
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func execLogged(r sqlRunner, op, query string, args ...any) (sql.Result, error) {
+	start := time.Now()
+	res, err := r.Exec(query, args...)
+	logSQL(op, query, args, start, err)
+	return res, err
+}
+
+func queryLogged(r sqlRunner, op, query string, args ...any) (*sql.Rows, error) {
+	start := time.Now()
+	rows, err := r.Query(query, args...)
+	logSQL(op, query, args, start, err)
+	return rows, err
+}
+
+func queryRowLogged(r sqlRunner, op, query string, args ...any) *sql.Row {
+	start := time.Now()
+	row := r.QueryRow(query, args...)
+	logSQL(op, query, args, start, nil)
+	return row
+}
+
 // ---------------------------------------------------------------------------
 // Issues
 // ---------------------------------------------------------------------------
@@ -295,7 +360,7 @@ func (s *sqliteStore) SaveIssue(host, owner, repo string, issue *github.Issue) e
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO issues
+	_, err = execLogged(s.db, "SaveIssue", `INSERT OR REPLACE INTO issues
 		(host, owner, repo, number, title, state, author_login, author_type, assignees, labels, milestone,
 		 created_at, updated_at, closed_at, url, body, comment_count, comments, row_mtime)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -362,14 +427,14 @@ func scanIssue(row rowScanner) (*github.Issue, time.Time, error) {
 
 // LoadIssue reads a single issue, returning the row's last-write time.
 func (s *sqliteStore) LoadIssue(host, owner, repo string, number int) (*github.Issue, time.Time, error) {
-	row := s.db.QueryRow(`SELECT `+issueCols+` FROM issues WHERE host=? AND owner=? AND repo=? AND number=?`,
+	row := queryRowLogged(s.db, "LoadIssue", `SELECT `+issueCols+` FROM issues WHERE host=? AND owner=? AND repo=? AND number=?`,
 		host, owner, repo, number)
 	return scanIssue(row)
 }
 
 // LoadAllIssues reads every cached issue for a repository.
 func (s *sqliteStore) LoadAllIssues(host, owner, repo string) ([]*github.Issue, error) {
-	rows, err := s.db.Query(`SELECT `+issueCols+` FROM issues WHERE host=? AND owner=? AND repo=? ORDER BY number`,
+	rows, err := queryLogged(s.db, "LoadAllIssues", `SELECT `+issueCols+` FROM issues WHERE host=? AND owner=? AND repo=? ORDER BY number`,
 		host, owner, repo)
 	if err != nil {
 		return nil, err
@@ -402,7 +467,7 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 		where = append(where, "author_login = ? COLLATE NOCASE")
 		args = append(args, q.Author)
 	}
-	rows, err := s.db.Query(`SELECT `+issueCols+` FROM issues WHERE `+strings.Join(where, " AND "), args...)
+	rows, err := queryLogged(s.db, "QueryIssues", `SELECT `+issueCols+` FROM issues WHERE `+strings.Join(where, " AND "), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +521,7 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 	if pr.ReviewThreads != nil {
 		reviewThreads = mustJSON(pr.ReviewThreads)
 	}
-	_, err = s.db.Exec(`INSERT OR REPLACE INTO pull_requests
+	_, err = execLogged(s.db, "SavePR", `INSERT OR REPLACE INTO pull_requests
 		(host, owner, repo, number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 		 url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
@@ -576,14 +641,14 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 
 // LoadPR reads a single pull request, returning the row's last-write time.
 func (s *sqliteStore) LoadPR(host, owner, repo string, number int) (*github.PullRequest, time.Time, error) {
-	row := s.db.QueryRow(`SELECT `+prCols+` FROM pull_requests WHERE host=? AND owner=? AND repo=? AND number=?`,
+	row := queryRowLogged(s.db, "LoadPR", `SELECT `+prCols+` FROM pull_requests WHERE host=? AND owner=? AND repo=? AND number=?`,
 		host, owner, repo, number)
 	return scanPR(row)
 }
 
 // LoadAllPRs reads every cached pull request for a repository.
 func (s *sqliteStore) LoadAllPRs(host, owner, repo string) ([]*github.PullRequest, error) {
-	rows, err := s.db.Query(`SELECT `+prCols+` FROM pull_requests WHERE host=? AND owner=? AND repo=? ORDER BY number`,
+	rows, err := queryLogged(s.db, "LoadAllPRs", `SELECT `+prCols+` FROM pull_requests WHERE host=? AND owner=? AND repo=? ORDER BY number`,
 		host, owner, repo)
 	if err != nil {
 		return nil, err
@@ -626,7 +691,7 @@ func (s *sqliteStore) QueryPRs(host, owner, repo string, q PRQuery) ([]*github.P
 	if q.Draft {
 		where = append(where, "is_draft = 1")
 	}
-	rows, err := s.db.Query(`SELECT `+prCols+` FROM pull_requests WHERE `+strings.Join(where, " AND "), args...)
+	rows, err := queryLogged(s.db, "QueryPRs", `SELECT `+prCols+` FROM pull_requests WHERE `+strings.Join(where, " AND "), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +733,7 @@ func (s *sqliteStore) SaveCacheInfoFull(host, owner, repo string, info *CacheInf
 	if info.Complete {
 		complete = 1
 	}
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO cache_meta
+	_, err := execLogged(s.db, "SaveCacheInfoFull", `INSERT OR REPLACE INTO cache_meta
 		(host, owner, repo, cached_at, duration, complete, issue_cursor, pr_cursor, pr_page_cursor, pr_floor, issues_cached_at, prs_cached_at)
 		VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, tstr(info.CachedAt), info.Duration, complete,
@@ -690,7 +755,7 @@ func (s *sqliteStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error
 		prPageCursorS, prFloorS       sql.NullString
 		issuesCachedAtS, prsCachedAtS sql.NullString
 	)
-	row := s.db.QueryRow(`SELECT cached_at, duration, complete, issue_cursor, pr_cursor, pr_page_cursor, pr_floor, issues_cached_at, prs_cached_at
+	row := queryRowLogged(s.db, "LoadCacheInfo", `SELECT cached_at, duration, complete, issue_cursor, pr_cursor, pr_page_cursor, pr_floor, issues_cached_at, prs_cached_at
 		FROM cache_meta WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
 	if err := row.Scan(&cachedAtS, &duration, &complete, &issueCursorS, &prCursorS, &prPageCursorS, &prFloorS, &issuesCachedAtS, &prsCachedAtS); err != nil {
 		return nil, err
@@ -794,7 +859,7 @@ func (s *sqliteStore) IsPRsCacheFreshWithDuration(host, owner, repo string, dura
 // with a single pooled connection (SetMaxOpenConns(1)), issuing a second query
 // while the result set is still open would deadlock.
 func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
-	rows, err := s.db.Query(`
+	rows, err := queryLogged(s.db, "ListCachedRepos", `
 		SELECT u.host, u.owner, u.repo,
 		       m.cached_at, m.duration, m.complete, m.issue_cursor, m.pr_cursor,
 		       m.pr_page_cursor, m.pr_floor, m.issues_cached_at, m.prs_cached_at,
@@ -874,7 +939,7 @@ func (s *sqliteStore) DeleteRepo(host, owner, repo string) (bool, error) {
 	}
 	deleted := false
 	for _, table := range []string{"issues", "pull_requests", "cache_meta", "coverage_segments"} {
-		res, err := tx.Exec(
+		res, err := execLogged(tx, "DeleteRepo",
 			`DELETE FROM `+table+` WHERE host = ? AND owner = ? AND repo = ?`,
 			host, owner, repo)
 		if err != nil {
@@ -905,18 +970,18 @@ func (s *sqliteStore) SaveSegments(host, owner, repo, kind string, segments []Se
 		return err
 	}
 	defer tx.Rollback()
-	existing, err := loadSegmentsTx(tx, host, owner, repo, kind)
+	existing, err := loadSegments(tx, "SaveSegments", host, owner, repo, kind)
 	if err != nil {
 		return err
 	}
 	merged := MergeSegments(append(existing, segments...))
-	if _, err := tx.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+	if _, err := execLogged(tx, "SaveSegments", `DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
 		host, owner, repo, kind); err != nil {
 		return err
 	}
 	now := tstr(time.Now())
 	for _, seg := range merged {
-		if _, err := tx.Exec(`INSERT INTO coverage_segments
+		if _, err := execLogged(tx, "SaveSegments", `INSERT INTO coverage_segments
 			(host, owner, repo, kind, start_at, end_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
 			host, owner, repo, kind, tstr(seg.Start), tstr(seg.End), now); err != nil {
 			return err
@@ -927,7 +992,7 @@ func (s *sqliteStore) SaveSegments(host, owner, repo, kind string, segments []Se
 
 // LoadSegments returns the merged coverage for one kind.
 func (s *sqliteStore) LoadSegments(host, owner, repo, kind string) ([]Segment, error) {
-	segments, err := loadSegmentsTx(s.db, host, owner, repo, kind)
+	segments, err := loadSegments(s.db, "LoadSegments", host, owner, repo, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -936,18 +1001,14 @@ func (s *sqliteStore) LoadSegments(host, owner, repo, kind string) ([]Segment, e
 
 // DeleteSegments clears the coverage for one kind.
 func (s *sqliteStore) DeleteSegments(host, owner, repo, kind string) error {
-	_, err := s.db.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+	_, err := execLogged(s.db, "DeleteSegments", `DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
 		host, owner, repo, kind)
 	return err
 }
 
-// segmentQuerier is satisfied by both *sql.DB and *sql.Tx.
-type segmentQuerier interface {
-	Query(query string, args ...interface{}) (*sql.Rows, error)
-}
-
-func loadSegmentsTx(q segmentQuerier, host, owner, repo, kind string) ([]Segment, error) {
-	rows, err := q.Query(`SELECT start_at, end_at FROM coverage_segments
+// loadSegments runs the coverage read on a database or transaction handle.
+func loadSegments(q sqlRunner, op, host, owner, repo, kind string) ([]Segment, error) {
+	rows, err := queryLogged(q, op, `SELECT start_at, end_at FROM coverage_segments
 		WHERE host=? AND owner=? AND repo=? AND kind=? ORDER BY start_at`,
 		host, owner, repo, kind)
 	if err != nil {
@@ -976,7 +1037,7 @@ func (s *sqliteStore) DeleteType(host, owner, repo, kind string) (int, error) {
 		return 0, err
 	}
 	defer tx.Rollback()
-	res, err := tx.Exec(`DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
+	res, err := execLogged(tx, "DeleteType", `DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=?`, host, owner, repo)
 	if err != nil {
 		return 0, err
 	}
@@ -984,7 +1045,7 @@ func (s *sqliteStore) DeleteType(host, owner, repo, kind string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
+	if _, err := execLogged(tx, "DeleteType", `DELETE FROM coverage_segments WHERE host=? AND owner=? AND repo=? AND kind=?`,
 		host, owner, repo, kind); err != nil {
 		return 0, err
 	}
@@ -1001,7 +1062,7 @@ func (s *sqliteStore) DeleteItem(host, owner, repo, kind string, number int) (bo
 	if kind == KindPRs {
 		table = "pull_requests"
 	}
-	res, err := s.db.Exec(`DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=? AND number=?`,
+	res, err := execLogged(s.db, "DeleteItem", `DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=? AND number=?`,
 		host, owner, repo, number)
 	if err != nil {
 		return false, err

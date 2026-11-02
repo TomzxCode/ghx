@@ -72,6 +72,10 @@ func SetOutput(w io.Writer) {
 // Debug logs at debug level.
 func Debug(msg string, args ...any) { logger.Debug(msg, args...) }
 
+// DebugEnabled reports whether debug records are currently emitted, so callers
+// can skip building expensive attributes on a hot path.
+func DebugEnabled() bool { return logger.Enabled(context.Background(), slog.LevelDebug) }
+
 // Info logs at info level.
 func Info(msg string, args ...any) { logger.Info(msg, args...) }
 

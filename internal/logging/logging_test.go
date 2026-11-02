@@ -48,6 +48,9 @@ func TestSetLevel_ControlsEmission(t *testing.T) {
 	if Logger().Enabled(nil, slog.LevelDebug) {
 		t.Error("debug should be disabled at info level")
 	}
+	if DebugEnabled() {
+		t.Error("DebugEnabled() = true at info level")
+	}
 	if !Logger().Enabled(nil, slog.LevelInfo) {
 		t.Error("info should be enabled at info level")
 	}
@@ -57,6 +60,9 @@ func TestSetLevel_ControlsEmission(t *testing.T) {
 	}
 	if !Logger().Enabled(nil, slog.LevelDebug) {
 		t.Error("debug should be enabled at debug level")
+	}
+	if !DebugEnabled() {
+		t.Error("DebugEnabled() = false at debug level")
 	}
 
 	if err := SetLevel("bogus"); err == nil {

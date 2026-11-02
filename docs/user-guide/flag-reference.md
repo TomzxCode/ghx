@@ -10,7 +10,7 @@ These flags apply to all commands.
 | `--cache-dir string` | Override the cache directory (default `$XDG_CACHE_HOME/ghx/cache/`, or `~/.cache/ghx/cache/` when that variable is unset). Also `GHX_CACHE_DIR`. |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). Also `GHX_API_URL`. |
-| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). Also `GHX_LOG_LEVEL`. |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). At `debug`, every SQLite cache statement is logged with its operation, SQL, arguments, and duration. Also `GHX_LOG_LEVEL`. |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
 | `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
 | `--remote [URL]` | Run the command on a `ghx rpc serve` instance; the URL falls back to `GHX_RPC_URL`. Handled before cobra, so it does not appear in command help. |

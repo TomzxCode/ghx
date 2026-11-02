@@ -16,7 +16,7 @@ const schemaVersionKeysNormalized = 3
 // sqliteUserVersion reads the database's schema version.
 func sqliteUserVersion(db *sql.DB) (int, error) {
 	var v int
-	if err := db.QueryRow("PRAGMA user_version").Scan(&v); err != nil {
+	if err := queryRowLogged(db, "Schema", "PRAGMA user_version").Scan(&v); err != nil {
 		return 0, err
 	}
 	return v, nil
@@ -66,7 +66,7 @@ func normalizeSQLiteKeys(db *sql.DB) error {
 		`UPDATE cache_meta SET host = lower(host), owner = lower(owner), repo = lower(repo)`,
 	}
 	for _, stmt := range statements {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := execLogged(db, "Migrate", stmt); err != nil {
 			return err
 		}
 	}

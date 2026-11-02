@@ -206,6 +206,8 @@ It does not gate `ghx cache` itself, which always fills uncovered ranges unless 
 
 - Repository coordinates are stored lower-case. GitHub owner and repository names are case-insensitive, so a repository has one cache entry however its name is spelled; a cache written before this rule is collapsed to the lower-case key on first open.
 - Run a read command with `--log-level debug` to see where its time goes: repository resolution, cache store open, token resolution, the list API call, and the cache backfill (scan, per-item detail fetch, and totals).
+- With the SQLite backend, debug logging also emits one `sqlite query` line per statement: the store operation it serves, the SQL, the bound arguments (each truncated at 60 characters), and the duration.
+  A `pr view` miss then reads as a `LoadCacheInfo` and a `LoadPR` statement followed by `pr view: not in cache`.
 - A read command (`list`/`view`) never marks the repository's cache fresh; only `cache` (or `cache --type`) advances the freshness window. Reads fill the cache without claiming the repository is fully cached, so `ghx cache` still fills the uncovered ranges afterwards.
 - Transient failures (rate limits and GitHub 5xx errors such as an HTML 502 from a proxy) are retried automatically with exponential backoff. Each fetched page is already persisted, so if a run still fails, re-running resumes from the last page written.
 - Cache data is never automatically cleaned up. Delete `~/.cache/ghx/cache/cache.db` (SQLite) or the per-repository directories under `~/.cache/ghx/cache/` (file) to free space.

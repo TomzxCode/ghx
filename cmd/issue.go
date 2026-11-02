@@ -204,6 +204,8 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 				return printIssueView(issue, issueViewComments, issueViewJSON, issueViewIDs)
 			}
 			logging.Debug("issue view: cached item is stale, fetching from API", "number", number, "age", time.Since(mtime))
+		} else {
+			logging.Debug("issue view: not in cache, fetching from API", "number", number, "error", err)
 		}
 	}
 
