@@ -125,6 +125,12 @@ type PRQuery struct {
 	Search   string
 }
 
+// Item kinds used by the store's per-kind operations.
+const (
+	KindIssues = "issues"
+	KindPRs    = "prs"
+)
+
 // Store is the cache storage backend. All methods are keyed by the repository
 // coordinates (host, owner, repo) so a single backend can hold many
 // repositories.
@@ -157,6 +163,10 @@ type Store interface {
 	// DeleteType removes every cached item of one kind ("issues" or "prs") and
 	// its coverage. It reports how many item rows were deleted.
 	DeleteType(host, owner, repo, kind string) (int, error)
+	// DeleteItem removes one cached item of one kind ("issues" or "prs"). It
+	// reports whether the item was present, so callers can distinguish a
+	// deletion from an item that was never cached.
+	DeleteItem(host, owner, repo, kind string, number int) (bool, error)
 	// SaveSegments records covered half-open updatedAt ranges for one kind
 	// ("issues" or "prs"), merging them with the existing coverage.
 	SaveSegments(host, owner, repo, kind string, segments []Segment) error

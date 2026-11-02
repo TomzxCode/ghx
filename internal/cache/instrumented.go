@@ -232,3 +232,11 @@ func (s *InstrumentedStore) DeleteType(host, owner, repo, kind string) (int, err
 	s.record(telemetry.KindCacheOther, "DeleteType", start, n, err)
 	return n, err
 }
+
+// DeleteItem records the removal.
+func (s *InstrumentedStore) DeleteItem(host, owner, repo, kind string, number int) (bool, error) {
+	start := time.Now()
+	deleted, err := s.store.DeleteItem(host, owner, repo, kind, number)
+	s.record(telemetry.KindCacheOther, "DeleteItem", start, boolInt(deleted), err)
+	return deleted, err
+}

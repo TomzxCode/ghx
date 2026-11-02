@@ -457,7 +457,7 @@ func (s *fileStore) DeleteSegments(host, owner, repo, kind string) error {
 // DeleteType removes one kind's item directory and coverage.
 func (s *fileStore) DeleteType(host, owner, repo, kind string) (int, error) {
 	dir := s.issueDir(host, owner, repo)
-	if kind == "prs" {
+	if kind == KindPRs {
 		dir = filepath.Join(s.repoDir(host, owner, repo), "prs")
 	}
 	count := 0
@@ -477,4 +477,21 @@ func (s *fileStore) DeleteType(host, owner, repo, kind string) (int, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+// DeleteItem removes one item's file. It reports false when the item was not
+// cached, so a caller can tell a deletion from a missing entry.
+func (s *fileStore) DeleteItem(host, owner, repo, kind string, number int) (bool, error) {
+	dir := s.issueDir(host, owner, repo)
+	if kind == KindPRs {
+		dir = s.prDir(host, owner, repo)
+	}
+	err := os.Remove(filepath.Join(dir, strconv.Itoa(number)+".json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
 }

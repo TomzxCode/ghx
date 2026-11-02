@@ -64,6 +64,16 @@ The lookup is local and makes no API call; it fails with an error when gh has no
 
 Copies cached repositories from the file backend into the SQLite backend (`cache.db` under the cache directory). The file cache is left in place and the migration is idempotent. Uses only the global `--repo` (to limit to one repository) and `--cache-dir`.
 
+### cache delete
+
+Deletes one cached issue or pull request by number and leaves the rest of the repository's cache in place. Takes the number as its positional argument.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--type string` | | Only delete this type: `issues` or `prs`. When omitted, the type is detected from the cache. |
+
+The delete is local only, and it does not change the recorded coverage. Uses the global `--repo`, `--cache-dir`, and `--storage`.
+
 ## issue list
 
 | Flag | Short | Default | Description |

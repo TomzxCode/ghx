@@ -65,6 +65,19 @@ ghx cache migrate --repo cli/cli  # migrate a single repository
 
 The file cache is left in place (the migration is non-destructive), and re-running it is safe (idempotent). To keep using the file cache without migrating, pass `--storage file`.
 
+## Delete one cached item
+
+`ghx cache delete` removes a single cached issue or pull request, leaving the rest of the repository's cache in place:
+
+```bash
+ghx cache delete 76883 --repo cli/cli
+ghx cache delete 76883 --type prs    # only look under pull requests
+```
+
+Issues and pull requests share one number sequence on GitHub, so the number identifies the item and ghx deletes whichever type holds it. Deleting a number that is not cached reports it and exits successfully.
+
+The delete is local only: the next `issue view` or `pr view` of that item fetches it from GitHub and caches it again. Deleting an item does not clear the recorded coverage, so a later `ghx cache` run does not re-read the range it came from. To remove a whole repository, use `ghx repo delete`. To force a refetch of one item without deleting it, use `--refresh` on `view`.
+
 ## Populate the cache
 
 ```bash
@@ -187,6 +200,7 @@ It does not gate `ghx cache` itself, which always fills uncovered ranges unless 
 | `cache` | Fetches all issues and PRs (all states, with comments). Each run fills the uncovered ranges between the recorded coverage and the head; `--if-stale` skips the run while the cache is still within `--cache-duration`. Supports `--since`, `--workers`, and `--type issues/prs`. |
 | `issue list` / `pr list` | Reads the cache and applies filters when the cache is fresh (indexed SQL predicates for the SQLite backend). Falls back to the GitHub API when stale, and writes each entry not already cached to the cache in full (comments, reviews, timeline), so the record is identical to what `ghx cache` writes. |
 | `issue view` / `pr view` | Serves the individual cached item if the full cache is fresh, or if it was written within the cache's configured duration (60 minutes by default). Otherwise fetches from the API and saves to cache; an item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
+| `cache delete` | Deletes one cached item by number, detecting the type from the cache or taking it from `--type`. Coverage is untouched; the next view of the item caches it again. |
 
 ## Notes
 

@@ -190,3 +190,9 @@ func (s *normalizeStore) DeleteType(host, owner, repo, kind string) (int, error)
 	host, owner, repo = normalizeRepoKey(host, owner, repo)
 	return s.store.DeleteType(host, owner, repo, kind)
 }
+
+// DeleteItem removes one item under the normalized repository key.
+func (s *normalizeStore) DeleteItem(host, owner, repo, kind string, number int) (bool, error) {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.DeleteItem(host, owner, repo, kind, number)
+}

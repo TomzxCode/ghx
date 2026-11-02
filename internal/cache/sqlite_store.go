@@ -968,7 +968,7 @@ func loadSegmentsTx(q segmentQuerier, host, owner, repo, kind string) ([]Segment
 // DeleteType removes one kind's cached items and coverage in a transaction.
 func (s *sqliteStore) DeleteType(host, owner, repo, kind string) (int, error) {
 	table := "issues"
-	if kind == "prs" {
+	if kind == KindPRs {
 		table = "pull_requests"
 	}
 	tx, err := s.db.Begin()
@@ -992,4 +992,23 @@ func (s *sqliteStore) DeleteType(host, owner, repo, kind string) (int, error) {
 		return 0, err
 	}
 	return int(deleted), nil
+}
+
+// DeleteItem removes one item's row. It reports false when the item was not
+// cached, so a caller can tell a deletion from a missing entry.
+func (s *sqliteStore) DeleteItem(host, owner, repo, kind string, number int) (bool, error) {
+	table := "issues"
+	if kind == KindPRs {
+		table = "pull_requests"
+	}
+	res, err := s.db.Exec(`DELETE FROM `+table+` WHERE host=? AND owner=? AND repo=? AND number=?`,
+		host, owner, repo, number)
+	if err != nil {
+		return false, err
+	}
+	deleted, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return deleted > 0, nil
 }

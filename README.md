@@ -53,6 +53,7 @@ ghx cache --if-stale             # do nothing while the cache is still fresh
 ghx cache --since 2026-09-01     # ensure coverage starts at a date
 ghx cache --type issues            # refresh only issues (or prs)
 ghx cache --force                  # delete the selected type and start over
+ghx cache delete 42                # delete one cached issue or PR
 ```
 
 Example output (first-time run):

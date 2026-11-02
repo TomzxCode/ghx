@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -18,13 +19,14 @@ import (
 )
 
 var (
-	cacheDuration int
-	cacheForce    bool
-	cacheIfStale  bool
-	cacheSince    string
-	cacheType     string
-	cacheRetries  int
-	cacheWorkers  int
+	cacheDuration   int
+	cacheForce      bool
+	cacheIfStale    bool
+	cacheSince      string
+	cacheType       string
+	cacheRetries    int
+	cacheWorkers    int
+	cacheDeleteType string
 )
 
 var cacheCmd = &cobra.Command{
@@ -77,6 +79,20 @@ to migrate a single repository.`,
 	RunE: runCacheMigrate,
 }
 
+var cacheDeleteCmd = &cobra.Command{
+	Use:   "delete <number>",
+	Short: "Delete one cached issue or pull request",
+	Long: `Deletes one cached issue or pull request by number, leaving the rest of the
+repository's cache in place. The type is detected from the cache, or set with
+--type.
+
+The data is local only; the next view of that item fetches it from GitHub and
+caches it again. Deleting an item does not change the recorded coverage, so a
+later cache run does not re-read the range it came from.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runCacheDelete,
+}
+
 const (
 	defaultCacheDuration = 60
 	defaultCacheWorkers  = 2
@@ -85,6 +101,7 @@ const (
 
 func init() {
 	cacheCmd.AddCommand(cacheMigrateCmd)
+	cacheCmd.AddCommand(cacheDeleteCmd)
 	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", defaultCacheDuration, "Cache duration in minutes (env GHX_CACHE_DURATION)")
 	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Delete the selected type's cached items and coverage, then re-fetch them (from --since when given)")
 	cacheCmd.Flags().BoolVar(&cacheIfStale, "if-stale", false, "Do nothing when the cache is still fresh instead of delta-refreshing")
@@ -92,6 +109,7 @@ func init() {
 	cacheCmd.Flags().StringVar(&cacheType, "type", "both", "Which entries to refresh: issues, prs, or both")
 	cacheCmd.Flags().IntVar(&cacheRetries, "retries", defaultCacheRetries, "Retries on transient errors (rate limits, 5xx); 0 means a single attempt. Total attempts = retries + 1 (env GHX_CACHE_RETRIES)")
 	cacheCmd.Flags().IntVar(&cacheWorkers, "workers", defaultCacheWorkers, "Concurrent coverage segments (1-16) (env GHX_CACHE_WORKERS)")
+	cacheDeleteCmd.Flags().StringVar(&cacheDeleteType, "type", "", "Only delete this type: issues or prs (default: whichever is cached)")
 }
 
 // cacheKnobs holds the cache command's tuning settings after resolving each from
@@ -340,6 +358,82 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Migration complete: %d issue(s), %d pull request(s).\n", totalIssues, totalPRs)
 	return nil
+}
+
+// runCacheDelete removes one cached item. Issues and pull requests share one
+// number sequence on GitHub, so without --type the number identifies the item
+// and the kind is taken from whichever cache holds it.
+func runCacheDelete(cmd *cobra.Command, args []string) error {
+	number, err := strconv.Atoi(args[0])
+	if err != nil || number <= 0 {
+		return fmt.Errorf("invalid issue or pull request number: %s", args[0])
+	}
+
+	kind, err := resolveCacheDeleteKind(cacheDeleteType)
+	if err != nil {
+		return err
+	}
+
+	repo, err := getRepo()
+	if err != nil {
+		return err
+	}
+	label := repoLabel(repo.Host, repo.Owner, repo.Name)
+
+	store, err := newStore()
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+
+	kinds := []string{cache.KindIssues, cache.KindPRs}
+	if kind != "" {
+		kinds = []string{kind}
+	}
+	for _, k := range kinds {
+		deleted, err := store.DeleteItem(repo.Host, repo.Owner, repo.Name, k, number)
+		if err != nil {
+			return fmt.Errorf("deleting cached %s #%d for %s: %w", itemKindNoun(k), number, label, err)
+		}
+		if deleted {
+			fmt.Fprintf(cmd.OutOrStdout(), "Deleted cached %s #%d for %s.\n", itemKindNoun(k), number, label)
+			return nil
+		}
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "No cached %s #%d found for %s.\n", itemScopeNoun(kind), number, label)
+	return nil
+}
+
+// itemScopeNoun names what a delete looked at: both kinds when the type is
+// detected from the cache, or the requested kind.
+func itemScopeNoun(kind string) string {
+	if kind == "" {
+		return "issue or pull request"
+	}
+	return itemKindNoun(kind)
+}
+
+// resolveCacheDeleteKind maps --type to a store kind. An empty value leaves the
+// kind to be detected from the cache.
+func resolveCacheDeleteKind(raw string) (string, error) {
+	switch strings.ToLower(raw) {
+	case "":
+		return "", nil
+	case cache.KindIssues:
+		return cache.KindIssues, nil
+	case cache.KindPRs:
+		return cache.KindPRs, nil
+	default:
+		return "", fmt.Errorf("invalid --type %q: use issues or prs", raw)
+	}
+}
+
+// itemKindNoun names a store kind in user-facing messages.
+func itemKindNoun(kind string) string {
+	if kind == cache.KindPRs {
+		return "pull request"
+	}
+	return "issue"
 }
 
 // fetchRepoData fetches issues and/or pull requests for repo into the store,
