@@ -146,11 +146,18 @@ type searchFilter struct {
 	review          string
 	reviewRequested string
 	reviewedBy      string
+
+	// Teams the resolved "@me" stands for. They are filled only for the
+	// filters that can name a team, and only when that filter's value was
+	// "@me". An empty list leaves the filter matching the user alone.
+	reviewRequestedTeams []github.ViewerTeam
+	mentionsTeams        []github.ViewerTeam
+	involvesTeams        []github.ViewerTeam
 }
 
 // forHost resolves the "@me" shorthands against one repository host, so a
-// search spanning several hosts filters with each host's own login.
-func (f *searchFilter) forHost(me *meResolver, host string) (*searchFilter, error) {
+// search spanning several hosts filters with each host's own login and teams.
+func (f *searchFilter) forHost(me *meResolver, teams *teamResolver, host string) (*searchFilter, error) {
 	clone := *f
 	for _, target := range []*string{
 		&clone.author, &clone.assignee, &clone.commenter,
@@ -162,6 +169,23 @@ func (f *searchFilter) forHost(me *meResolver, host string) (*searchFilter, erro
 			return nil, err
 		}
 		*target = resolved
+	}
+	// "requested-reviewer:@me" on GitHub matches the user and every team the
+	// user belongs to. The cached team memberships make that possible offline.
+	if f.reviewRequested == meShorthand || f.mentions == meShorthand || f.involves == meShorthand {
+		mine, err := teams.teams(host)
+		if err != nil {
+			return nil, err
+		}
+		if f.reviewRequested == meShorthand {
+			clone.reviewRequestedTeams = mine
+		}
+		if f.mentions == meShorthand {
+			clone.mentionsTeams = mine
+		}
+		if f.involves == meShorthand {
+			clone.involvesTeams = mine
+		}
 	}
 	return &clone, nil
 }
@@ -220,13 +244,13 @@ func (f *searchFilter) matchesItem(item *searchItem) bool {
 	if f.commenter != "" && !item.commentedBy(f.commenter) {
 		return false
 	}
-	if f.mentions != "" && !item.mentionsUser(f.mentions) {
+	if f.mentions != "" && !item.mentionsUser(f.mentions) && !item.mentionsAnyTeam(f.mentionsTeams) {
 		return false
 	}
 	if f.teamMentions != "" && !item.mentionsTeam(f.teamMentions) {
 		return false
 	}
-	if f.involves != "" && !item.involves(f.involves) {
+	if f.involves != "" && !item.involves(f.involves, f.involvesTeams) {
 		return false
 	}
 	return f.matchesPR(item)
@@ -282,7 +306,7 @@ func (f *searchFilter) matchesPR(item *searchItem) bool {
 	if f.review != "" && !matchesReviewDecision(item.reviewDecision, f.review) {
 		return false
 	}
-	if f.reviewRequested != "" && !item.reviewRequestedFrom(f.reviewRequested) {
+	if f.reviewRequested != "" && !item.reviewRequestedFrom(f.reviewRequested) && !item.reviewRequestedFromTeam(f.reviewRequestedTeams) {
 		return false
 	}
 	if f.reviewedBy != "" && !item.reviewedBy(f.reviewedBy) {
@@ -412,27 +436,102 @@ func (i *searchItem) mentionsUser(login string) bool {
 	return containsHandle(i.textWithComments(), "@"+strings.TrimPrefix(login, "@"))
 }
 
+// mentionsAnyTeam reports whether the body or comments mention any of teams as
+// @org/slug, the handle GitHub uses for a team.
+func (i *searchItem) mentionsAnyTeam(teams []github.ViewerTeam) bool {
+	if len(teams) == 0 {
+		return false
+	}
+	text := i.textWithComments()
+	for _, t := range teams {
+		if handle := teamHandle(t); handle != "" && containsHandle(text, "@"+handle) {
+			return true
+		}
+	}
+	return false
+}
+
+// teamHandle formats a team the way a mention names it, without the leading @.
+func teamHandle(t github.ViewerTeam) string {
+	switch {
+	case t.Organization != "" && t.Slug != "":
+		return t.Organization + "/" + t.Slug
+	case t.Slug != "":
+		return t.Slug
+	default:
+		return ""
+	}
+}
+
 func (i *searchItem) mentionsTeam(team string) bool {
 	return containsHandle(i.textWithComments(), "@"+strings.TrimPrefix(team, "@"))
 }
 
 // involves reports whether the user is the author, an assignee, a commenter,
-// or mentioned in the body or comments.
-func (i *searchItem) involves(login string) bool {
+// mentioned in the body or comments, or mentioned through one of their teams.
+func (i *searchItem) involves(login string, teams []github.ViewerTeam) bool {
 	return strings.EqualFold(i.author.Login, login) ||
 		actorIn(i.assignees, login) ||
 		i.commentedBy(login) ||
-		i.mentionsUser(login)
+		i.mentionsUser(login) ||
+		i.mentionsAnyTeam(teams)
 }
 
+// reviewRequestedFrom reports whether who is a pending reviewer. who is a
+// login, a team slug, or an org/team handle, with an optional leading @.
 func (i *searchItem) reviewRequestedFrom(who string) bool {
-	want := strings.ToLower(strings.TrimPrefix(who, "@"))
+	handle := strings.ToLower(strings.TrimPrefix(who, "@"))
+	org, team, isTeam := strings.Cut(handle, "/")
 	for _, rr := range i.reviewRequests {
-		if rr.Login != "" && strings.EqualFold(rr.Login, want) {
+		if rr.Login != "" && strings.EqualFold(rr.Login, handle) {
 			return true
 		}
-		if rr.Name != "" && (strings.EqualFold(rr.Name, want) || strings.HasSuffix(want, "/"+strings.ToLower(rr.Name))) {
+		if isTeam {
+			if i.teamRequestMatches(rr, org, team, team, handle) {
+				return true
+			}
+			continue
+		}
+		if rr.Slug != "" && strings.EqualFold(rr.Slug, handle) {
 			return true
+		}
+		if rr.Name != "" && strings.EqualFold(rr.Name, handle) {
+			return true
+		}
+	}
+	return false
+}
+
+// teamRequestMatches reports whether rr is a request for the team identified by
+// org and slug. names are the spellings a cached Name may carry: the slug, the
+// full org/slug handle, and the team's display name. A request team belongs to
+// the repository's organization, so a handle naming another organization does
+// not match.
+func (i *searchItem) teamRequestMatches(rr github.ReviewRequest, org, slug string, names ...string) bool {
+	if rr.Type != "" && !strings.EqualFold(rr.Type, "Team") && !strings.EqualFold(rr.Type, "EnterpriseTeam") {
+		return false
+	}
+	if i.repo.Owner != "" && org != "" && !strings.EqualFold(org, i.repo.Owner) {
+		return false
+	}
+	if rr.Slug != "" && strings.EqualFold(rr.Slug, slug) {
+		return true
+	}
+	for _, name := range names {
+		if name != "" && rr.Name != "" && strings.EqualFold(rr.Name, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewRequestedFromTeam reports whether one of teams is a pending reviewer.
+func (i *searchItem) reviewRequestedFromTeam(teams []github.ViewerTeam) bool {
+	for _, rr := range i.reviewRequests {
+		for _, t := range teams {
+			if i.teamRequestMatches(rr, t.Organization, t.Slug, t.Slug, teamHandle(t), t.Name) {
+				return true
+			}
 		}
 	}
 	return false

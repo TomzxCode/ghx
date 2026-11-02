@@ -155,6 +155,16 @@ func (s *normalizeStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, nil
 }
 
+// SaveViewerTeams records the host's team memberships under the normalized host.
+func (s *normalizeStore) SaveViewerTeams(host string, teams []github.ViewerTeam) error {
+	return s.store.SaveViewerTeams(strings.ToLower(host), teams)
+}
+
+// LoadViewerTeams reads the host's team memberships under the normalized host.
+func (s *normalizeStore) LoadViewerTeams(host string) ([]github.ViewerTeam, error) {
+	return s.store.LoadViewerTeams(strings.ToLower(host))
+}
+
 // Kind delegates to the wrapped backend.
 func (s *normalizeStore) Kind() string { return s.store.Kind() }
 

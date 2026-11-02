@@ -278,6 +278,8 @@ Quoted arguments stay phrases, `--state` defaults to `all`, and `--limit` defaul
 Filters cover author, assignee, mention, involvement, labels, milestones, missing values, dates, comment counts, owners, merge state, checks, reviews, and requested reviewers.
 `--sort`, `--order`, `--json=fields`, and `--template` control ordering and output.
 `@me` works on the user filters and resolves from gh's local config without an API call.
+`--review-requested @me` also matches teams you belong to, and `--mentions @me` and `--involves @me` also match those teams' mentions; `ghx cache` records team memberships per host.
+`--review-requested`, `--mentions`, and `--involves` also accept an explicit team handle as `@org/team` or `org/team`.
 The `gh search` flags that need repository metadata, reactions, projects, or server-side ranking are not available.
 See the [search guide](docs/user-guide/search.md).
 

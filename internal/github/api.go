@@ -1,7 +1,10 @@
 package github
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -362,6 +365,7 @@ func applyReviewRequests(pr *PullRequest, conn *reviewRequestConnection) {
 			Type:  n.RequestedReviewer.Typename,
 			Login: n.RequestedReviewer.Login,
 			Name:  n.RequestedReviewer.Name,
+			Slug:  n.RequestedReviewer.Slug,
 		}
 		if rr.Name == "" {
 			rr.Name = n.RequestedReviewer.Slug
@@ -1520,6 +1524,93 @@ query($owner: String!, $repo: String!) {
     }
   }
 }`
+
+// userTeamsURL is the REST endpoint listing the authenticated user's teams.
+// GitHub's GraphQL User type has no teams field, so this cannot be a GraphQL
+// query.
+func (c *Client) userTeamsURL() string {
+	if c.restTeamsURL != "" {
+		return c.restTeamsURL
+	}
+	if c.host == "" || c.host == "github.com" {
+		return "https://api.github.com/user/teams"
+	}
+	return fmt.Sprintf("https://%s/api/v3/user/teams", c.host)
+}
+
+// ViewerTeams returns the teams the authenticated user belongs to on the
+// client's host, reading GitHub's REST user/teams endpoint. Reading team
+// memberships requires the token's read:org scope; a token without it fails
+// rather than returning an empty list, so the caller can tell "no teams" from
+// "not allowed to ask".
+func (c *Client) ViewerTeams() ([]ViewerTeam, error) {
+	const perPage = 100
+	var teams []ViewerTeam
+	for page := 1; ; page++ {
+		start := time.Now()
+		endpoint := fmt.Sprintf("%s?per_page=%d&page=%d", c.userTeamsURL(), perPage, page)
+		req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "bearer "+c.token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("User-Agent", "ghx/0.1.0")
+
+		ctx := CallContext{
+			Operation: "viewer_teams",
+			Kind:      telemetry.KindViewerTeams,
+			PageSize:  perPage,
+			Cursor:    page > 1,
+		}
+		stats := callStats{attempts: 1, rateRemaining: -1}
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			stats.failed = true
+			c.recordCall(ctx, start, time.Since(start), 0, stats)
+			return nil, fmt.Errorf("fetch viewer teams: %w", err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		stats.status = resp.StatusCode
+		stats.responseBytes = len(body)
+		if resp.StatusCode != http.StatusOK {
+			stats.failed = true
+			c.recordCall(ctx, start, time.Since(start), 0, stats)
+			return nil, fmt.Errorf("fetch viewer teams: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+		if readErr != nil {
+			stats.failed = true
+			c.recordCall(ctx, start, time.Since(start), 0, stats)
+			return nil, fmt.Errorf("reading viewer teams: %w", readErr)
+		}
+
+		var nodes []struct {
+			Slug         string `json:"slug"`
+			Name         string `json:"name"`
+			Organization struct {
+				Login string `json:"login"`
+			} `json:"organization"`
+		}
+		if err := json.Unmarshal(body, &nodes); err != nil {
+			stats.failed = true
+			c.recordCall(ctx, start, time.Since(start), 0, stats)
+			return nil, fmt.Errorf("parsing viewer teams: %w", err)
+		}
+		for _, n := range nodes {
+			teams = append(teams, ViewerTeam{
+				Organization: n.Organization.Login,
+				Slug:         n.Slug,
+				Name:         n.Name,
+			})
+		}
+		ctx.ReturnedItems = len(nodes)
+		c.recordCall(ctx, start, time.Since(start), 0, stats)
+		if len(nodes) < perPage {
+			return teams, nil
+		}
+	}
+}
 
 // prUpdatedAfter returns the updatedAt timestamps of up to first pull requests
 // after the cursor in the given direction, using the light two-field selection.

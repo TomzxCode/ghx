@@ -25,6 +25,9 @@ The legacy file backend stores one JSON file per item:
     └── ...
 ```
 
+The file backend also keeps one team-membership file per host at
+`<cache-dir>/<host>/.viewer_teams.json`.
+
 Both paths sit under `$XDG_CACHE_HOME/ghx/` when that variable holds an absolute path, and under `~/.cache/ghx/` otherwise.
 
 Override the base directory with `--cache-dir`, or set `GHX_CACHE_DIR` in the environment:
@@ -53,6 +56,13 @@ GHX_STORAGE=file ghx pr list --repo cli/cli
 ```
 
 `--storage` takes precedence over `GHX_STORAGE`. Both backends are keyed by the same repository coordinates, so commands and filters behave identically; only the on-disk representation and query performance differ. On large repositories (hundreds to thousands of cached items), listing, filtering, and searching against SQLite is several times faster because it avoids reading and parsing every item file.
+
+## Team memberships
+
+Each cache run records the teams the authenticated user belongs to on the repository's host.
+Search reads them to expand `@me` to team review requests and team mentions without calling the API.
+Reading them needs the token's `read:org` scope; without it the run prints a warning and still caches the repository.
+Team changes are picked up by the next cache run for that host, and a host that was never cached matches only the user.
 
 ### Migrate an existing file cache to SQLite
 

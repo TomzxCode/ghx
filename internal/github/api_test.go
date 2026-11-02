@@ -1,6 +1,10 @@
 package github
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -111,6 +115,84 @@ func TestBuildPRSearchQuery(t *testing.T) {
 // TestNodeToPRCarriesActorType asserts the GraphQL __typename of each actor is
 // preserved in the normalized structs, which is what lets callers tell an app's
 // account from a person's.
+// TestViewerTeams asserts the REST team lookup follows pagination and
+// normalizes each team to its organization, slug, and display name.
+func TestViewerTeams(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/user/teams") {
+			t.Errorf("request = %s %s, want GET .../user/teams", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "bearer test-token" {
+			t.Errorf("Authorization = %q, want the client token", got)
+		}
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Errorf("per_page = %q, want 100", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("page") {
+		case "1":
+			nodes := make([]map[string]interface{}, 0, 100)
+			for i := 0; i < 100; i++ {
+				nodes = append(nodes, map[string]interface{}{
+					"slug": "team-" + strconv.Itoa(i),
+					"name": "Team " + strconv.Itoa(i),
+					"organization": map[string]interface{}{
+						"login": "acme",
+					},
+				})
+			}
+			json.NewEncoder(w).Encode(nodes)
+		case "2":
+			json.NewEncoder(w).Encode([]map[string]interface{}{
+				{"slug": "infra", "name": "Infra", "organization": map[string]interface{}{"login": "globex"}},
+			})
+		default:
+			t.Errorf("unexpected page %q", r.URL.Query().Get("page"))
+		}
+	}))
+	defer srv.Close()
+
+	client, err := NewClientWithURL(srv.URL, "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+	got, err := client.ViewerTeams()
+	if err != nil {
+		t.Fatalf("ViewerTeams: %v", err)
+	}
+	if len(got) != 101 {
+		t.Fatalf("teams = %d, want 101 across two pages", len(got))
+	}
+	if got[0] != (ViewerTeam{Organization: "acme", Slug: "team-0", Name: "Team 0"}) {
+		t.Errorf("first team = %+v", got[0])
+	}
+	if got[100] != (ViewerTeam{Organization: "globex", Slug: "infra", Name: "Infra"}) {
+		t.Errorf("last team = %+v", got[100])
+	}
+	if requests != 2 {
+		t.Errorf("requests = %d, want 2 pages", requests)
+	}
+}
+
+// TestViewerTeamsRejectsErrorStatus asserts a failed lookup is reported instead
+// of silently returning an empty team list.
+func TestViewerTeamsRejectsErrorStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	client, err := NewClientWithURL(srv.URL, "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+	if _, err := client.ViewerTeams(); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("ViewerTeams error = %v, want an HTTP 403 error", err)
+	}
+}
+
 func TestNodeToPRCarriesActorType(t *testing.T) {
 	n := &prNode{}
 	n.Author = actorNode{Login: "dependabot", Typename: "Bot"}
@@ -156,13 +238,15 @@ func TestNodeToPRCarriesActorType(t *testing.T) {
 func TestNodeToPRCarriesReviewRequests(t *testing.T) {
 	n := &prNode{ReviewRequests: &reviewRequestConnection{Nodes: []reviewRequestNode{
 		{RequestedReviewer: &requestedReviewerNode{Typename: "User", Login: "tomzx"}},
-		{RequestedReviewer: &requestedReviewerNode{Typename: "Team", Slug: "Shopify/ml-infra-gpu"}},
+		{RequestedReviewer: &requestedReviewerNode{Typename: "Team", Name: "ML Infra GPU", Slug: "ml-infra-gpu"}},
+		{RequestedReviewer: &requestedReviewerNode{Typename: "Team", Slug: "legacy-team"}},
 	}}}
 
 	pr := nodeToPR(n)
 	want := []ReviewRequest{
 		{Type: "User", Login: "tomzx"},
-		{Type: "Team", Name: "Shopify/ml-infra-gpu"},
+		{Type: "Team", Name: "ML Infra GPU", Slug: "ml-infra-gpu"},
+		{Type: "Team", Name: "legacy-team", Slug: "legacy-team"},
 	}
 	if len(pr.ReviewRequests) != len(want) {
 		t.Fatalf("review requests = %+v, want %+v", pr.ReviewRequests, want)

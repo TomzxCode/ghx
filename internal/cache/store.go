@@ -183,6 +183,11 @@ type Store interface {
 	IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error)
 	ListCachedRepos() ([]CachedRepo, error)
+	// SaveViewerTeams replaces the cached team memberships for one host.
+	SaveViewerTeams(host string, teams []github.ViewerTeam) error
+	// LoadViewerTeams returns the cached team memberships for one host, or nil
+	// when none have been recorded yet.
+	LoadViewerTeams(host string) ([]github.ViewerTeam, error)
 	// DeleteRepo removes every cached item and the cache metadata for one
 	// repository. It reports whether anything was deleted, so callers can
 	// distinguish "removed" from "nothing cached" without a prior read.

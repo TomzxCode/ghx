@@ -25,7 +25,8 @@ const (
 	KindPRFullPage   = "pr_full_page"
 	KindIssueSearch  = "issue_search"
 	KindPRSearch     = "pr_search"
-	KindIssueMigrate = "migrate" // reserved; unused by the API client
+	KindViewerTeams  = "viewer_teams" // teams the authenticated user belongs to
+	KindIssueMigrate = "migrate"      // reserved; unused by the API client
 	KindUnknown      = "unknown"
 )
 

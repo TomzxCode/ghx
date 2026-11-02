@@ -47,6 +47,9 @@ Unless noted, an empty value counts as unset.
 User filters accept `@me`: `--author` and `--assignee` on `issue list`, `pr list`, `search issues`, and `search prs`, plus `--commenter`, `--mentions`, `--involves`, `--review-requested`, and `--reviewed-by` on search.
 It resolves to the login gh stores locally (`gh config get -h <host> user`).
 The lookup is local and makes no API call; it fails with an error when gh has no stored user, for example when authenticating only through `GH_TOKEN`.
+On search, `--review-requested @me` also matches teams the user belongs to, and `--mentions @me` and `--involves @me` also match those teams' `@org/team` mentions.
+`--review-requested`, `--mentions`, and `--involves` also accept an explicit team handle as `@org/team` or `org/team`.
+Team memberships are recorded by `ghx cache`; a host with none cached matches the user alone.
 
 ## cache
 
@@ -219,9 +222,9 @@ Takes an optional positional `[HOST/]OWNER/REPO` argument; when omitted, the rep
 | `--closed date` | | | Filter on close date |
 | `--comments number` | | | Filter on comment count |
 | `--commenter user` | | | Filter on comments by user |
-| `--mentions user` | | | Filter on user mentions |
+| `--mentions user` | | | Filter on mentions (`@login`, `@org/team`, or `@me`; `@me` also matches the user's teams) |
 | `--team-mentions string` | | | Filter on team mentions (`org/team`) |
-| `--involves user` | | | Author, assignee, commenter, or mentioned user |
+| `--involves user` | | | Author, assignee, commenter, or mentioned user or team (`@login`, `@org/team`, or `@me`) |
 | `--match strings` | | | Restrict the query to `title`, `body`, and/or `comments` (default all three) |
 | `--sort string` | | `updated` | Sort results: `updated`, `created`, or `comments` |
 | `--order string` | | `desc` | Result order: `asc` or `desc` |
@@ -259,12 +262,12 @@ Date values accept `YYYY-MM-DD`, `>DATE`, `>=DATE`, `<DATE`, `<=DATE`, or `START
 | `--merged-at date` | | | Filter on merge date |
 | `--comments number` | | | Filter on comment count |
 | `--commenter user` | | | Filter on comments by user |
-| `--mentions user` | | | Filter on user mentions |
+| `--mentions user` | | | Filter on mentions (`@login`, `@org/team`, or `@me`; `@me` also matches the user's teams) |
 | `--team-mentions string` | | | Filter on team mentions (`org/team`) |
-| `--involves user` | | | Author, assignee, commenter, or mentioned user |
+| `--involves user` | | | Author, assignee, commenter, or mentioned user or team (`@login`, `@org/team`, or `@me`) |
 | `--checks string` | | | Filter by check status: `pending`, `success`, or `failure` |
 | `--review string` | | | Filter by review status: `none`, `required`, `approved`, or `changes_requested` |
-| `--review-requested user` | | | Filter on a requested reviewer (login, `org/team`, or `@me`) |
+| `--review-requested user` | | | Filter on a requested reviewer (login, `org/team`, `@org/team`, or `@me`; `@me` also matches the user's teams) |
 | `--reviewed-by user` | | | Filter on a user who reviewed (login or `@me`) |
 | `--match strings` | | | Restrict the query to `title`, `body`, and/or `comments` (default all three) |
 | `--sort string` | | `updated` | Sort results: `updated`, `created`, or `comments` |

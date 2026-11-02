@@ -35,6 +35,7 @@ type Client struct {
 	token            string
 	host             string
 	endpointURL      string
+	restTeamsURL     string // overrides the REST user/teams endpoint when set
 	httpClient       *http.Client
 	maxRetries       int
 	initialBackoff   time.Duration
@@ -81,11 +82,15 @@ func NewClientWithURL(endpointURL, token, host string) (*Client, error) {
 	if host == "" {
 		host = "mock"
 	}
+	// The team lookup is REST even when the GraphQL endpoint is overridden, so
+	// derive its URL from the same base for tests and --api-url.
+	base := strings.TrimSuffix(strings.TrimSuffix(endpointURL, "/"), "/graphql")
 	return (&Client{
-		token:       token,
-		host:        host,
-		endpointURL: endpointURL,
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		token:        token,
+		host:         host,
+		endpointURL:  endpointURL,
+		restTeamsURL: base + "/user/teams",
+		httpClient:   &http.Client{Timeout: 30 * time.Second},
 	}).withDefaults(), nil
 }
 

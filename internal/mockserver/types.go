@@ -22,6 +22,10 @@ type Scenario struct {
 	Issues []ScenarioIssue
 	PRs    []ScenarioPR
 
+	// ViewerTeams is the team membership set the authenticated user reads
+	// when a cache run records teams for team-aware search.
+	ViewerTeams []github.ViewerTeam
+
 	// RejectSyntheticCursors makes the server refuse keyset cursors that do not
 	// point at an existing test row, so tests can exercise the fallback used
 	// when GitHub will not accept a synthesized date seek.
@@ -29,6 +33,14 @@ type Scenario struct {
 }
 
 type ScenarioOption func(*Scenario)
+
+// WithViewerTeams sets the team memberships the mock returns for the
+// authenticated user.
+func WithViewerTeams(teams []github.ViewerTeam) ScenarioOption {
+	return func(s *Scenario) {
+		s.ViewerTeams = teams
+	}
+}
 
 func WithScenarioIssue(owner, repo string, issue github.Issue) ScenarioOption {
 	return func(s *Scenario) {

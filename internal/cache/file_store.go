@@ -274,6 +274,38 @@ func (s *fileStore) IsPRsCacheFreshWithDuration(host, owner, repo string, durati
 	return time.Since(info.PRsUpdatedAt()) < time.Duration(duration)*time.Minute, nil
 }
 
+// viewerTeamsPath is where one host's team memberships are cached. It sits at
+// the host level, beside the owner directories, so ListCachedRepos skips it.
+func (s *fileStore) viewerTeamsPath(host string) string {
+	return filepath.Join(s.baseDir, host, ".viewer_teams.json")
+}
+
+// SaveViewerTeams replaces the host's cached team memberships.
+func (s *fileStore) SaveViewerTeams(host string, teams []github.ViewerTeam) error {
+	data, err := json.MarshalIndent(teams, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(s.viewerTeamsPath(host), data, 0644)
+}
+
+// LoadViewerTeams reads the host's cached team memberships. A missing file
+// means no teams have been recorded yet, not an error.
+func (s *fileStore) LoadViewerTeams(host string) ([]github.ViewerTeam, error) {
+	data, err := os.ReadFile(s.viewerTeamsPath(host))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var teams []github.ViewerTeam
+	if err := json.Unmarshal(data, &teams); err != nil {
+		return nil, err
+	}
+	return teams, nil
+}
+
 // ListCachedRepos walks the cache directory and returns all cached repositories.
 func (s *fileStore) ListCachedRepos() ([]CachedRepo, error) {
 	hosts, err := os.ReadDir(s.baseDir)

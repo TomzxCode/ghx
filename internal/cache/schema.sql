@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS cache_meta (
     PRIMARY KEY (host, owner, repo)
 );
 
+-- Teams the authenticated user belongs to, recorded per host so search can
+-- expand "@me" to team review requests and team mentions without calling the
+-- API. One row per team; a save replaces the host's previous set.
+CREATE TABLE IF NOT EXISTS viewer_teams (
+    host         TEXT NOT NULL,
+    organization TEXT NOT NULL,
+    slug         TEXT NOT NULL,
+    name         TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (host, organization, slug)
+);
+
 -- Half-open updatedAt ranges the cache has covered per data kind. Adjacent
 -- segments are merged as they are recorded.
 CREATE TABLE IF NOT EXISTS coverage_segments (

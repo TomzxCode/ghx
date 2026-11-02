@@ -161,6 +161,22 @@ func (s *InstrumentedStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, err
 }
 
+// SaveViewerTeams records the team membership write.
+func (s *InstrumentedStore) SaveViewerTeams(host string, teams []github.ViewerTeam) error {
+	start := time.Now()
+	err := s.store.SaveViewerTeams(host, teams)
+	s.record(telemetry.KindCacheOther, "SaveViewerTeams", start, len(teams), err)
+	return err
+}
+
+// LoadViewerTeams records the team membership read.
+func (s *InstrumentedStore) LoadViewerTeams(host string) ([]github.ViewerTeam, error) {
+	start := time.Now()
+	teams, err := s.store.LoadViewerTeams(host)
+	s.record(telemetry.KindCacheOther, "LoadViewerTeams", start, len(teams), err)
+	return teams, err
+}
+
 // DeleteRepo records the removal.
 func (s *InstrumentedStore) DeleteRepo(host, owner, repo string) (bool, error) {
 	start := time.Now()

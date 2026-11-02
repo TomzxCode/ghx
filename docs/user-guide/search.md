@@ -86,9 +86,9 @@ Run `ghx repo list` to see which repositories the cache holds.
 | `--closed date` | | Filter on close date |
 | `--comments number` | | Filter on comment count |
 | `--commenter user` | | Items with a comment by the user |
-| `--mentions user` | | Items whose body or comments mention the user |
+| `--mentions user` | | Items whose body or comments mention the user or a team (`@org/team`; for `@me`, also your teams) |
 | `--team-mentions string` | | Items whose body or comments mention the team (`org/team`) |
-| `--involves user` | | Author, assignee, commenter, or mentioned user |
+| `--involves user` | | Author, assignee, commenter, or mentioned user or team (`@org/team`; for `@me`, also your teams) |
 
 ### Issues
 
@@ -107,7 +107,7 @@ Run `ghx repo list` to see which repositories the cache holds.
 | `--merged-at date` | | Filter on merge date |
 | `--checks string` | | Filter by check status: `pending`, `success`, `failure` |
 | `--review string` | | Filter by review status: `none`, `required`, `approved`, `changes_requested` |
-| `--review-requested user` | | Filter on a requested reviewer (login, `org/team`, or `@me`) |
+| `--review-requested user` | | Filter on a requested reviewer (login, `org/team` or `@org/team`, or `@me`; `@me` also matches your teams) |
 | `--reviewed-by user` | | Filter on a user who submitted a review (login or `@me`) |
 
 ### Dates
@@ -137,6 +137,21 @@ It resolves to the login gh stores locally for the repository's host
 Because a search can span hosts, it resolves once per host.
 When gh has no stored user, the command fails with an error instead of silently
 matching nothing; run `gh auth login` or pass the login.
+
+`--review-requested @me` matches the user and every team the user belongs to,
+the way GitHub's `review-requested:@me` does.
+`--mentions @me` and `--involves @me` also match `@org/team` mentions of those
+teams.
+Team memberships come from the local cache: `ghx cache` records them once per
+host, so search still makes no API call.
+A host whose teams were never recorded matches the user alone; run `ghx cache`
+for a repository on that host to record them.
+Team membership changes are picked up by the next cache run.
+
+Outside the `@me` shorthand, `--review-requested`, `--mentions`, and
+`--involves` accept an explicit team handle as `@org/team` or `org/team`.
+For `--mentions` and `--involves` this matches the handle in the cached body or
+comments; for `--review-requested` it matches a pending team review request.
 
 ## Sort, order, and limit
 
@@ -250,15 +265,20 @@ data or the filtering happens on GitHub's side:
 - The cache stores at most the first 100 comments, 100 reviews, and 100 review
   requests per item, so `--commenter`, `--mentions`, `--team-mentions`,
   `--involves`, `--reviewed-by`, and `--review-requested` see cached pages only.
-- Older cache rows may lack `checks`, `reviewRequests`, or `reviewDecision`
-  until they are refetched; those rows do not match the corresponding filters.
+- Older cache rows may lack `checks`, `reviewRequests`, `reviewDecision`, or a
+  review request's team slug until they are refetched; those rows do not match
+  the corresponding filters or need the broader `@me` match.
 - `--mentions`, `--team-mentions`, and the mention part of `--involves` scan the
   cached body and comments for `@login` / `@org/team`, which can differ from
   GitHub's mention index.
+- `--mentions`, `--involves`, and `--review-requested` accept a team handle as
+  `@org/team` or `org/team`.
 - `--app` is approximate: the cache records the actor type, and GitHub Apps
   appear as bots, so it matches a bot whose login is `<app>` or `<app>[bot]`.
 - `--review none` matches rows whose cached review decision is empty, which
   includes rows where GitHub reports no review requirement.
+- Team-aware `@me` uses the team memberships recorded by the last `ghx cache`
+  run for that host, so a host that has never been cached matches only the user.
 
 ## Relationship to the list commands
 

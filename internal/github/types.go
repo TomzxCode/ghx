@@ -102,11 +102,23 @@ type PRCheckRollup struct {
 }
 
 // ReviewRequest is a pending review request on a pull request. Login is set
-// for people and bots; Name is set for teams (for example a team slug).
+// for people and bots. For teams, Name is the display name and Slug is the
+// team slug; older cached rows may carry the slug in Name instead.
 type ReviewRequest struct {
 	Type  string `json:"type,omitempty"`
 	Login string `json:"login,omitempty"`
 	Name  string `json:"name,omitempty"`
+	Slug  string `json:"slug,omitempty"`
+}
+
+// ViewerTeam is a team the authenticated user belongs to. Organization is the
+// organization login and Slug is the team slug, so together they form the
+// @org/slug handle GitHub uses in mentions and review requests. Name is the
+// team's display name.
+type ViewerTeam struct {
+	Organization string `json:"organization"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name,omitempty"`
 }
 
 // PRReview is a single review submitted on a pull request.

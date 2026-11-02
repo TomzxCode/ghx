@@ -103,7 +103,7 @@ func seedSearchCache(t *testing.T) {
 		Assignees: []github.Actor{{Login: "bob"}},
 		Labels:    []github.Label{{Name: "bug"}},
 		Milestone: &github.Milestone{Number: 2, Title: "v2"},
-		Body:      "SSO login hangs; please ping @org/platform-team",
+		Body:      "SSO login hangs; please ping @org/platform-team or @acme/platform",
 		CreatedAt: day(2),
 		UpdatedAt: day(2),
 	}); err != nil {
@@ -165,6 +165,7 @@ func seedSearchCache(t *testing.T) {
 		Comments:       []github.Comment{comment("erin", "still crashing", day(1))},
 		Reviews:        []github.PRReview{{Author: github.Actor{Login: "frank"}, State: "CHANGES_REQUESTED", SubmittedAt: day(1)}},
 		ReviewDecision: "CHANGES_REQUESTED",
+		ReviewRequests: []github.ReviewRequest{{Type: "Team", Name: "Platform", Slug: "platform"}},
 		Checks:         &github.PRChecks{State: "FAILURE", Total: 3},
 		CreatedAt:      time.Date(2025, 12, 28, 12, 0, 0, 0, time.UTC),
 		UpdatedAt:      day(1),
@@ -175,6 +176,169 @@ func seedSearchCache(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time {
 	return &t
+}
+
+// seedViewerTeams records the authenticated user's team memberships for a
+// host, as a "ghx cache" run would.
+func seedViewerTeams(t *testing.T, host string, teams []github.ViewerTeam) {
+	t.Helper()
+	store, err := newStore()
+	if err != nil {
+		t.Fatalf("newStore: %v", err)
+	}
+	defer store.Close()
+	if err := store.SaveViewerTeams(host, teams); err != nil {
+		t.Fatalf("SaveViewerTeams: %v", err)
+	}
+}
+
+// TestSearchPRs_MeAliasIncludesTeams asserts that --review-requested @me also
+// matches a pull request where one of the user's teams was requested.
+func TestSearchPRs_MeAliasIncludesTeams(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+	stubGHUser(t, map[string]string{"github.com": "zoe"})
+	seedViewerTeams(t, "github.com", []github.ViewerTeam{
+		{Organization: "acme", Slug: "platform", Name: "Platform"},
+	})
+	searchPRsReviewRequested = "@me"
+
+	out := runSearchPRsOutput(t)
+	if !strings.Contains(out, "acme/gadget#12") {
+		t.Errorf("output = %q, want the PR whose team reviewer is @me's team", out)
+	}
+	if strings.Contains(out, "acme/widget#11") {
+		t.Errorf("output = %q, must not contain a PR requested only from another user", out)
+	}
+}
+
+// TestSearchPRs_MeAliasWithoutCachedTeams asserts the fallback: when no team
+// memberships have been cached, @me matches the user alone.
+func TestSearchPRs_MeAliasWithoutCachedTeams(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+	stubGHUser(t, map[string]string{"github.com": "zoe"})
+	searchPRsReviewRequested = "@me"
+
+	out := runSearchPRsOutput(t)
+	for _, reject := range []string{"acme/widget#11", "acme/gadget#12"} {
+		if strings.Contains(out, reject) {
+			t.Errorf("output = %q, must not contain %s", out, reject)
+		}
+	}
+}
+
+// TestSearchIssues_MeAliasIncludesTeams asserts that --mentions @me and
+// --involves @me also match a team mention for one of the user's teams.
+func TestSearchIssues_MeAliasIncludesTeams(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func()
+		want string
+	}{
+		{
+			name: "mentions",
+			set:  func() { searchIssuesMentions = "@me" },
+			want: "acme/gadget#7",
+		},
+		{
+			name: "involves",
+			set:  func() { searchIssuesInvolves = "@me" },
+			want: "acme/gadget#7",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSearchTest(t)
+			seedSearchCache(t)
+			stubGHUser(t, map[string]string{"github.com": "zoe"})
+			seedViewerTeams(t, "github.com", []github.ViewerTeam{
+				{Organization: "acme", Slug: "platform", Name: "Platform"},
+			})
+			tc.set()
+
+			out := runSearchIssuesOutput(t)
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("output = %q, want %s", out, tc.want)
+			}
+			if strings.Contains(out, "acme/widget#1") {
+				t.Errorf("output = %q, must not contain an issue that mentions another user", out)
+			}
+		})
+	}
+}
+
+// TestSearchItem_MentionsAnyTeamRequiresAt guards the team mention match: the
+// text must carry the @ handle, not just the org/team words.
+func TestSearchItem_MentionsAnyTeamRequiresAt(t *testing.T) {
+	teams := []github.ViewerTeam{{Organization: "acme", Slug: "platform", Name: "Platform"}}
+	item := &searchItem{body: "The acme/platform docs are useful"}
+	if item.mentionsAnyTeam(teams) {
+		t.Error("plain acme/platform text matched a team mention")
+	}
+	item.body = "cc @acme/platform"
+	if !item.mentionsAnyTeam(teams) {
+		t.Error("@acme/platform did not match a team mention")
+	}
+	item.body = "cc @acme/platform-extra"
+	if item.mentionsAnyTeam(teams) {
+		t.Error("@acme/platform-extra matched @acme/platform")
+	}
+}
+
+// TestSearchPRs_ReviewRequestedExplicitTeam asserts the explicit org/team form
+// matches a cached team request, with or without the leading @, and that a team
+// from another organization does not.
+func TestSearchPRs_ReviewRequestedExplicitTeam(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{value: "acme/platform", want: true},
+		{value: "@acme/platform", want: true},
+		{value: "platform", want: true},
+		{value: "globex/platform", want: false},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			setupSearchTest(t)
+			seedSearchCache(t)
+			searchPRsReviewRequested = tc.value
+
+			out := runSearchPRsOutput(t)
+			got := strings.Contains(out, "acme/gadget#12")
+			if got != tc.want {
+				t.Errorf("--review-requested %q matched = %v, want %v (output %q)", tc.value, got, tc.want, out)
+			}
+		})
+	}
+}
+
+// TestSearchExplicitTeamHandles asserts --mentions and --involves accept an
+// org/team handle, with or without the leading @.
+func TestSearchExplicitTeamHandles(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		set   func()
+	}{
+		{name: "mentions with at", value: "@acme/platform", set: func() { searchIssuesMentions = "@acme/platform" }},
+		{name: "mentions without at", value: "acme/platform", set: func() { searchIssuesMentions = "acme/platform" }},
+		{name: "involves with at", value: "@acme/platform", set: func() { searchIssuesInvolves = "@acme/platform" }},
+		{name: "involves without at", value: "acme/platform", set: func() { searchIssuesInvolves = "acme/platform" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSearchTest(t)
+			seedSearchCache(t)
+			tc.set()
+
+			out := runSearchIssuesOutput(t)
+			if !strings.Contains(out, "acme/gadget#7") {
+				t.Errorf("%s = %q output = %q, want the issue mentioning the team", tc.name, tc.value, out)
+			}
+			if strings.Contains(out, "acme/widget#1") {
+				t.Errorf("%s output = %q, must not contain an issue without the team mention", tc.name, out)
+			}
+		})
+	}
 }
 
 func TestSearchIssues(t *testing.T) {

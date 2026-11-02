@@ -135,11 +135,11 @@ func init() {
 	searchIssuesCmd.Flags().StringVar(&searchIssuesComments, "comments", "", "Filter on number of comments (N, >N, >=N, <N, <=N, or START..END)")
 	searchIssuesCmd.Flags().StringVar(&searchIssuesCreated, "created", "", "Filter on created date (YYYY-MM-DD, >DATE, >=DATE, <DATE, <=DATE, or START..END)")
 	searchIssuesCmd.Flags().BoolVar(&searchIssuesIncludePRs, "include-prs", false, "Include cached pull requests in results")
-	searchIssuesCmd.Flags().StringVar(&searchIssuesInvolves, "involves", "", "Filter based on involvement of user")
+	searchIssuesCmd.Flags().StringVar(&searchIssuesInvolves, "involves", "", "Filter based on involvement (login, org/team, or @me; @me includes your teams)")
 	searchIssuesCmd.Flags().StringSliceVarP(&searchIssuesLabels, "label", "l", nil, "Filter by label (repeat for AND logic)")
 	searchIssuesCmd.Flags().IntVarP(&searchIssuesLimit, "limit", "L", 30, "Maximum number of results (0 for no limit)")
 	searchIssuesCmd.Flags().StringSliceVar(&searchIssuesMatch, "match", nil, "Restrict the query to fields: title, body, or comments (default all three)")
-	searchIssuesCmd.Flags().StringVar(&searchIssuesMentions, "mentions", "", "Filter based on user mentions (login or @me)")
+	searchIssuesCmd.Flags().StringVar(&searchIssuesMentions, "mentions", "", "Filter based on mentions (login, org/team, or @me; @me includes your teams)")
 	searchIssuesCmd.Flags().StringVarP(&searchIssuesMilestone, "milestone", "m", "", "Filter by milestone number or title")
 	searchIssuesCmd.Flags().BoolVar(&searchIssuesNoAssignee, "no-assignee", false, "Filter on missing assignee")
 	searchIssuesCmd.Flags().BoolVar(&searchIssuesNoLabel, "no-label", false, "Filter on missing label")
@@ -166,11 +166,11 @@ func init() {
 	searchPRsCmd.Flags().StringVar(&searchPRsCreated, "created", "", "Filter on created date (YYYY-MM-DD, >DATE, >=DATE, <DATE, <=DATE, or START..END)")
 	searchPRsCmd.Flags().BoolVarP(&searchPRsDraft, "draft", "d", false, "Filter by draft state")
 	searchPRsCmd.Flags().StringVarP(&searchPRsHead, "head", "H", "", "Filter by head branch")
-	searchPRsCmd.Flags().StringVar(&searchPRsInvolves, "involves", "", "Filter based on involvement of user")
+	searchPRsCmd.Flags().StringVar(&searchPRsInvolves, "involves", "", "Filter based on involvement (login, org/team, or @me; @me includes your teams)")
 	searchPRsCmd.Flags().StringSliceVarP(&searchPRsLabels, "label", "l", nil, "Filter by label (repeat for AND logic)")
 	searchPRsCmd.Flags().IntVarP(&searchPRsLimit, "limit", "L", 30, "Maximum number of results (0 for no limit)")
 	searchPRsCmd.Flags().StringSliceVar(&searchPRsMatch, "match", nil, "Restrict the query to fields: title, body, or comments (default all three)")
-	searchPRsCmd.Flags().StringVar(&searchPRsMentions, "mentions", "", "Filter based on user mentions (login or @me)")
+	searchPRsCmd.Flags().StringVar(&searchPRsMentions, "mentions", "", "Filter based on mentions (login, org/team, or @me; @me includes your teams)")
 	searchPRsCmd.Flags().BoolVar(&searchPRsMerged, "merged", false, "Filter on merged state")
 	searchPRsCmd.Flags().StringVar(&searchPRsMergedAt, "merged-at", "", "Filter on merged date (YYYY-MM-DD, >DATE, >=DATE, <DATE, <=DATE, or START..END)")
 	searchPRsCmd.Flags().StringVarP(&searchPRsMilestone, "milestone", "m", "", "Filter by milestone number or title")
@@ -180,7 +180,7 @@ func init() {
 	searchPRsCmd.Flags().StringVar(&searchPRsOrder, "order", "desc", "Order of results: asc or desc")
 	searchPRsCmd.Flags().StringSliceVar(&searchPRsOwner, "owner", nil, "Filter on repository owner")
 	searchPRsCmd.Flags().StringVar(&searchPRsReview, "review", "", "Filter by review status: {none|required|approved|changes_requested}")
-	searchPRsCmd.Flags().StringVar(&searchPRsReviewRequested, "review-requested", "", "Filter on user or team requested to review (login, org/team, or @me)")
+	searchPRsCmd.Flags().StringVar(&searchPRsReviewRequested, "review-requested", "", "Filter on a requested reviewer (login, org/team, or @me; @me includes your teams)")
 	searchPRsCmd.Flags().StringVar(&searchPRsReviewedBy, "reviewed-by", "", "Filter on user who reviewed (login or @me)")
 	searchPRsCmd.Flags().StringVar(&searchPRsSort, "sort", "", "Sort results: updated, created, or comments (default updated)")
 	searchPRsCmd.Flags().StringVarP(&searchPRsState, "state", "s", "all", "Filter by state: {open|closed|merged|all}")
@@ -221,12 +221,13 @@ func runSearchIssues(cmd *cobra.Command, args []string) error {
 	}
 
 	me := &meResolver{}
+	mine := &teamResolver{store: store}
 	items := []*searchItem{}
 	for _, target := range targets {
 		if !filter.matchesOwner(target.Owner) {
 			continue
 		}
-		targetFilter, err := filter.forHost(me, target.Host)
+		targetFilter, err := filter.forHost(me, mine, target.Host)
 		if err != nil {
 			return err
 		}
@@ -293,12 +294,13 @@ func runSearchPRs(cmd *cobra.Command, args []string) error {
 	}
 
 	me := &meResolver{}
+	mine := &teamResolver{store: store}
 	items := []*searchItem{}
 	for _, target := range targets {
 		if !filter.matchesOwner(target.Owner) {
 			continue
 		}
-		targetFilter, err := filter.forHost(me, target.Host)
+		targetFilter, err := filter.forHost(me, mine, target.Host)
 		if err != nil {
 			return err
 		}

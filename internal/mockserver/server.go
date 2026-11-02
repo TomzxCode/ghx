@@ -51,8 +51,19 @@ func NewServer(scenario *Scenario) *Server {
 	s := &Server{
 		scenario: scenario,
 	}
-	s.server = httptest.NewServer(http.HandlerFunc(s.handleGraphQL))
+	s.server = httptest.NewServer(http.HandlerFunc(s.handle))
 	return s
+}
+
+// handle routes REST reads (currently only the team membership lookup) and
+// GraphQL requests. The team lookup is REST because GitHub's GraphQL User type
+// has no teams field.
+func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/user/teams") {
+		s.handleUserTeams(w, r)
+		return
+	}
+	s.handleGraphQL(w, r)
 }
 
 // WithLatency makes the server delay each response by a duration drawn from the
@@ -206,6 +217,49 @@ func (s *Server) getPR(vars map[string]interface{}) (interface{}, []gqlError) {
 		}
 	}
 	return nil, []gqlError{{Message: fmt.Sprintf("pull request #%d not found", number)}}
+}
+
+// handleUserTeams serves the authenticated user's team memberships from the
+// REST user/teams endpoint. It paginates the configured set so the client's
+// per_page/page loop is exercised.
+func (s *Server) handleUserTeams(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") == "" {
+		http.Error(w, `{"message":"Requires authentication"}`, http.StatusUnauthorized)
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	perPage, _ := strconv.Atoi(r.URL.Query().Get("per_page"))
+	if perPage < 1 {
+		perPage = 30
+	}
+
+	s.mu.RLock()
+	all := s.scenario.ViewerTeams
+	s.mu.RUnlock()
+
+	start := (page - 1) * perPage
+	if start > len(all) {
+		start = len(all)
+	}
+	end := start + perPage
+	if end > len(all) {
+		end = len(all)
+	}
+	nodes := make([]map[string]interface{}, 0, end-start)
+	for _, t := range all[start:end] {
+		nodes = append(nodes, map[string]interface{}{
+			"slug": t.Slug,
+			"name": t.Name,
+			"organization": map[string]interface{}{
+				"login": t.Organization,
+			},
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(nodes)
 }
 
 func (s *Server) listIssues(vars map[string]interface{}) (interface{}, []gqlError) {

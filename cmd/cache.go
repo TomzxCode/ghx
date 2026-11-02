@@ -63,7 +63,12 @@ Use --type issues or --type prs to refresh only one of the two; --type both
 (the default) refreshes both, concurrently, so a run takes about as long as the
 slower of the two. A partial refresh only resets the freshness window of the
 type it fetched, so a fresh issues cache still serves issue reads while pull
-requests are re-fetched.`,
+requests are re-fetched.
+
+A run also records the teams you belong to on the repository's host. Search
+uses them to expand "@me" to team review requests and team mentions without
+calling the API. Reading them needs the token's read:org scope; without it the
+run still caches the repository and only team-aware search is affected.`,
 	RunE: runCache,
 }
 
@@ -282,10 +287,27 @@ func runCache(cmd *cobra.Command, args []string) error {
 	}); err != nil {
 		return err
 	}
+	cacheViewerTeams(store, client, repo.Host)
 
 	fmt.Printf("Cache updated. Valid for %d minute(s).\n", knobs.duration)
 	printRunSummary()
 	return nil
+}
+
+// cacheViewerTeams records the authenticated user's team memberships for host,
+// so search can expand "@me" to team review requests and team mentions without
+// calling the API. Failure is reported but never fails the cache run: the items
+// themselves were cached, and team-aware search simply falls back to the user
+// alone until a later run records the teams.
+func cacheViewerTeams(store cache.Store, client *github.Client, host string) {
+	teams, err := client.ViewerTeams()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not read your team memberships for %s: %v\n", host, err)
+		return
+	}
+	if err := store.SaveViewerTeams(host, teams); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not cache your team memberships for %s: %v\n", host, err)
+	}
 }
 
 // printRunSummary prints the per-run telemetry timing breakdown when telemetry

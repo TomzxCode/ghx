@@ -948,6 +948,47 @@ func (s *sqliteStore) ListCachedRepos() ([]CachedRepo, error) {
 	return repos, rows.Err()
 }
 
+// SaveViewerTeams replaces the host's cached team memberships in one
+// transaction, so a failed save never leaves a partial team list behind.
+func (s *sqliteStore) SaveViewerTeams(host string, teams []github.ViewerTeam) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := execLogged(tx, "SaveViewerTeams", `DELETE FROM viewer_teams WHERE host = ?`, host); err != nil {
+		return err
+	}
+	for _, t := range teams {
+		if _, err := execLogged(tx, "SaveViewerTeams", `INSERT INTO viewer_teams
+			(host, organization, slug, name) VALUES (?,?,?,?)`,
+			host, t.Organization, t.Slug, t.Name); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// LoadViewerTeams returns the host's cached team memberships.
+func (s *sqliteStore) LoadViewerTeams(host string) ([]github.ViewerTeam, error) {
+	rows, err := queryLogged(s.db, "LoadViewerTeams", `SELECT organization, slug, name FROM viewer_teams
+		WHERE host = ? ORDER BY organization, slug`, host)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var teams []github.ViewerTeam
+	for rows.Next() {
+		var t github.ViewerTeam
+		if err := rows.Scan(&t.Organization, &t.Slug, &t.Name); err != nil {
+			return nil, err
+		}
+		teams = append(teams, t)
+	}
+	return teams, rows.Err()
+}
+
 // DeleteRepo removes every issue, pull request, and cache metadata row for one
 // repository, leaving other repositories in the shared database untouched. The
 // deletes run in a transaction so an interrupted call cannot leave a partially
