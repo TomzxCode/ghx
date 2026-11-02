@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"os"
-	"strings"
 	"time"
 
 	"github.com/tomzxcode/ghx/internal/telemetry"
@@ -55,19 +54,6 @@ func telemetryWanted() bool {
 	// Missing or corrupt config: fall back to the shipped default rather than
 	// treating an unreadable file as an explicit "disabled".
 	return telemetry.DefaultConfig().Enabled
-}
-
-// envTruthy parses an environment value as a boolean, treating the common deny
-// values as off.
-func envTruthy(v string) bool {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "0", "false", "no", "off", "":
-		return false
-	case "1", "true", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }
 
 // initTelemetry resolves whether telemetry is enabled and opens the sink. It is

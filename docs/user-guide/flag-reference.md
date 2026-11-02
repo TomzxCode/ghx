@@ -6,17 +6,43 @@ These flags apply to all commands.
 
 | Flag | Description |
 |---|---|
-| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. |
-| `--cache-dir string` | Override the cache directory (default `~/.cache/ghx/cache/`). |
+| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. Also `GHX_REPO`. |
+| `--cache-dir string` | Override the cache directory (default `$XDG_CACHE_HOME/ghx/cache/`, or `~/.cache/ghx/cache/` when that variable is unset). Also `GHX_CACHE_DIR`. |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
-| `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). |
-| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). |
+| `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). Also `GHX_API_URL`. |
+| `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). Also `GHX_LOG_LEVEL`. |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
 | `--telemetry-db string` | Telemetry database path (also `GHX_TELEMETRY_DB`; default `$XDG_DATA_HOME/ghx/telemetry.db`). |
 | `--remote [URL]` | Run the command on a `ghx rpc serve` instance; the URL falls back to `GHX_RPC_URL`. Handled before cobra, so it does not appear in command help. |
 | `--rpc-token string` | Bearer token sent with `--remote` (also `GHX_RPC_TOKEN`). |
 | `--version`, `-v` | Print version. |
 | `--help`, `-h` | Show help. |
+
+## Environment variables
+
+Every variable below is a fallback: when the matching flag is given, the flag wins.
+Unless noted, an empty value counts as unset.
+
+| Variable | Sets | Default |
+|---|---|---|
+| `GHX_REPO` | `--repo` | Detected from `git remote origin` |
+| `GHX_CACHE_DIR` | `--cache-dir` | `$XDG_CACHE_HOME/ghx/cache`, else `~/.cache/ghx/cache` |
+| `GHX_STORAGE` | `--storage` | `sqlite` |
+| `GHX_API_URL` | `--api-url` | GitHub's GraphQL endpoint for the target host |
+| `GHX_LOG_LEVEL` | `--log-level` | `info` |
+| `GHX_TELEMETRY` | `--telemetry` | On (`1`/`true`/`yes`/`on` enables, `0`/`false`/`no`/`off` disables) |
+| `GHX_TELEMETRY_DB` | `--telemetry-db` | `$XDG_DATA_HOME/ghx/telemetry.db` |
+| `GHX_CACHE_DURATION` | `cache --cache-duration` | `60` |
+| `GHX_CACHE_WORKERS` | `cache --workers` | `2` |
+| `GHX_CACHE_RETRIES` | `cache --retries` | `2` |
+| `GHX_RPC_URL` | `rpc --url`, `rpc exec --url` | `http://127.0.0.1:8090` |
+| `GHX_RPC_TOKEN` | `rpc --token`, `rpc serve --token`, `serve --rpc-token` | None |
+| `GHX_RPC_HOST` | `rpc serve --host` | `127.0.0.1` |
+| `GHX_RPC_PORT` | `rpc serve --port` | `8090` |
+| `GHX_RPC_ALLOW_EXEC` | `rpc serve --allow-exec` | `true` |
+| `GH_TOKEN`, `GITHUB_TOKEN` | GitHub auth token, checked in that order | `gh auth token` fallback |
+| `XDG_CACHE_HOME` | Base directory for the default cache path | `~/.cache` |
+| `XDG_DATA_HOME` | Base directory for the default telemetry database | `~/.local/share` |
 
 User filters accept `@me`: `--author` and `--assignee` on `issue list`, `pr list`, `search issues`, and `search prs`, plus `--commenter`, `--mentions`, `--involves`, `--review-requested`, and `--reviewed-by` on search.
 It resolves to the login gh stores locally (`gh config get -h <host> user`).
@@ -26,13 +52,13 @@ The lookup is local and makes no API call; it fails with an error when gh has no
 
 | Flag | Default | Description |
 |---|---|---|
-| `--cache-duration int` | `60` | Minutes before the cache is considered stale |
+| `--cache-duration int` | `60` | Minutes before the cache is considered stale (env `GHX_CACHE_DURATION`) |
 | `--if-stale` | `false` | Do nothing when the cache is still fresh instead of delta-refreshing |
 | `--force` | `false` | Delete the selected type's cached items and coverage, then re-fetch them (from `--since` when given) |
 | `--since string` | | Ensure coverage starts at this date (`YYYY-MM-DD`, RFC3339, or `YYYY-MM-DD HH:MM`) |
 | `--type string` | `both` | Which entries to refresh: `issues`, `prs`, or `both` |
-| `--workers int` | `2` | Concurrent coverage segments (1-16) |
-| `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 |
+| `--workers int` | `2` | Concurrent coverage segments (1-16) (env `GHX_CACHE_WORKERS`) |
+| `--retries int` | `2` | Retries on transient errors (rate limits, 5xx); `0` means a single attempt. Total attempts = retries + 1 (env `GHX_CACHE_RETRIES`) |
 
 ### cache migrate
 
@@ -277,10 +303,10 @@ Binding a non-loopback address without `--rpc-token` is refused.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--host string` | `127.0.0.1` | Interface to bind the server to |
-| `--port int` | `8090` | Port to bind the server to |
+| `--host string` | `127.0.0.1` | Interface to bind the server to (env `GHX_RPC_HOST`) |
+| `--port int` | `8090` | Port to bind the server to (env `GHX_RPC_PORT`) |
 | `--token string` | | Require this bearer token from clients (env `GHX_RPC_TOKEN`) |
-| `--allow-exec` | `true` | Expose `cli.run`, which executes ghx commands for clients |
+| `--allow-exec` | `true` | Expose `cli.run`, which executes ghx commands for clients (env `GHX_RPC_ALLOW_EXEC`) |
 
 Binding a non-loopback address without `--token` is refused.
 

@@ -25,11 +25,16 @@ The legacy file backend stores one JSON file per item:
     └── ...
 ```
 
-Override the base directory with `--cache-dir`:
+Both paths sit under `$XDG_CACHE_HOME/ghx/` when that variable holds an absolute path, and under `~/.cache/ghx/` otherwise.
+
+Override the base directory with `--cache-dir`, or set `GHX_CACHE_DIR` in the environment:
 
 ```bash
 ghx --cache-dir /tmp/gh-cache cache --repo cli/cli
+GHX_CACHE_DIR=/tmp/gh-cache ghx cache --repo cli/cli
 ```
+
+`--cache-dir` takes precedence over `GHX_CACHE_DIR`.
 
 ## Storage backends
 

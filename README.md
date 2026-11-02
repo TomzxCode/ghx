@@ -516,7 +516,7 @@ a speedup is not read as a like-for-like win.
 | `issue view` / `pr view` | Serves the individual cached item when it was written within the cache's configured duration (60 minutes by default), or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
 | `search issues` / `search prs` | Reads only the local cache, across every cached repository unless `--repo` limits it to one. Never calls the API and never refreshes; the results are as current as the cache. |
 
-Run a read command with `--log-level debug` to see where its time goes (repository resolution, cache store open, token resolution, the list call, and the cache backfill stages).
+Run a read command with `--log-level debug` (or `GHX_LOG_LEVEL=debug`) to see where its time goes (repository resolution, cache store open, token resolution, the list call, and the cache backfill stages).
 
 Repository coordinates are matched case-insensitively (as GitHub does) and stored lower-case, so a repository has one cache entry however its name is spelled.
 

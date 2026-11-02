@@ -77,15 +77,45 @@ to migrate a single repository.`,
 	RunE: runCacheMigrate,
 }
 
+const (
+	defaultCacheDuration = 60
+	defaultCacheWorkers  = 2
+	defaultCacheRetries  = 2
+)
+
 func init() {
 	cacheCmd.AddCommand(cacheMigrateCmd)
-	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", 60, "Cache duration in minutes")
+	cacheCmd.Flags().IntVar(&cacheDuration, "cache-duration", defaultCacheDuration, "Cache duration in minutes (env GHX_CACHE_DURATION)")
 	cacheCmd.Flags().BoolVar(&cacheForce, "force", false, "Delete the selected type's cached items and coverage, then re-fetch them (from --since when given)")
 	cacheCmd.Flags().BoolVar(&cacheIfStale, "if-stale", false, "Do nothing when the cache is still fresh instead of delta-refreshing")
 	cacheCmd.Flags().StringVar(&cacheSince, "since", "", "Ensure coverage starts at this date (YYYY-MM-DD or RFC3339)")
 	cacheCmd.Flags().StringVar(&cacheType, "type", "both", "Which entries to refresh: issues, prs, or both")
-	cacheCmd.Flags().IntVar(&cacheRetries, "retries", 2, "Retries on transient errors (rate limits, 5xx); 0 means a single attempt. Total attempts = retries + 1")
-	cacheCmd.Flags().IntVar(&cacheWorkers, "workers", 2, "Concurrent coverage segments (1-16)")
+	cacheCmd.Flags().IntVar(&cacheRetries, "retries", defaultCacheRetries, "Retries on transient errors (rate limits, 5xx); 0 means a single attempt. Total attempts = retries + 1 (env GHX_CACHE_RETRIES)")
+	cacheCmd.Flags().IntVar(&cacheWorkers, "workers", defaultCacheWorkers, "Concurrent coverage segments (1-16) (env GHX_CACHE_WORKERS)")
+}
+
+// cacheKnobs holds the cache command's tuning settings after resolving each from
+// its flag, then its environment variable, then the default.
+type cacheKnobs struct {
+	duration int
+	workers  int
+	retries  int
+}
+
+func resolveCacheKnobs(cmd *cobra.Command) (cacheKnobs, error) {
+	duration, err := resolveInt(flagWasSet(cmd, "cache-duration"), "GHX_CACHE_DURATION", cacheDuration, defaultCacheDuration)
+	if err != nil {
+		return cacheKnobs{}, err
+	}
+	workers, err := resolveInt(flagWasSet(cmd, "workers"), "GHX_CACHE_WORKERS", cacheWorkers, defaultCacheWorkers)
+	if err != nil {
+		return cacheKnobs{}, err
+	}
+	retries, err := resolveInt(flagWasSet(cmd, "retries"), "GHX_CACHE_RETRIES", cacheRetries, defaultCacheRetries)
+	if err != nil {
+		return cacheKnobs{}, err
+	}
+	return cacheKnobs{duration: duration, workers: workers, retries: retries}, nil
 }
 
 // parseSinceDate parses a --since value. Supported formats: RFC3339
@@ -153,6 +183,10 @@ type FetchOptions struct {
 }
 
 func runCache(cmd *cobra.Command, args []string) error {
+	knobs, err := resolveCacheKnobs(cmd)
+	if err != nil {
+		return err
+	}
 	var sinceTime *time.Time
 	if cacheSince != "" {
 		t, err := parseSinceDate(cacheSince)
@@ -192,10 +226,10 @@ func runCache(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cacheRetries < 0 {
-		return fmt.Errorf("invalid --retries %d: must be 0 or greater", cacheRetries)
+	if knobs.retries < 0 {
+		return fmt.Errorf("invalid retries %d: must be 0 or greater (--retries or GHX_CACHE_RETRIES)", knobs.retries)
 	}
-	client.SetRetries(cacheRetries)
+	client.SetRetries(knobs.retries)
 
 	info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
 	if info == nil {
@@ -206,8 +240,8 @@ func runCache(cmd *cobra.Command, args []string) error {
 	// check for changes (three small requests when nothing moved), so a probe
 	// could not save anything. --if-stale opts into the old no-op behavior for
 	// scripts that only need the cache warm.
-	if cacheIfStale && !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(cacheDuration)*time.Minute {
-		fmt.Printf("Cache is still fresh (within %d minutes); nothing to do. Re-run without --if-stale to fill the uncovered ranges, or with --force for a clean rebuild.\n", cacheDuration)
+	if cacheIfStale && !cacheForce && sinceTime == nil && cacheType == "both" && info.Complete && time.Since(info.CachedAt) < time.Duration(knobs.duration)*time.Minute {
+		fmt.Printf("Cache is still fresh (within %d minutes); nothing to do. Re-run without --if-stale to fill the uncovered ranges, or with --force for a clean rebuild.\n", knobs.duration)
 		return nil
 	}
 
@@ -224,14 +258,14 @@ func runCache(cmd *cobra.Command, args []string) error {
 		Since:       sinceTime,
 		FetchIssues: fetchIssues,
 		FetchPRs:    fetchPRs,
-		Duration:    cacheDuration,
-		Workers:     cacheWorkers,
+		Duration:    knobs.duration,
+		Workers:     knobs.workers,
 		OnProgress:  cliFetchProgress(client, phases...),
 	}); err != nil {
 		return err
 	}
 
-	fmt.Printf("Cache updated. Valid for %d minute(s).\n", cacheDuration)
+	fmt.Printf("Cache updated. Valid for %d minute(s).\n", knobs.duration)
 	printRunSummary()
 	return nil
 }

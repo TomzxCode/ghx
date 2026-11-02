@@ -51,7 +51,7 @@
 - Use the Go standard library where possible; external dependencies are limited to `spf13/cobra` (CLI), `gopkg.in/yaml.v3`, `yuin/goldmark` (markdown to HTML for the web UI), and `modernc.org/sqlite` (default cache backend)
 - Read and write API calls are split by package: `internal/github` holds GraphQL queries (reads), `internal/gh` holds GraphQL mutations (comment, review, and thread writes)
 - Commands use `RunE` and return errors; wrap chains with `fmt.Errorf("context: %w", err)`; user-facing errors are lowercase sentences that name the fix (e.g. `#5 is a pull request, not an issue; use "ghx pr view 5"`)
-- Env var fallbacks exist for some flags (`GHX_STORAGE`, `GHX_RPC_URL`, `GHX_TELEMETRY`); the flag takes precedence and the help text says both
+- Ambient flags have environment variable fallbacks resolved in `cmd/env.go` (`resolveString`, `resolveInt`, `resolveBool`); the flag takes precedence, the help text says both, and `docs/user-guide/flag-reference.md` lists every variable
 - In-memory filtering uses case-insensitive comparison (`strings.EqualFold`)
 - GraphQL queries are defined as raw string constants at the top of the API file
 - The web UI frontend uses Vue 3, daisyUI 5, and the Tailwind v4 browser build, all loaded from CDNs (pinned major versions) with no build step; ghx-owned assets are embedded via `go:embed` under `internal/webui/assets/`, with `style.css` limited to an override layer

@@ -88,9 +88,9 @@ func init() {
 	rpcCmd.PersistentFlags().StringVar(&rpcURL, "url", defaultRPCURL(), "RPC server URL (env GHX_RPC_URL)")
 	rpcCmd.PersistentFlags().StringVar(&rpcToken, "token", os.Getenv("GHX_RPC_TOKEN"), "Bearer token for the RPC client or server (env GHX_RPC_TOKEN)")
 
-	rpcServeCmd.Flags().StringVar(&rpcHost, "host", "127.0.0.1", "Interface to bind the server to")
-	rpcServeCmd.Flags().IntVar(&rpcPort, "port", 8090, "Port to bind the server to")
-	rpcServeCmd.Flags().BoolVar(&rpcAllowExec, "allow-exec", true, "Expose cli.run, which executes ghx commands for clients")
+	rpcServeCmd.Flags().StringVar(&rpcHost, "host", "127.0.0.1", "Interface to bind the server to (env GHX_RPC_HOST)")
+	rpcServeCmd.Flags().IntVar(&rpcPort, "port", 8090, "Port to bind the server to (env GHX_RPC_PORT)")
+	rpcServeCmd.Flags().BoolVar(&rpcAllowExec, "allow-exec", true, "Expose cli.run, which executes ghx commands for clients (env GHX_RPC_ALLOW_EXEC)")
 
 	rpcCmd.AddCommand(rpcServeCmd)
 	rpcCmd.AddCommand(rpcCallCmd)
@@ -106,8 +106,30 @@ func defaultRPCURL() string {
 	return "http://127.0.0.1:8090"
 }
 
+// rpcServeSettings holds the `rpc serve` bind and exposure settings after
+// resolving each from its flag, then its environment variable, then the default.
+type rpcServeSettings struct {
+	host      string
+	port      int
+	allowExec bool
+}
+
+func resolveRPCServe(cmd *cobra.Command) (rpcServeSettings, error) {
+	host := resolveString(flagWasSet(cmd, "host"), "GHX_RPC_HOST", rpcHost, "127.0.0.1")
+	port, err := resolveInt(flagWasSet(cmd, "port"), "GHX_RPC_PORT", rpcPort, 8090)
+	if err != nil {
+		return rpcServeSettings{}, err
+	}
+	allowExec := resolveBool(flagWasSet(cmd, "allow-exec"), "GHX_RPC_ALLOW_EXEC", rpcAllowExec, true)
+	return rpcServeSettings{host: host, port: port, allowExec: allowExec}, nil
+}
+
 func runRPCServe(cmd *cobra.Command, args []string) error {
-	addr := net.JoinHostPort(rpcHost, strconv.Itoa(rpcPort))
+	settings, err := resolveRPCServe(cmd)
+	if err != nil {
+		return err
+	}
+	addr := net.JoinHostPort(settings.host, strconv.Itoa(settings.port))
 	if rpcToken == "" && !isLoopbackAddr(addr) {
 		return fmt.Errorf("refusing to listen on %s without --token: the RPC API can modify the cache and GitHub", addr)
 	}
@@ -118,7 +140,7 @@ func runRPCServe(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	server := rpc.NewServer(newRPCConfig(store, rpcToken, rpcAllowExec))
+	server := rpc.NewServer(newRPCConfig(store, rpcToken, settings.allowExec))
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           server,
@@ -130,7 +152,7 @@ func runRPCServe(cmd *cobra.Command, args []string) error {
 	if rpcToken != "" {
 		fmt.Println("Bearer token authentication is required.")
 	}
-	if rpcAllowExec {
+	if settings.allowExec {
 		fmt.Println("cli.run is enabled: clients can execute ghx commands on this server.")
 	}
 

@@ -165,8 +165,13 @@ type Store interface {
 	Close() error
 }
 
-// DefaultDir returns the default cache directory (~/.cache/ghx/cache).
+// DefaultDir returns the default cache directory: $XDG_CACHE_HOME/ghx/cache when
+// that variable holds an absolute path, otherwise ~/.cache/ghx/cache. A relative
+// XDG_CACHE_HOME is ignored, as the XDG base directory specification requires.
 func DefaultDir() string {
+	if dir := os.Getenv("XDG_CACHE_HOME"); filepath.IsAbs(dir) {
+		return filepath.Join(dir, "ghx", "cache")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = os.TempDir()

@@ -41,10 +41,12 @@ local stashes.
 
 Use --remote URL to run any command on a running ghx rpc serve instance
 instead of locally.`,
-	// PersistentPreRunE runs before every command's RunE: it configures logging
+	// PersistentPreRunE runs before every command's RunE: it applies the
+	// environment variable fallbacks for the global flags, configures logging,
 	// and resolves the --telemetry flag's explicit-or-unset state for
 	// initTelemetry.
 	PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		applyEnvFallbacks(cmd)
 		logging.SetOutput(osStderrLogWriter())
 		if err := logging.SetLevel(logLevelFlag); err != nil {
 			return err
@@ -83,11 +85,11 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "", "Repository in [HOST/]OWNER/REPO format")
-	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL (for testing)")
-	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path")
+	rootCmd.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "", "Repository in [HOST/]OWNER/REPO format (env GHX_REPO)")
+	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL, for testing (env GHX_API_URL)")
+	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path (env GHX_CACHE_DIR)")
 	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
-	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "info", "Log verbosity: debug, info, warn, or error")
+	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "info", "Log verbosity: debug, info, warn, or error (env GHX_LOG_LEVEL)")
 	rootCmd.PersistentFlags().BoolVar(&telemetryFlagValue, "telemetry", false, "Record API and cache timings locally (default enabled; env GHX_TELEMETRY, use --telemetry=false to opt out)")
 	rootCmd.PersistentFlags().StringVar(&telemetryDBFlag, "telemetry-db", "", "Telemetry database path (env GHX_TELEMETRY_DB)")
 
@@ -152,16 +154,14 @@ func newClient(host string) (*github.Client, error) {
 	return client, nil
 }
 
-// newStore creates a cache store. The backend is selected from --storage or the
-// GHX_STORAGE environment variable (default: sqlite). --cache-dir overrides the
-// cache root for both backends. When telemetry is enabled, the store is wrapped
-// so its operations are recorded.
+// newStore creates a cache store. The backend comes from --storage or its
+// GHX_STORAGE fallback, resolved into storageFlag by applyEnvFallbacks
+// (default: sqlite). --cache-dir overrides the cache root for both backends.
+// When telemetry is enabled, the store is wrapped so its operations are
+// recorded.
 func newStore() (cache.Store, error) {
 	start := time.Now()
 	backend := strings.ToLower(storageFlag)
-	if backend == "" {
-		backend = strings.ToLower(os.Getenv("GHX_STORAGE"))
-	}
 	var (
 		store cache.Store
 		err   error

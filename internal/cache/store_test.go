@@ -279,3 +279,22 @@ func TestFileStoreDeleteRepo(t *testing.T) {
 		t.Error("second DeleteRepo reported true, want false when nothing is cached")
 	}
 }
+
+// TestDefaultDir_HonorsXDGCacheHome verifies the XDG base directory variable
+// relocates the default cache, and that a relative value is ignored as the
+// specification requires.
+func TestDefaultDir_HonorsXDGCacheHome(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "/var/tmp/xdg-cache")
+	if got, want := DefaultDir(), filepath.Join("/var/tmp/xdg-cache", "ghx", "cache"); got != want {
+		t.Errorf("DefaultDir() = %q, want %q", got, want)
+	}
+
+	t.Setenv("XDG_CACHE_HOME", "relative/path")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home directory: %v", err)
+	}
+	if got, want := DefaultDir(), filepath.Join(home, ".cache", "ghx", "cache"); got != want {
+		t.Errorf("DefaultDir() with a relative XDG_CACHE_HOME = %q, want %q", got, want)
+	}
+}
