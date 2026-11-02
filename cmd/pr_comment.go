@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
@@ -334,12 +333,12 @@ func lockPR(owner, name string, number int) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := lockFile(f); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("lock pull request: %w", err)
 	}
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = unlockFile(f)
 		_ = f.Close()
 	}, nil
 }
