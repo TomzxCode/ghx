@@ -12,22 +12,22 @@ import (
 	"github.com/tomzxcode/ghx/internal/logging"
 )
 
-// TestResolveString covers the flag > environment > default order shared by the
-// global string settings.
+// TestResolveString covers the flag > environment > bound-value order shared by
+// the global string settings.
 func TestResolveString(t *testing.T) {
 	cases := []struct {
-		name     string
-		wasSet   bool
-		env      string
-		envSet   bool
-		current  string
-		fallback string
-		want     string
+		name    string
+		wasSet  bool
+		env     string
+		envSet  bool
+		current string
+		want    string
 	}{
-		{name: "flag wins", wasSet: true, env: "from-env", envSet: true, current: "from-flag", fallback: "d", want: "from-flag"},
-		{name: "env fills in", env: "from-env", envSet: true, current: "", fallback: "d", want: "from-env"},
-		{name: "fallback when unset", current: "", fallback: "d", want: "d"},
-		{name: "empty env falls through", env: "", envSet: true, current: "", fallback: "d", want: "d"},
+		{name: "flag wins", wasSet: true, env: "from-env", envSet: true, current: "from-flag", want: "from-flag"},
+		{name: "env fills in", env: "from-env", envSet: true, current: "default", want: "from-env"},
+		{name: "bound value when unset", current: "default", want: "default"},
+		{name: "empty env falls through", env: "", envSet: true, current: "default", want: "default"},
+		{name: "bound value when empty", current: "", want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -36,7 +36,7 @@ func TestResolveString(t *testing.T) {
 			} else {
 				os.Unsetenv("GHX_TEST_STRING")
 			}
-			got := resolveString(tc.wasSet, "GHX_TEST_STRING", tc.current, tc.fallback)
+			got := resolveString(tc.wasSet, "GHX_TEST_STRING", tc.current)
 			if got != tc.want {
 				t.Errorf("resolveString() = %q, want %q", got, tc.want)
 			}
@@ -44,8 +44,8 @@ func TestResolveString(t *testing.T) {
 	}
 }
 
-// TestResolveInt covers precedence, the unset default, and the error raised for
-// a value that is not a whole number.
+// TestResolveInt covers precedence, the bound value, and the error raised for a
+// value that is not a whole number.
 func TestResolveInt(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -58,9 +58,9 @@ func TestResolveInt(t *testing.T) {
 	}{
 		{name: "flag wins", wasSet: true, env: "7", envSet: true, current: 3, want: 3},
 		{name: "env fills in", env: "7", envSet: true, current: 3, want: 7},
-		{name: "fallback when unset", current: 3, want: 2},
+		{name: "bound value when unset", current: 3, want: 3},
 		{name: "env with spaces", env: " 7 ", envSet: true, current: 3, want: 7},
-		{name: "empty env falls through", env: "", envSet: true, current: 3, want: 2},
+		{name: "empty env falls through", env: "", envSet: true, current: 3, want: 3},
 		{name: "not a number", env: "many", envSet: true, current: 3, wantErr: true},
 	}
 	for _, tc := range cases {
@@ -70,7 +70,7 @@ func TestResolveInt(t *testing.T) {
 			} else {
 				os.Unsetenv("GHX_TEST_INT")
 			}
-			got, err := resolveInt(tc.wasSet, "GHX_TEST_INT", tc.current, 2)
+			got, err := resolveInt(tc.wasSet, "GHX_TEST_INT", tc.current)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("resolveInt() = %d, want an error", got)
@@ -94,20 +94,19 @@ func TestResolveInt(t *testing.T) {
 // direction, which is what lets one run override an ambient default.
 func TestResolveBool(t *testing.T) {
 	cases := []struct {
-		name     string
-		wasSet   bool
-		env      string
-		envSet   bool
-		current  bool
-		fallback bool
-		want     bool
+		name    string
+		wasSet  bool
+		env     string
+		envSet  bool
+		current bool
+		want    bool
 	}{
 		{name: "flag true beats false env", wasSet: true, env: "0", envSet: true, current: true, want: true},
 		{name: "flag false beats true env", wasSet: true, env: "1", envSet: true, current: false, want: false},
-		{name: "truthy env", env: "yes", envSet: true, current: false, fallback: false, want: true},
-		{name: "deny env", env: "off", envSet: true, current: true, fallback: true, want: false},
-		{name: "empty env is off", env: "", envSet: true, current: true, fallback: true, want: false},
-		{name: "fallback when unset", current: false, fallback: true, want: true},
+		{name: "truthy env", env: "yes", envSet: true, current: false, want: true},
+		{name: "deny env", env: "off", envSet: true, current: true, want: false},
+		{name: "empty env is off", env: "", envSet: true, current: true, want: false},
+		{name: "bound value when unset", current: true, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,7 +115,7 @@ func TestResolveBool(t *testing.T) {
 			} else {
 				os.Unsetenv("GHX_TEST_BOOL")
 			}
-			got := resolveBool(tc.wasSet, "GHX_TEST_BOOL", tc.current, tc.fallback)
+			got := resolveBool(tc.wasSet, "GHX_TEST_BOOL", tc.current)
 			if got != tc.want {
 				t.Errorf("resolveBool() = %v, want %v", got, tc.want)
 			}
@@ -230,8 +229,8 @@ func TestResolveCacheKnobs(t *testing.T) {
 		}
 	})
 
-	t.Run("defaults", func(t *testing.T) {
-		cacheDuration, cacheWorkers, cacheRetries = defaultCacheDuration, defaultCacheWorkers, defaultCacheRetries
+	t.Run("bound values when no env", func(t *testing.T) {
+		cacheDuration, cacheWorkers, cacheRetries = 15, 4, 0
 		os.Unsetenv("GHX_CACHE_DURATION")
 		os.Unsetenv("GHX_CACHE_WORKERS")
 		os.Unsetenv("GHX_CACHE_RETRIES")
@@ -239,7 +238,7 @@ func TestResolveCacheKnobs(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolveCacheKnobs: %v", err)
 		}
-		want := cacheKnobs{duration: defaultCacheDuration, workers: defaultCacheWorkers, retries: defaultCacheRetries}
+		want := cacheKnobs{duration: 15, workers: 4, retries: 0}
 		if knobs != want {
 			t.Errorf("knobs = %+v, want %+v", knobs, want)
 		}
@@ -293,6 +292,22 @@ func TestResolveRPCServe(t *testing.T) {
 	want := rpcServeSettings{host: "0.0.0.0", port: 9000, allowExec: false}
 	if got != want {
 		t.Errorf("settings = %+v, want %+v", got, want)
+	}
+
+	// The bound flag values must survive when neither the flag nor the
+	// variable is set: dropping them let a configured non-loopback host fall
+	// back to loopback and start a server instead of refusing.
+	os.Unsetenv("GHX_RPC_HOST")
+	os.Unsetenv("GHX_RPC_PORT")
+	os.Unsetenv("GHX_RPC_ALLOW_EXEC")
+	rpcHost, rpcPort, rpcAllowExec = "0.0.0.0", 9001, false
+	got, err = resolveRPCServe(nil)
+	if err != nil {
+		t.Fatalf("resolveRPCServe: %v", err)
+	}
+	want = rpcServeSettings{host: "0.0.0.0", port: 9001, allowExec: false}
+	if got != want {
+		t.Errorf("settings without env = %+v, want the bound values %+v", got, want)
 	}
 
 	t.Setenv("GHX_RPC_PORT", "not-a-port")

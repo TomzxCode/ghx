@@ -31,27 +31,30 @@ func globalFlagWasSet(cmd *cobra.Command, name string) bool {
 	return cmd.Root().PersistentFlags().Changed(name)
 }
 
-// resolveString resolves a string setting. current is the flag's bound value and
-// fallback applies when neither the flag nor the variable is set.
-func resolveString(wasSet bool, env, current, fallback string) string {
+// resolveString resolves a string setting from the flag, then the environment
+// variable. current is the flag's bound value, and it already holds the flag's
+// default when the flag was not given, so it is also the result when neither
+// applies. Callers that set the bound value without parsing arguments (tests)
+// therefore keep their value.
+func resolveString(wasSet bool, env, current string) string {
 	if wasSet {
 		return current
 	}
 	if v := os.Getenv(env); v != "" {
 		return v
 	}
-	return fallback
+	return current
 }
 
 // resolveInt resolves an integer setting. A value that is not a whole number is
 // reported with an error naming the variable, so the fix is obvious.
-func resolveInt(wasSet bool, env string, current, fallback int) (int, error) {
+func resolveInt(wasSet bool, env string, current int) (int, error) {
 	if wasSet {
 		return current, nil
 	}
 	raw := strings.TrimSpace(os.Getenv(env))
 	if raw == "" {
-		return fallback, nil
+		return current, nil
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil {
@@ -62,14 +65,14 @@ func resolveInt(wasSet bool, env string, current, fallback int) (int, error) {
 
 // resolveBool resolves a boolean setting. An explicit --flag=false wins over a
 // truthy variable, so a single run can override an ambient default.
-func resolveBool(wasSet bool, env string, current, fallback bool) bool {
+func resolveBool(wasSet bool, env string, current bool) bool {
 	if wasSet {
 		return current
 	}
 	if raw, ok := os.LookupEnv(env); ok {
 		return envTruthy(raw)
 	}
-	return fallback
+	return current
 }
 
 // envTruthy parses an environment value as a boolean, treating the common deny
@@ -89,9 +92,9 @@ func envTruthy(v string) bool {
 // variables when the corresponding flag was not given. It runs in the root
 // PersistentPreRunE, before any command reads those variables.
 func applyEnvFallbacks(cmd *cobra.Command) {
-	logLevelFlag = resolveString(globalFlagWasSet(cmd, "log-level"), "GHX_LOG_LEVEL", logLevelFlag, "info")
-	cacheDir = resolveString(globalFlagWasSet(cmd, "cache-dir"), "GHX_CACHE_DIR", cacheDir, "")
-	repoFlag = resolveString(globalFlagWasSet(cmd, "repo"), "GHX_REPO", repoFlag, "")
-	apiURLFlag = resolveString(globalFlagWasSet(cmd, "api-url"), "GHX_API_URL", apiURLFlag, "")
-	storageFlag = resolveString(globalFlagWasSet(cmd, "storage"), "GHX_STORAGE", storageFlag, "")
+	logLevelFlag = resolveString(globalFlagWasSet(cmd, "log-level"), "GHX_LOG_LEVEL", logLevelFlag)
+	cacheDir = resolveString(globalFlagWasSet(cmd, "cache-dir"), "GHX_CACHE_DIR", cacheDir)
+	repoFlag = resolveString(globalFlagWasSet(cmd, "repo"), "GHX_REPO", repoFlag)
+	apiURLFlag = resolveString(globalFlagWasSet(cmd, "api-url"), "GHX_API_URL", apiURLFlag)
+	storageFlag = resolveString(globalFlagWasSet(cmd, "storage"), "GHX_STORAGE", storageFlag)
 }

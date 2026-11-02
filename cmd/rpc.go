@@ -115,12 +115,12 @@ type rpcServeSettings struct {
 }
 
 func resolveRPCServe(cmd *cobra.Command) (rpcServeSettings, error) {
-	host := resolveString(flagWasSet(cmd, "host"), "GHX_RPC_HOST", rpcHost, "127.0.0.1")
-	port, err := resolveInt(flagWasSet(cmd, "port"), "GHX_RPC_PORT", rpcPort, 8090)
+	host := resolveString(flagWasSet(cmd, "host"), "GHX_RPC_HOST", rpcHost)
+	port, err := resolveInt(flagWasSet(cmd, "port"), "GHX_RPC_PORT", rpcPort)
 	if err != nil {
 		return rpcServeSettings{}, err
 	}
-	allowExec := resolveBool(flagWasSet(cmd, "allow-exec"), "GHX_RPC_ALLOW_EXEC", rpcAllowExec, true)
+	allowExec := resolveBool(flagWasSet(cmd, "allow-exec"), "GHX_RPC_ALLOW_EXEC", rpcAllowExec)
 	return rpcServeSettings{host: host, port: port, allowExec: allowExec}, nil
 }
 

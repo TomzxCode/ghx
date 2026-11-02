@@ -103,15 +103,15 @@ type cacheKnobs struct {
 }
 
 func resolveCacheKnobs(cmd *cobra.Command) (cacheKnobs, error) {
-	duration, err := resolveInt(flagWasSet(cmd, "cache-duration"), "GHX_CACHE_DURATION", cacheDuration, defaultCacheDuration)
+	duration, err := resolveInt(flagWasSet(cmd, "cache-duration"), "GHX_CACHE_DURATION", cacheDuration)
 	if err != nil {
 		return cacheKnobs{}, err
 	}
-	workers, err := resolveInt(flagWasSet(cmd, "workers"), "GHX_CACHE_WORKERS", cacheWorkers, defaultCacheWorkers)
+	workers, err := resolveInt(flagWasSet(cmd, "workers"), "GHX_CACHE_WORKERS", cacheWorkers)
 	if err != nil {
 		return cacheKnobs{}, err
 	}
-	retries, err := resolveInt(flagWasSet(cmd, "retries"), "GHX_CACHE_RETRIES", cacheRetries, defaultCacheRetries)
+	retries, err := resolveInt(flagWasSet(cmd, "retries"), "GHX_CACHE_RETRIES", cacheRetries)
 	if err != nil {
 		return cacheKnobs{}, err
 	}
