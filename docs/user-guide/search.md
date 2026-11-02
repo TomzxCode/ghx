@@ -167,13 +167,18 @@ Rows added by `--include-prs` are prefixed with `[PR]`.
 ## JSON output
 
 `--json` emits a pretty-printed JSON array of the cached records.
-Bare `--json` selects every supported field; `--json=field1,field2` selects a
-subset (use the `=` form so a following word is still read as a query term):
+Bare `--json` selects every supported field; a comma-separated list selects a
+subset, in either the space or the `=` form:
 
 ```bash
 ghx search issues login --json
+ghx search issues login --json number,title,repository,isPullRequest
 ghx search issues login --json=number,title,repository,isPullRequest
 ```
+
+A bare `--json` treats a query word that names a JSON field (for example
+`number` or `title`) as the field list, so use `--json=...` when a query word
+could be read either way.
 
 Each row carries the issue or pull request fields plus a `repository` object:
 

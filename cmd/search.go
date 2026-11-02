@@ -150,7 +150,7 @@ func init() {
 	searchIssuesCmd.Flags().StringVarP(&searchIssuesState, "state", "s", "all", "Filter by state: {open|closed|all}")
 	searchIssuesCmd.Flags().StringVar(&searchIssuesTeamMentions, "team-mentions", "", "Filter based on team mentions (org/team)")
 	searchIssuesCmd.Flags().StringVar(&searchIssuesUpdated, "updated", "", "Filter on last updated date (YYYY-MM-DD, >DATE, >=DATE, <DATE, <=DATE, or START..END)")
-	searchIssuesCmd.Flags().StringVar(&searchIssuesJSON, "json", "", "Output JSON with the specified fields (use --json=field1,field2; omit for all)")
+	searchIssuesCmd.Flags().StringVar(&searchIssuesJSON, "json", "", "Output JSON with the specified fields (comma-separated; omit for all)")
 	searchIssuesCmd.Flags().Lookup("json").NoOptDefVal = searchJSONAll
 	searchIssuesCmd.Flags().StringVarP(&searchIssuesTemplate, "template", "t", "", "Format each result with a Go template over the JSON fields")
 	searchIssuesCmd.Flags().BoolVar(&searchIssuesNoTruncate, "no-truncate", false, "Don't truncate long titles")
@@ -186,7 +186,7 @@ func init() {
 	searchPRsCmd.Flags().StringVarP(&searchPRsState, "state", "s", "all", "Filter by state: {open|closed|merged|all}")
 	searchPRsCmd.Flags().StringVar(&searchPRsTeamMentions, "team-mentions", "", "Filter based on team mentions (org/team)")
 	searchPRsCmd.Flags().StringVar(&searchPRsUpdated, "updated", "", "Filter on last updated date (YYYY-MM-DD, >DATE, >=DATE, <DATE, <=DATE, or START..END)")
-	searchPRsCmd.Flags().StringVar(&searchPRsJSON, "json", "", "Output JSON with the specified fields (use --json=field1,field2; omit for all)")
+	searchPRsCmd.Flags().StringVar(&searchPRsJSON, "json", "", "Output JSON with the specified fields (comma-separated; omit for all)")
 	searchPRsCmd.Flags().Lookup("json").NoOptDefVal = searchJSONAll
 	searchPRsCmd.Flags().StringVarP(&searchPRsTemplate, "template", "t", "", "Format each result with a Go template over the JSON fields")
 	searchPRsCmd.Flags().BoolVar(&searchPRsNoTruncate, "no-truncate", false, "Don't truncate long titles")
@@ -197,6 +197,10 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runSearchIssues(cmd *cobra.Command, args []string) error {
+	jsonFields, args, err := resolveSearchJSONFieldsAndArgs(searchIssuesJSON, args, searchIssueJSONFields)
+	if err != nil {
+		return err
+	}
 	filter, sortKey, asc, err := buildIssueSearchFilter(args)
 	if err != nil {
 		return err
@@ -256,10 +260,6 @@ func runSearchIssues(cmd *cobra.Command, args []string) error {
 	}
 	logging.Debug("search issues: searched the cache", "repos", len(targets), "matches", total)
 
-	jsonFields, err := resolveSearchJSONFields(searchIssuesJSON, searchIssueJSONFields)
-	if err != nil {
-		return err
-	}
 	return printSearchItems(items, total, searchOutput{
 		jsonFields: jsonFields,
 		template:   searchIssuesTemplate,
@@ -269,6 +269,10 @@ func runSearchIssues(cmd *cobra.Command, args []string) error {
 }
 
 func runSearchPRs(cmd *cobra.Command, args []string) error {
+	jsonFields, args, err := resolveSearchJSONFieldsAndArgs(searchPRsJSON, args, searchPRJSONFields)
+	if err != nil {
+		return err
+	}
 	filter, sortKey, asc, err := buildPRSearchFilter(args)
 	if err != nil {
 		return err
@@ -317,10 +321,6 @@ func runSearchPRs(cmd *cobra.Command, args []string) error {
 	}
 	logging.Debug("search prs: searched the cache", "repos", len(targets), "matches", total)
 
-	jsonFields, err := resolveSearchJSONFields(searchPRsJSON, searchPRJSONFields)
-	if err != nil {
-		return err
-	}
 	return printSearchItems(items, total, searchOutput{
 		jsonFields: jsonFields,
 		template:   searchPRsTemplate,
@@ -630,6 +630,83 @@ var searchPRJSONFields = func() map[string]func(*searchItem) any {
 	}
 	return fields
 }()
+
+// resolveSearchJSONFieldsAndArgs resolves --json for the search commands and
+// returns the query terms with a space-form field list removed. pflag leaves the
+// token after a value-less flag as a positional argument, so `--json
+// field1,field2` (space form, as gh documents it) reaches the handler inside
+// args next to the query words.
+//
+// A token is taken as the field list when it names supported fields, which keeps
+// a bare `--json` selecting every field while still allowing the space form.
+// `--json=field1,field2` stays the unambiguous form.
+func resolveSearchJSONFieldsAndArgs(raw string, args []string, supported map[string]func(*searchItem) any) ([]string, []string, error) {
+	if raw == searchJSONAll {
+		if candidate, rest, ok := takeSearchJSONFieldList(args, supported); ok {
+			raw = candidate
+			args = rest
+		}
+	}
+	fields, err := resolveSearchJSONFields(raw, supported)
+	if err != nil {
+		return nil, args, err
+	}
+	return fields, args, nil
+}
+
+// takeSearchJSONFieldList finds the first argument that reads as a --json field
+// list and returns it along with the remaining query terms.
+func takeSearchJSONFieldList(args []string, supported map[string]func(*searchItem) any) (string, []string, bool) {
+	for i, arg := range args {
+		if !looksLikeSearchJSONFields(arg, supported) {
+			continue
+		}
+		rest := make([]string, 0, len(args)-1)
+		rest = append(rest, args[:i]...)
+		rest = append(rest, args[i+1:]...)
+		return arg, rest, true
+	}
+	return "", args, false
+}
+
+// looksLikeSearchJSONFields reports whether arg could be the field list for
+// --json. A single field name counts, and so does a comma-separated list that
+// mixes known names with unknown ones, so a typo is reported as an unknown field
+// instead of silently becoming a search term that matches nothing.
+func looksLikeSearchJSONFields(arg string, supported map[string]func(*searchItem) any) bool {
+	parts := strings.Split(arg, ",")
+	if len(parts) == 1 {
+		_, ok := supported[strings.TrimSpace(arg)]
+		return ok
+	}
+	known := false
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if _, ok := supported[name]; ok {
+			known = true
+			continue
+		}
+		if !isJSONFieldName(name) {
+			return false
+		}
+	}
+	return known
+}
+
+// isJSONFieldName reports whether s has the shape of a gh JSON field name.
+func isJSONFieldName(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		letter := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		digit := i > 0 && r >= '0' && r <= '9'
+		if !letter && !digit {
+			return false
+		}
+	}
+	return true
+}
 
 // resolveSearchJSONFields validates --json and returns the field names to emit.
 // An empty value disables JSON output; the "all" sentinel selects every field.

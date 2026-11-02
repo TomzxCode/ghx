@@ -227,7 +227,7 @@ Takes an optional positional `[HOST/]OWNER/REPO` argument; when omitted, the rep
 | `--order string` | | `desc` | Result order: `asc` or `desc` |
 | `--include-prs` | | `false` | Include cached pull requests, marked `[PR]` |
 | `--limit int` | `-L` | `30` | Maximum number of results (`0` for no limit) |
-| `--json fields` | | | Output JSON with the specified fields (use `--json=field1,field2`; bare `--json` for all) |
+| `--json fields` | | | Output JSON with the specified fields (space or `=` form; bare `--json` for all) |
 | `--template string` | `-t` | | Format each result with a Go template over the JSON fields |
 | `--no-truncate` | | `false` | Don't truncate long titles |
 
@@ -270,7 +270,7 @@ Date values accept `YYYY-MM-DD`, `>DATE`, `>=DATE`, `<DATE`, `<=DATE`, or `START
 | `--sort string` | | `updated` | Sort results: `updated`, `created`, or `comments` |
 | `--order string` | | `desc` | Result order: `asc` or `desc` |
 | `--limit int` | `-L` | `30` | Maximum number of results (`0` for no limit) |
-| `--json fields` | | | Output JSON with the specified fields (use `--json=field1,field2`; bare `--json` for all) |
+| `--json fields` | | | Output JSON with the specified fields (space or `=` form; bare `--json` for all) |
 | `--template string` | `-t` | | Format each result with a Go template over the JSON fields |
 | `--no-truncate` | | `false` | Don't truncate long titles |
 

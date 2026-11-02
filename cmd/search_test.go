@@ -408,6 +408,128 @@ func TestSearchIssues_JSON(t *testing.T) {
 	}
 }
 
+// TestSearchIssues_JSONSpaceForm drives the space form the shell leaves behind:
+// pflag makes the field list a positional argument, so it arrives in args next
+// to the query words.
+func TestSearchIssues_JSONSpaceForm(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+	searchIssuesJSON = searchJSONAll
+
+	out := captureStdout(t, func() {
+		if err := runSearchIssues(nil, []string{"number,title", "login"}); err != nil {
+			t.Fatalf("runSearchIssues: %v", err)
+		}
+	})
+
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshal JSON output %q: %v", out, err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("JSON results = %d, want the 2 login matches", len(results))
+	}
+	for _, result := range results {
+		if len(result) != 2 {
+			t.Errorf("result has keys %v, want exactly number,title", result)
+		}
+		if result["title"] == nil || result["number"] == nil {
+			t.Errorf("result = %v, want number and title", result)
+		}
+	}
+}
+
+// TestSearchIssues_JSONSpaceFormNoQuery keeps the field list out of the query
+// when no search words are given.
+func TestSearchIssues_JSONSpaceFormNoQuery(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+	searchIssuesJSON = searchJSONAll
+
+	out := captureStdout(t, func() {
+		if err := runSearchIssues(nil, []string{"number,title"}); err != nil {
+			t.Fatalf("runSearchIssues: %v", err)
+		}
+	})
+
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshal JSON output %q: %v", out, err)
+	}
+	if len(results) != 3 {
+		t.Errorf("JSON results = %d, want all 3 cached issues", len(results))
+	}
+}
+
+// TestSearchIssues_JSONSpaceFormTypo fails loudly instead of searching for the
+// misspelled field list and returning no matches.
+func TestSearchIssues_JSONSpaceFormTypo(t *testing.T) {
+	setupSearchTest(t)
+	searchIssuesJSON = searchJSONAll
+
+	err := runSearchIssues(nil, []string{"number,titl", "login"})
+	if err == nil || !strings.Contains(err.Error(), `unknown JSON field: "titl"`) {
+		t.Fatalf("err = %v, want an unknown JSON field error", err)
+	}
+}
+
+func TestSearchPRs_JSONSpaceForm(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+	searchPRsJSON = searchJSONAll
+
+	out := captureStdout(t, func() {
+		if err := runSearchPRs(nil, []string{"crash", "number,isDraft"}); err != nil {
+			t.Fatalf("runSearchPRs: %v", err)
+		}
+	})
+
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshal JSON output %q: %v", out, err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("JSON results = %d, want the 2 crash matches", len(results))
+	}
+	for _, result := range results {
+		if len(result) != 2 || result["isDraft"] == nil {
+			t.Errorf("result = %v, want exactly number,isDraft", result)
+		}
+	}
+}
+
+// TestSearchIssues_CommandJSONFlagParsing runs the real cobra command so the
+// space form is parsed exactly as the shell passes it.
+func TestSearchIssues_CommandJSONFlagParsing(t *testing.T) {
+	setupSearchTest(t)
+	seedSearchCache(t)
+
+	t.Cleanup(func() { rootCmd.SetArgs(nil) })
+	rootCmd.SetArgs([]string{
+		"--cache-dir", cacheDir,
+		"--storage", "sqlite",
+		"search", "issues",
+		"--json", "number,title", "login",
+	})
+
+	var err error
+	out := captureStdout(t, func() { err = rootCmd.Execute() })
+	if err != nil {
+		t.Fatalf("rootCmd.Execute: %v", err)
+	}
+
+	var results []map[string]any
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("unmarshal JSON output %q: %v", out, err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("JSON results = %d, want the 2 login matches", len(results))
+	}
+	if len(results[0]) != 2 {
+		t.Errorf("result has keys %v, want exactly number,title", results[0])
+	}
+}
+
 func TestSearchPRs(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
