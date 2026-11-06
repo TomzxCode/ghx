@@ -79,11 +79,13 @@ func (s *Server) cacheRefresh(ctx context.Context, raw json.RawMessage) (any, er
 		return nil, Errorf(CodeInvalidParams, "force and since cannot be combined")
 	}
 
-	// Serialise refreshes: they write many records and the file backend has no
-	// cross-goroutine coordination.
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
-	// A refresh queued behind another one may have outlived its client.
+	// Serialise refreshes of this repository: a refresh writes many records and
+	// two at once would race on its cache info. Refreshes of other repositories
+	// run at the same time.
+	unlock := s.lockRefresh(refreshKey(repo))
+	defer unlock()
+	// A refresh queued behind another one on the same repository may have
+	// outlived its client.
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

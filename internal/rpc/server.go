@@ -106,17 +106,55 @@ type Server struct {
 	order   []string
 	started time.Time
 
-	// refreshMu serialises cache refreshes: a refresh writes many records and
-	// the file backend has no cross-goroutine write coordination.
-	refreshMu sync.Mutex
+	// refreshMu guards refreshLocks, the per-repository refresh mutexes. A
+	// refresh writes many records for its own repository, and two at once would
+	// race on that repository's cache info. Refreshes of different repositories
+	// share nothing, so they run at the same time.
+	refreshMu    sync.Mutex
+	refreshLocks map[string]*refreshLock
+}
+
+// refreshLock is one repository's refresh mutex. refs counts the refreshes
+// holding or waiting on it so the map can drop the entry once it is idle.
+type refreshLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockRefresh serialises refreshes of key and returns the function that
+// releases it. Refreshes of different keys run concurrently.
+func (s *Server) lockRefresh(key string) func() {
+	s.refreshMu.Lock()
+	lock := s.refreshLocks[key]
+	if lock == nil {
+		lock = &refreshLock{}
+		if s.refreshLocks == nil {
+			s.refreshLocks = make(map[string]*refreshLock)
+		}
+		s.refreshLocks[key] = lock
+	}
+	lock.refs++
+	s.refreshMu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		s.refreshMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(s.refreshLocks, key)
+		}
+		s.refreshMu.Unlock()
+	}
 }
 
 // NewServer builds a server with every method registered.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		cfg:     cfg,
-		methods: map[string]*method{},
-		started: time.Now(),
+		cfg:          cfg,
+		methods:      map[string]*method{},
+		started:      time.Now(),
+		refreshLocks: map[string]*refreshLock{},
 	}
 	s.registerCore()
 	s.registerReadMethods()
@@ -247,6 +285,12 @@ func (s *Server) client(host string) (*github.Client, error) {
 		return nil, fmt.Errorf("GitHub client is not configured on this server")
 	}
 	return s.cfg.ClientFactory(host)
+}
+
+// refreshKey identifies a repository for refresh serialisation. GitHub treats
+// owner and repository names case-insensitively.
+func refreshKey(repo *gitremote.Repo) string {
+	return strings.ToLower(repo.Host + "/" + repo.Owner + "/" + repo.Name)
 }
 
 func repoLabel(repo *gitremote.Repo) string {

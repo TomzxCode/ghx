@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -267,6 +268,104 @@ func TestCacheRefresh(t *testing.T) {
 
 	if _, rpcErr := call(t, srv, "cache.refresh", CacheRefreshParams{Force: true, Since: "2026-09-01"}); rpcErr == nil {
 		t.Fatal("expected force+since error")
+	}
+}
+
+// makeRefreshBody is a cache.refresh request for repo, ready to post.
+func makeRefreshBody(t *testing.T, repo string) string {
+	t.Helper()
+	params, err := json.Marshal(CacheRefreshParams{Repo: repo})
+	if err != nil {
+		t.Fatalf("marshal params: %v", err)
+	}
+	body, err := json.Marshal(requestForTest{JSONRPC: "2.0", ID: 1, Method: "cache.refresh", Params: params})
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	return string(body)
+}
+
+// postRefresh posts a cache.refresh request and returns its RPC error. It is
+// safe to call from a goroutine, unlike call.
+func postRefresh(t *testing.T, srv *Server, repo string) *Error {
+	rec := postRPC(t, srv, makeRefreshBody(t, repo))
+	var resp Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		return &Error{Code: CodeInternalError, Message: err.Error()}
+	}
+	return resp.Error
+}
+
+func TestCacheRefreshRunsDifferentRepositoriesAtTheSameTime(t *testing.T) {
+	srv, _, _, _ := newMockServer(t)
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	srv.cfg.Refresh = func(ctx context.Context, req RefreshRequest) (RefreshResult, error) {
+		entered <- struct{}{}
+		<-release
+		return RefreshResult{}, nil
+	}
+
+	done := make(chan *Error, 2)
+	for _, repo := range []string{"acme/one", "acme/two"} {
+		go func(repo string) { done <- postRefresh(t, srv, repo) }(repo)
+	}
+
+	timeout := time.After(5 * time.Second)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-entered:
+		case <-timeout:
+			close(release)
+			t.Fatal("a refresh of one repository waited for a different repository")
+		}
+	}
+	close(release)
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("cache.refresh: %+v", err)
+		}
+	}
+}
+
+func TestCacheRefreshSerialisesOneRepository(t *testing.T) {
+	srv, _, _, _ := newMockServer(t)
+	var running atomic.Int32
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	srv.cfg.Refresh = func(ctx context.Context, req RefreshRequest) (RefreshResult, error) {
+		if running.Add(1) > 1 {
+			t.Errorf("two refreshes of one repository ran at the same time")
+		}
+		entered <- struct{}{}
+		<-release
+		running.Add(-1)
+		return RefreshResult{}, nil
+	}
+
+	done := make(chan *Error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { done <- postRefresh(t, srv, "acme/one") }()
+	}
+
+	// The first refresh enters and stays in flight.
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the first refresh never started")
+	}
+	// The second must wait for the first, so it cannot enter yet.
+	select {
+	case <-entered:
+		t.Error("the second refresh of the same repository entered while the first was in flight")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("cache.refresh: %+v", err)
+		}
 	}
 }
 

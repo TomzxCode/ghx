@@ -977,15 +977,28 @@ func (s *coverageSyncer) tailWorks() ([]coverageWork, error) {
 		}
 		p.segments = segments
 		gaps := cache.Uncovered(segments, s.now, tailEnd)
+		// The count is the cheap way to tell whether a tail window holds
+		// anything. Fetching one that reports nothing would read zero items and
+		// then mark it covered, so skipping it loses nothing, and leaving it
+		// uncovered lets the next pass look again instead of trusting an index
+		// that may still be catching up.
+		var changed []cache.Segment
 		for _, gap := range gaps {
-			if n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, p.kind, gap.Start, gap.End); err == nil {
-				p.window += n
+			n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, p.kind, gap.Start, gap.End)
+			if err != nil {
+				logging.Warn("counting catch-up window", "kind", kindLabel(p.kind), "error", err)
+				changed = append(changed, gap)
+				continue
+			}
+			p.window += n
+			if n > 0 {
+				changed = append(changed, gap)
 			}
 		}
-		planned := cache.Chunk(gaps, s.chunkSize(gaps, p.kind))
+		planned := cache.Chunk(changed, s.chunkSize(changed, p.kind))
 		logging.Debug("coverage catch-up", "kind", kindLabel(p.kind),
 			"from", s.now.Format(time.RFC3339), "to", tailEnd.Format(time.RFC3339),
-			"gaps", len(gaps), "segments", len(planned))
+			"gaps", len(gaps), "changed", len(changed), "segments", len(planned))
 		for _, seg := range planned {
 			works = append(works, coverageWork{portion: p, segment: seg})
 		}

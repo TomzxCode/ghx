@@ -121,7 +121,7 @@ ghx --remote issue list
 
 `repo` is `[HOST/]OWNER/REPO`.
 When omitted, the server uses its `--repo` flag or the git remote of its working directory.
-The server processes requests concurrently; `cache.refresh` runs one refresh at a time.
+The server processes requests concurrently; `cache.refresh` runs one refresh per repository at a time, so refreshes of different repositories can overlap.
 
 The read methods mirror the CLI's cache behavior: a fresh full cache is served locally, otherwise the method calls the GitHub API and backfills the cache.
 `issue.list` and `pr.list` include `source` (`cache` or `api`) and `total` (before the limit is applied) in their results.
