@@ -727,21 +727,26 @@ func (s *coverageSyncer) plan(kind string, enabled bool, cached int) (*coverageP
 	}
 	logging.Debug("coverage plan", planAttrs...)
 
-	for _, gap := range p.gaps {
-		if n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, kind, gap.Start, gap.End); err == nil {
-			p.window += n
-		} else {
-			logging.Warn("counting coverage window", "kind", kind, "error", err)
+	// The window and cache totals only fill progress events. A caller with no
+	// progress sink, such as the JSON-RPC server, skips them: on a refresh that
+	// finds nothing they cost more round trips than the fetch itself.
+	if s.opts.OnProgress != nil {
+		for _, gap := range p.gaps {
+			if n, err := s.client.SearchCount(s.repo.Owner, s.repo.Name, kind, gap.Start, gap.End); err == nil {
+				p.window += n
+			} else {
+				logging.Warn("counting coverage window", "kind", kind, "error", err)
+			}
 		}
-	}
 
-	if kind == coverageIssues {
-		if n, err := s.client.CountIssues(s.repo.Owner, s.repo.Name); err == nil {
-			p.cacheTotal = n
-		}
-	} else {
-		if n, err := s.client.CountPRs(s.repo.Owner, s.repo.Name); err == nil {
-			p.cacheTotal = n
+		if kind == coverageIssues {
+			if n, err := s.client.CountIssues(s.repo.Owner, s.repo.Name); err == nil {
+				p.cacheTotal = n
+			}
+		} else {
+			if n, err := s.client.CountPRs(s.repo.Owner, s.repo.Name); err == nil {
+				p.cacheTotal = n
+			}
 		}
 	}
 	return p, nil
