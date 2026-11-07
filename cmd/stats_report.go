@@ -417,7 +417,116 @@ func earliestReviewBy(reviews []reviewActivity, login string, at time.Time) (tim
 
 // buildReport filters the given PRs and computes every statistic rendered by
 // the HTML template.
+// reportEntry is the per-PR bookkeeping used while assembling the report.
+type reportEntry struct {
+	item *repoPR
+	// reviewers maps a reviewer login to their first response time, the
+	// earlier of their first issue comment and their first submitted
+	// review.
+	reviewers map[string]time.Time
+	// commentCounts counts non-author issue comments per reviewer login.
+	commentCounts map[string]int
+	// reviews holds the PR's submitted reviews (author and bots excluded,
+	// honouring the reviewer filter).
+	reviews             []reviewActivity
+	firstReviewAt       time.Time
+	firstApproveAt      time.Time
+	hasChangesRequested bool
+	mergeDuration       time.Duration
+	closeDuration       time.Duration
+	draftDuration       time.Duration
+	draftKnown          bool
+	requestTimes        map[string][]time.Time // reviewer -> request event times (re-requests included)
+	commentsReceived    int                    // non-author issue comments on the PR
+	sizeLines           int
+	sizeKnown           bool
+	hasNewData          bool // PR carries review, size or timeline data
+}
+
+// authorStats aggregates one author's merged PRs, lead times, and monthly
+// activity.
+type authorStats struct {
+	merged      int
+	opened      int
+	closed      int
+	noReview    int
+	commentsRcv int
+	additions   int
+	deletions   int
+	hasSize     bool
+	sizes       [sizeBucketCount]int
+	mergeDurs   []time.Duration
+	draftDurs   []time.Duration
+	firstRev    []time.Duration
+	approveDurs []time.Duration
+	// approveMergeDurs measures from the first approving review to the
+	// merge, for PRs approved before they were merged.
+	approveMergeDurs []time.Duration
+	// monthOpened/monthMerged/monthClosed bucket the author's PRs by
+	// creation, merge and close month respectively, feeding the
+	// per-author trend charts.
+	monthOpened map[string]int
+	monthMerged map[string]int
+	monthClosed map[string]int
+}
+
+// engagementStats aggregates one reviewer's comment and review activity.
+type engagementStats struct {
+	prsCommented int
+	comments     int
+	prsReviewed  int
+	reviews      int
+	approvals    int
+	changesReq   int
+	commentOnly  int
+	openResp     []time.Duration
+	reqResp      []time.Duration
+	rereqResp    []time.Duration
+}
+
+// reportBuilder holds the state shared between report sections. Each section
+// is a method, so a change to one metric cannot spill into another.
+type reportBuilder struct {
+	report  *Report
+	filters statsFilters
+
+	entries []*reportEntry
+	authors []string
+
+	authorStats    map[string]*authorStats
+	engagement     map[string]*engagementStats
+	mergeAll       []time.Duration
+	sizeCounts     [sizeBucketCount]int
+	sizeMergeDurs  [][]time.Duration
+	monthOpened    map[string]int
+	monthMerged    map[string]int
+	monthMergeDurs map[string][]time.Duration
+	activityHours  []int
+	noDataCount    int
+
+	now time.Time
+	top int
+}
+
+// buildReport assembles the report one section at a time.
 func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Report {
+	b := newReportBuilder(repos, f)
+	b.collectEntries(repoPRs)
+	b.buildMatrix()
+	b.aggregateReviews()
+	b.buildMergeStats()
+	b.buildLeadTime()
+	b.buildContributions()
+	b.buildEngagement()
+	b.buildSizes()
+	b.buildTrends()
+	b.buildNotables()
+	b.buildPRAppendix()
+	b.finish()
+	return b.report
+}
+
+func newReportBuilder(repos []*gitremote.Repo, f statsFilters) *reportBuilder {
 	r := &Report{
 		State:       f.State,
 		IncludeBots: f.IncludeBots,
@@ -431,40 +540,22 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.RepoIDs = append(r.RepoIDs, repo.Host+"/"+repo.Owner+"/"+repo.Name)
 	}
 
-	// Per-PR bookkeeping.
-	type prEntry struct {
-		item *repoPR
-		// reviewers maps a reviewer login to their first response time, the
-		// earlier of their first issue comment and their first submitted
-		// review.
-		reviewers map[string]time.Time
-		// commentCounts counts non-author issue comments per reviewer login.
-		commentCounts map[string]int
-		// reviews holds the PR's submitted reviews (author and bots excluded,
-		// honouring the reviewer filter).
-		reviews             []reviewActivity
-		firstReviewAt       time.Time
-		firstApproveAt      time.Time
-		hasChangesRequested bool
-		mergeDuration       time.Duration
-		closeDuration       time.Duration
-		draftDuration       time.Duration
-		draftKnown          bool
-		requestTimes        map[string][]time.Time // reviewer -> request event times (re-requests included)
-		commentsReceived    int                    // non-author issue comments on the PR
-		sizeLines           int
-		sizeKnown           bool
-		hasNewData          bool // PR carries review, size or timeline data
+	top := f.Top
+	if top <= 0 {
+		top = 5
 	}
-	var entries []*prEntry
-	firstResponseAll := []time.Duration{}
-	// reviewerReviewed and reviewerReviewFirst are review-only, for the
-	// per-reviewer table: PRs where the reviewer submitted a review, and the
-	// first response time on those PRs. Issue-comment activity is kept
-	// separate in the engagement table.
-	reviewerReviewed := map[string]int{}
-	reviewerReviewFirst := map[string][]time.Duration{}
+	r.TopN = top
 
+	return &reportBuilder{report: r, filters: f, top: top}
+}
+
+// collectEntries filters the PRs to the report's period and state, and parses
+// the per-PR facts every later section reads.
+func (b *reportBuilder) collectEntries(repoPRs []*repoPR) {
+	r := b.report
+	f := b.filters
+
+	var entries []*reportEntry
 	for _, rp := range repoPRs {
 		pr := rp.PR
 		if !prInPeriod(pr, f) || !prMatchesState(pr, f.State) {
@@ -474,7 +565,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			continue
 		}
 
-		e := &prEntry{
+		e := &reportEntry{
 			item:          rp,
 			reviewers:     map[string]time.Time{},
 			commentCounts: map[string]int{},
@@ -555,6 +646,23 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			r.Closed++
 		}
 	}
+
+	b.entries = entries
+}
+
+// buildMatrix produces the author x reviewer matrix and the per-author and
+// per-reviewer summary tables.
+func (b *reportBuilder) buildMatrix() {
+	r := b.report
+	entries := b.entries
+
+	firstResponseAll := []time.Duration{}
+	// reviewerReviewed and reviewerReviewFirst are review-only, for the
+	// per-reviewer table: PRs where the reviewer submitted a review, and the
+	// first response time on those PRs. Issue-comment activity is kept
+	// separate in the engagement table.
+	reviewerReviewed := map[string]int{}
+	reviewerReviewFirst := map[string][]time.Duration{}
 
 	// Reviewer aggregation per PR: fold into the matrix accumulators.
 	type combo struct {
@@ -718,59 +826,23 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.OverallAvg = "-"
 	}
 
-	// ------------------------------------------------------------------
-	// Review analytics: lead time, contribution, engagement, trends.
-	// ------------------------------------------------------------------
-	now := time.Now()
-	top := f.Top
-	if top <= 0 {
-		top = 5
-	}
-	r.TopN = top
+	b.authors = authors
+}
 
-	type authorAgg struct {
-		merged      int
-		opened      int
-		closed      int
-		noReview    int
-		commentsRcv int
-		additions   int
-		deletions   int
-		hasSize     bool
-		sizes       [sizeBucketCount]int
-		mergeDurs   []time.Duration
-		draftDurs   []time.Duration
-		firstRev    []time.Duration
-		approveDurs []time.Duration
-		// approveMergeDurs measures from the first approving review to the
-		// merge, for PRs approved before they were merged.
-		approveMergeDurs []time.Duration
-		// monthOpened/monthMerged/monthClosed bucket the author's PRs by
-		// creation, merge and close month respectively, feeding the
-		// per-author trend charts.
-		monthOpened map[string]int
-		monthMerged map[string]int
-		monthClosed map[string]int
-	}
-	authorAggs := map[string]*authorAgg{}
+// aggregateReviews folds the per-PR facts into author, reviewer, merge-speed,
+// size, month, and hour aggregates.
+func (b *reportBuilder) aggregateReviews() {
+	r := b.report
+	entries := b.entries
+	b.now = time.Now()
 
-	type engAgg struct {
-		prsCommented int
-		comments     int
-		prsReviewed  int
-		reviews      int
-		approvals    int
-		changesReq   int
-		commentOnly  int
-		openResp     []time.Duration
-		reqResp      []time.Duration
-		rereqResp    []time.Duration
-	}
-	engagement := map[string]*engAgg{}
-	ensureEng := func(login string) *engAgg {
+	authorAggs := map[string]*authorStats{}
+
+	engagement := map[string]*engagementStats{}
+	ensureEng := func(login string) *engagementStats {
 		g := engagement[login]
 		if g == nil {
-			g = &engAgg{}
+			g = &engagementStats{}
 			engagement[login] = g
 		}
 		return g
@@ -790,7 +862,7 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		author := strings.ToLower(pr.Author.Login)
 		agg := authorAggs[author]
 		if agg == nil {
-			agg = &authorAgg{}
+			agg = &authorStats{}
 			authorAggs[author] = agg
 		}
 		agg.opened++
@@ -918,6 +990,23 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.MedianMerge = "-"
 	}
 
+	b.authorStats = authorAggs
+	b.engagement = engagement
+	b.mergeAll = mergeAll
+	b.sizeCounts = sizeCounts
+	b.sizeMergeDurs = sizeMergeDurs
+	b.monthOpened = monthOpened
+	b.monthMerged = monthMerged
+	b.monthMergeDurs = monthMergeDurs
+	b.activityHours = activityHours
+	b.noDataCount = noDataCount
+}
+
+func (b *reportBuilder) buildMergeStats() {
+	r := b.report
+	mergeAll := b.mergeAll
+	noDataCount := b.noDataCount
+
 	// Merge speed: cumulative time-to-merge buckets and percentiles, over
 	// every merged PR in the period.
 	if len(mergeAll) > 0 {
@@ -930,6 +1019,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	// Flag a mostly-stale cache: PRs legitimately without analytics data
 	// (empty diffs) exist, so only a large share triggers the notice.
 	r.LegacyCache = r.TotalPRs > 0 && noDataCount*5 > r.TotalPRs
+}
+
+func (b *reportBuilder) buildLeadTime() {
+	r := b.report
+	authors := b.authors
+	authorAggs := b.authorStats
 
 	// Lead time rows: authors with merged PRs, busiest first.
 	for _, author := range authors {
@@ -978,6 +1073,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			P99:         pctiles[2].Value,
 		})
 	}
+}
+
+func (b *reportBuilder) buildContributions() {
+	r := b.report
+	authors := b.authors
+	authorAggs := b.authorStats
 
 	// Contribution rows: one per author, in the same order as the matrix.
 	for _, author := range authors {
@@ -1004,6 +1105,11 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		}
 		r.ContributionRows = append(r.ContributionRows, row)
 	}
+}
+
+func (b *reportBuilder) buildEngagement() {
+	r := b.report
+	engagement := b.engagement
 
 	// Engagement rows: comment-based and review-based reviewers combined.
 	engRows := make([]*ReviewerEngagementRow, 0, len(engagement))
@@ -1038,6 +1144,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		return engRows[i].Login < engRows[j].Login
 	})
 	r.EngagementRows = engRows
+}
+
+func (b *reportBuilder) buildSizes() {
+	r := b.report
+	sizeCounts := b.sizeCounts
+	sizeMergeDurs := b.sizeMergeDurs
 
 	// Size buckets: all five rows for a stable table.
 	for i, name := range sizeBucketNames {
@@ -1048,6 +1160,16 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		}
 		r.SizeRows = append(r.SizeRows, row)
 	}
+}
+
+func (b *reportBuilder) buildTrends() {
+	r := b.report
+	authors := b.authors
+	authorAggs := b.authorStats
+	monthOpened := b.monthOpened
+	monthMerged := b.monthMerged
+	monthMergeDurs := b.monthMergeDurs
+	activityHours := b.activityHours
 
 	// Monthly trends across the union of opened and merged months.
 	monthSet := map[string]bool{}
@@ -1108,6 +1230,13 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		}
 		r.AuthorTrends = append(r.AuthorTrends, trend)
 	}
+}
+
+func (b *reportBuilder) buildNotables() {
+	r := b.report
+	entries := b.entries
+	now := b.now
+	top := b.top
 
 	// Notable PR lists: outstanding cases first, ranked by the list metric.
 	type notable struct {
@@ -1163,6 +1292,12 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 	r.NotableAwaiting = pickNotable(awaiting)
 	r.NotableMerge = pickNotable(longest)
 	r.NotableCommented = pickNotable(mostCommented)
+}
+
+func (b *reportBuilder) buildPRAppendix() {
+	r := b.report
+	f := b.filters
+	entries := b.entries
 
 	// Appendix: every PR in the period, only when requested since the table
 	// can be very large.
@@ -1192,6 +1327,11 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 			return r.PRs[i].Number < r.PRs[j].Number
 		})
 	}
+}
+
+func (b *reportBuilder) finish() {
+	r := b.report
+	f := b.filters
 
 	r.Period = formatPeriod(f.From, f.To)
 	if !f.From.IsZero() {
@@ -1201,7 +1341,6 @@ func buildReport(repos []*gitremote.Repo, repoPRs []*repoPR, f statsFilters) *Re
 		r.ToValue = f.To.Format("2006-01-02")
 	}
 	r.GeneratedAt = time.Now().Format("2006-01-02 15:04")
-	return r
 }
 
 // prInPeriod reports whether the PR's creation date falls inside the filter's
