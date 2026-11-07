@@ -19,11 +19,11 @@ import (
 // use the refresh action) first for complete data.
 func serveProcessFunc(store cache.Store) webui.ProcessFunc {
 	return func(q webui.ProcessQuery) (string, error) {
-		from, err := parseStatsTime(q.From, false)
+		from, err := parseDateOption(q.From, "from", false)
 		if err != nil {
 			return "", err
 		}
-		to, err := parseStatsTime(q.To, true)
+		to, err := parseDateOption(q.To, "to", true)
 		if err != nil {
 			return "", err
 		}

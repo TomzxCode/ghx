@@ -141,38 +141,13 @@ func resolveCacheKnobs(cmd *cobra.Command) (cacheKnobs, error) {
 	return cacheKnobs{duration: duration, workers: workers, retries: retries}, nil
 }
 
-// parseSinceDate parses a --since value. Supported formats: RFC3339
-// ("2026-09-01T15:04:05Z"), date-only ("2026-09-01", interpreted as UTC
-// midnight, matching GitHub search's day-granular qualifiers), and naive
-// datetimes ("2026-09-01 15:04[.05]", interpreted in the local timezone).
+// parseSinceDate parses a --since value using the shared date parser. An empty
+// value is invalid because --since is only parsed when set.
 func parseSinceDate(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	layouts := []struct {
-		layout   string
-		location *time.Location
-	}{
-		{time.RFC3339, nil}, // the string carries its own offset
-		{"2006-01-02", time.UTC},
-		{"2006-01-02 15:04:05", time.Local},
-		{"2006-01-02 15:04", time.Local},
-		{"2006-01-02T15:04:05", time.Local},
-		{"2006-01-02T15:04", time.Local},
+	if strings.TrimSpace(s) == "" {
+		return time.Time{}, fmt.Errorf("invalid --since value %q: expected a date", s)
 	}
-	for _, l := range layouts {
-		var (
-			t   time.Time
-			err error
-		)
-		if l.location == nil {
-			t, err = time.Parse(l.layout, s)
-		} else {
-			t, err = time.ParseInLocation(l.layout, s, l.location)
-		}
-		if err == nil {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("invalid --since value %q: use YYYY-MM-DD or RFC3339 (e.g. 2026-09-01T15:04:05Z)", s)
+	return parseDateOption(s, "--since", false)
 }
 
 // FetchEvent describes progress during a repository fetch. Phase is "issues"

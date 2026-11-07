@@ -17,11 +17,11 @@ import (
 // which reloads /stats with new from/to/state values.
 func serveStatsFunc(store cache.Store) webui.StatsFunc {
 	return func(q webui.StatsQuery) (string, error) {
-		from, err := parseStatsTime(q.From, false)
+		from, err := parseDateOption(q.From, "from", false)
 		if err != nil {
 			return "", err
 		}
-		to, err := parseStatsTime(q.To, true)
+		to, err := parseDateOption(q.To, "to", true)
 		if err != nil {
 			return "", err
 		}

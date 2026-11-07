@@ -23,40 +23,49 @@ func statsTestPR(number int, author string, createdAt time.Time, state string, c
 	}
 }
 
-func TestParseStatsTime(t *testing.T) {
+func TestParseDateOption(t *testing.T) {
 	// Empty is unbounded.
-	if got, err := parseStatsTime("", false); err != nil || !got.IsZero() {
+	if got, err := parseDateOption("", "--from", false); err != nil || !got.IsZero() {
 		t.Errorf("empty: got %v, %v; want zero, nil", got, err)
 	}
 
-	// Date-only from is midnight.
-	got, err := parseStatsTime("2026-01-15", false)
+	// Date-only from is midnight UTC.
+	got, err := parseDateOption("2026-01-15", "--from", false)
 	if err != nil {
 		t.Fatalf("date-only: %v", err)
 	}
-	if got.Month() != time.January || got.Day() != 15 || got.Hour() != 0 {
-		t.Errorf("date-only from: got %v", got)
+	if want := time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("date-only from: got %v, want %v", got, want)
 	}
 
 	// Date-only to is the end of that day (inclusive).
-	got, err = parseStatsTime("2026-01-15", true)
+	got, err = parseDateOption("2026-01-15", "--to", true)
 	if err != nil {
 		t.Fatalf("date-only end: %v", err)
 	}
-	if got.Hour() != 23 || got.Minute() != 59 {
-		t.Errorf("date-only to: got %v", got)
+	if want := time.Date(2026, time.January, 15, 23, 59, 59, 999999999, time.UTC); !got.Equal(want) {
+		t.Errorf("date-only to: got %v, want %v", got, want)
 	}
 
-	// RFC3339 is accepted as-is.
-	got, err = parseStatsTime("2026-01-15T10:30:00Z", true)
+	// RFC3339 is accepted as-is, without rounding the end boundary.
+	got, err = parseDateOption("2026-01-15T10:30:00Z", "--to", true)
 	if err != nil {
 		t.Fatalf("rfc3339: %v", err)
 	}
-	if got.UTC().Hour() != 10 || got.UTC().Minute() != 30 {
-		t.Errorf("rfc3339: got %v", got)
+	if want := time.Date(2026, time.January, 15, 10, 30, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("rfc3339: got %v, want %v", got, want)
 	}
 
-	if _, err := parseStatsTime("not-a-date", false); err == nil {
+	// The T-separated naive form is accepted and interpreted locally.
+	got, err = parseDateOption("2026-01-15T10:30", "--from", false)
+	if err != nil {
+		t.Fatalf("naive T datetime: %v", err)
+	}
+	if want := time.Date(2026, time.January, 15, 10, 30, 0, 0, time.Local); !got.Equal(want) {
+		t.Errorf("naive T datetime: got %v, want %v", got, want)
+	}
+
+	if _, err := parseDateOption("not-a-date", "--from", false); err == nil {
 		t.Error("invalid date: want error, got nil")
 	}
 }

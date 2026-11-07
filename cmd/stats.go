@@ -55,11 +55,11 @@ func init() {
 }
 
 func runStats(cmd *cobra.Command, args []string) error {
-	from, err := parseStatsTime(statsFrom, false)
+	from, err := parseDateOption(statsFrom, "--from", false)
 	if err != nil {
 		return err
 	}
-	to, err := parseStatsTime(statsTo, true)
+	to, err := parseDateOption(statsTo, "--to", true)
 	if err != nil {
 		return err
 	}
@@ -191,28 +191,3 @@ func toLowerSet(logins []string) map[string]bool {
 // ---------------------------------------------------------------------------
 // Period parsing
 // ---------------------------------------------------------------------------
-
-var statsTimeLayouts = []string{
-	"2006-01-02",
-	"2006-01-02 15:04",
-	"2006-01-02 15:04:05",
-	time.RFC3339,
-}
-
-// parseStatsTime parses a period boundary. Date-only values are interpreted as
-// midnight, or as the last nanosecond of the day when end is true, so --to is
-// inclusive. An empty string returns the zero time (unbounded).
-func parseStatsTime(s string, end bool) (time.Time, error) {
-	if strings.TrimSpace(s) == "" {
-		return time.Time{}, nil
-	}
-	for _, layout := range statsTimeLayouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			if end && layout == "2006-01-02" {
-				return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, t.Location()), nil
-			}
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("invalid date %q: expected YYYY-MM-DD or RFC3339", s)
-}
