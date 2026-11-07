@@ -1,0 +1,1177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Repository activity report</title>
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.6.2/dist/css/tom-select.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.6.2/dist/js/tom-select.complete.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script>
+(function() {
+  var stored = null;
+  try { stored = localStorage.getItem("ghx-theme"); } catch (e) {}
+  var dark = stored ? stored === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  if (dark) document.documentElement.classList.add("dark");
+})();
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f6f8fa;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d0d7de;
+    --table-border: #d8dee4;
+    --surface: #ffffff;
+    --surface-alt: #f6f8fa;
+    --empty: #8c959f;
+    --link: #0969da;
+    --dur: #424a53;
+    --state-merged: #8250df;
+    --state-open: #1a7f37;
+    --state-closed: #cf222e;
+    --btn-bg: #ffffff;
+  }
+  html.dark {
+    color-scheme: dark;
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #8d96a0;
+    --border: #30363d;
+    --table-border: #30363d;
+    --surface: #161b22;
+    --surface-alt: #21262d;
+    --empty: #6e7681;
+    --link: #58a6ff;
+    --dur: #a5b1bd;
+    --state-merged: #ab7df8;
+    --state-open: #3fb950;
+    --state-closed: #f85149;
+    --btn-bg: #21262d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    margin: 0; background: var(--bg); color: var(--fg);
+  }
+  /* Sticky full-height contents sidebar: laid out in flow (unlike position:
+  fixed, which stops painting after compositor scrolling on some mobile
+  browsers), pinned to the viewport top while content scrolls beneath it. */
+  .layout { display: flex; align-items: flex-start; }
+  #toc {
+    position: sticky; top: 0;
+    width: 15rem; flex-shrink: 0;
+    height: 100vh; height: 100dvh;
+    overflow-y: auto; overscroll-behavior: contain;
+    padding: 1.25rem 0.75rem;
+    background: var(--surface); border-right: 1px solid var(--border);
+    font-size: 0.8rem;
+  }
+  #toc .toc-title {
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--muted); margin: 0 0.5rem 0.5rem;
+  }
+  #toc a {
+    display: block; padding: 0.3rem 0.5rem; color: var(--muted);
+    border-radius: 6px; border-left: 2px solid transparent;
+  }
+  #toc a:hover { color: var(--fg); background: var(--surface-alt); text-decoration: none; }
+  #toc a.active { color: var(--link); font-weight: 600; background: var(--surface-alt); }
+  /* Sticky top bar: holds the menu button (mobile) and theme toggle. A real
+  in-flow sticky element, because fixed positioning stops painting after
+  compositor scrolling on some mobile browsers. Placed before the media
+  query so the mobile overrides below win the cascade. */
+  #toc-toggle-bar {
+    display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; z-index: 20;
+    margin: -2rem -2rem 1.5rem; padding: 0.4rem 2rem;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  #toc-toggle { display: none; }
+  #theme-toggle {
+    background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.35rem 0.45rem; cursor: pointer; line-height: 0;
+  }
+  #theme-toggle:hover { border-color: var(--muted); }
+  #theme-toggle svg { display: block; width: 1rem; height: 1rem; }
+  /* Light theme shows the moon (switch to dark); dark shows the sun. */
+  #theme-toggle .icon-sun { display: none; }
+  html.dark #theme-toggle .icon-sun { display: block; }
+  html.dark #theme-toggle .icon-moon { display: none; }
+  main { flex: 1; min-width: 0; padding: 2rem; }
+  @media (max-width: 900px) {
+    #toc-toggle-bar { margin: -1rem -1rem 0.75rem; padding: 0.4rem 1rem; }
+    #toc-toggle {
+      display: block;
+      background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 0.25rem 0.65rem; font-size: 1.1rem; line-height: 1.2; cursor: pointer;
+    }
+    /* The inline sidebar gives way to the swipe-in drawer. */
+    #toc { display: none; }
+    main { padding: 1rem; }
+    /* Mobile drawer: a <dialog> opened on swipe. showModal places it in the
+    browser's top layer, composited independently of page scroll, and the
+    backdrop replaces the scrim. */
+    #toc-drawer {
+      position: fixed; top: 0; left: 0; bottom: 0;
+      width: 15rem; max-width: 15rem; max-height: none; margin: 0;
+      /* dialogs default to height: fit-content in the UA stylesheet */
+      height: 100vh; height: 100dvh;
+      padding: 1.25rem 0.75rem;
+      background: var(--surface); border: none; border-right: 1px solid var(--border);
+      overflow-y: auto; overscroll-behavior: contain; font-size: 0.8rem;
+    }
+    #toc-drawer[open] { display: block; animation: toc-drawer-in 0.2s ease; }
+    #toc-drawer::backdrop { background: rgba(0, 0, 0, 0.4); }
+    @keyframes toc-drawer-in { from { margin-left: -16rem; } }
+    #toc-drawer a {
+      display: block; padding: 0.4rem 0.5rem; color: var(--muted); border-radius: 6px;
+    }
+    #toc-drawer a:hover { color: var(--fg); background: var(--surface-alt); text-decoration: none; }
+    #toc-drawer a.active { color: var(--link); font-weight: 600; background: var(--surface-alt); }
+    #toc-drawer .toc-drawer-head {
+      display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem;
+    }
+    #toc-drawer-close {
+      background: none; border: none; color: var(--muted); font-size: 1.25rem;
+      line-height: 1; cursor: pointer; padding: 0.2rem 0.4rem;
+    }
+    #toc-drawer-close:hover { color: var(--fg); }
+  }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  h1 { margin: 0 0 0.25rem; font-size: 1.5rem; }
+  h2 { margin: 2.5rem 0 0.75rem; font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.35rem; }
+  .meta { color: var(--muted); margin-bottom: 1.5rem; }
+  .cards { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.5rem; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 0.75rem 1.25rem; min-width: 8rem;
+  }
+  .card .value { font-size: 1.4rem; font-weight: 600; }
+  .card .label { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  table { border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; width: 100%; font-size: 0.85rem; }
+  /* Wide tables scroll internally instead of widening the document: a
+  horizontally overflowing document breaks fixed/sticky element painting on
+  mobile Chromium. */
+  table { display: block; overflow-x: auto; }
+  th, td { border: 1px solid var(--table-border); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+  th { background: var(--surface-alt); font-weight: 600; white-space: nowrap; }
+  td.num, th.num { text-align: right; }
+  .matrix td.cell { text-align: center; min-width: 5.5rem; }
+  .matrix td .count { font-weight: 600; display: block; }
+  .matrix td .dur { font-size: 0.72rem; color: var(--dur); display: block; }
+  .matrix td.cell[style] { color: #1f2328; }
+  .matrix td.cell[style] .dur { color: #3d4450; }
+  .matrix td.total { background: var(--surface-alt); font-weight: 600; text-align: center; }
+  .matrix th.author, .matrix td.author { white-space: nowrap; }
+  .matrix-filters { display: flex; gap: 1rem; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; }
+  .matrix-filters label { font-size: 0.8rem; color: var(--muted); }
+  .matrix-filters input {
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.3rem 0.6rem; font-size: 0.8rem; width: 12rem; margin-left: 0.4rem;
+  }
+  .matrix-filters input:focus { outline: none; border-color: var(--link); }
+  #matrix-filter-hint { font-size: 0.75rem; color: var(--muted); }
+  .empty { color: var(--empty); }
+  .prlist td.num { white-space: nowrap; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  footer { margin-top: 2.5rem; color: var(--muted); font-size: 0.8rem; }
+  .state-merged { color: var(--state-merged); font-weight: 600; }
+  .state-open { color: var(--state-open); font-weight: 600; }
+  .state-closed { color: var(--state-closed); font-weight: 600; }
+  .matrix-filters .ts-wrapper { width: 12rem; }
+  .ts-wrapper .ts-control {
+    background: var(--surface); color: var(--fg); border-color: var(--border);
+    border-radius: 6px; font-size: 0.8rem; min-height: 0; padding: 0.25rem 0.5rem;
+  }
+  .ts-wrapper.focus .ts-control { border-color: var(--link); box-shadow: none; background: var(--surface); }
+  .ts-wrapper.multi .ts-control > div { background: var(--surface-alt); border-color: var(--border); color: var(--fg); }
+  .ts-wrapper.multi .ts-control > div.active { background: var(--surface-alt); color: var(--fg); }
+  .ts-wrapper .ts-control input { color: var(--fg); }
+  .ts-wrapper .ts-control input::placeholder { color: var(--muted); }
+  .ts-dropdown { background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
+  .ts-dropdown .option { color: var(--fg); }
+  .ts-dropdown .option.active, .ts-dropdown .option:hover { background: var(--surface-alt); color: var(--fg); }
+  .ts-dropdown .dropdown-input { background: var(--surface); color: var(--fg); border-color: var(--border); }
+  .ts-dropdown .dropdown-input::placeholder { color: var(--muted); }
+  .notice {
+    background: var(--surface); border: 1px solid var(--border); border-left: 3px solid #d29922;
+    border-radius: 6px; padding: 0.6rem 0.9rem; margin-bottom: 1.25rem; font-size: 0.85rem; color: var(--fg);
+  }
+  .chart-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; max-width: 900px; }
+  .chart-wrap { position: relative; height: 340px; }
+  .chart-note { font-size: 0.75rem; color: var(--muted); margin-top: 0.5rem; }
+  .author-trends { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 0.75rem; }
+  .author-trends .chart-box { max-width: none; }
+  .author-trend-name { margin: 0 0 0.5rem; font-size: 0.95rem; }
+  .trend-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
+  .trend-controls button {
+    background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.25rem 0.75rem; font-size: 0.75rem; cursor: pointer;
+  }
+  .trend-controls button:hover { border-color: var(--muted); }
+  .trend-controls button.active { border-color: var(--link); color: var(--link); font-weight: 600; }
+  .trend-controls label { font-size: 0.75rem; color: var(--muted); align-self: center; }
+  .trend-controls input {
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.2rem 0.4rem; font-size: 0.75rem; color-scheme: light;
+  }
+  html.dark .trend-controls input { color-scheme: dark; }
+  .trend-controls input.invalid { border-color: var(--state-closed); }
+  .notable { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+  .notable > div { flex: 1 1 260px; min-width: 240px; }
+  .notable h3 { font-size: 0.85rem; margin: 0 0 0.5rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .notable ol { margin: 0; padding-left: 1.4rem; font-size: 0.85rem; }
+  .notable li { margin-bottom: 0.4rem; }
+  .notable .value { color: var(--muted); font-size: 0.75rem; display: block; }
+  h2 .section-hint { font-size: 0.75rem; color: var(--muted); font-weight: 400; margin-left: 0.5rem; }
+  .period-form {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;
+    margin: -0.75rem 0 1.25rem; font-size: 0.8rem; color: var(--muted);
+  }
+  .period-form label { font-size: 0.8rem; }
+  .period-form input, .period-form select {
+    background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.25rem 0.4rem; font-size: 0.8rem;
+  }
+  .period-form input:focus, .period-form select:focus { outline: none; border-color: var(--link); }
+  .period-form button {
+    background: var(--btn-bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 0.25rem 0.65rem; font-size: 0.8rem; cursor: pointer;
+  }
+  .period-form button:hover { border-color: var(--muted); }
+  html.dark .period-form input, html.dark .period-form select { color-scheme: dark; }
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="toc" aria-label="Report sections">
+  <div class="toc-title">Contents</div>
+  <a href="#summary">Summary</a>
+  {{if .Trends}}<a href="#monthly-trend">Monthly trend</a>{{end}}
+  {{if .AuthorTrends}}<a href="#author-trends">Activity by author</a>{{end}}
+  {{if .MergeSpeedRows}}<a href="#merge-speed">Merge speed</a>{{end}}
+  {{if .AuthorMergeSpeed}}<a href="#merge-speed-by-author">Merge speed by author</a>{{end}}
+  {{if .MergeTrendSamples}}<a href="#merge-trend">Merge speed over time</a>{{end}}
+  <a href="#matrix">Author × reviewer matrix</a>
+  <a href="#per-author">Per-author summary</a>
+  {{if .LeadRows}}<a href="#lead-time">Lead time</a>{{end}}
+  {{if .ContributionRows}}<a href="#contribution">Contribution</a>{{end}}
+  <a href="#per-reviewer">Per-reviewer summary</a>
+  {{if .EngagementRows}}<a href="#engagement">Reviewer engagement</a>{{end}}
+  {{if .SizeRows}}<a href="#size-vs-merge">PR size vs merge time</a>{{end}}
+  {{if .ActivityHours}}<a href="#peak-activity">Peak activity</a>{{end}}
+  {{if or .NotableAwaiting .NotableMerge .NotableCommented}}<a href="#notable">Notable pull requests</a>{{end}}
+  {{if .ShowPRs}}<a href="#pr-list">Pull requests in period</a>{{end}}
+</nav>
+<main>
+<div id="toc-toggle-bar">
+  <button id="toc-toggle" type="button" aria-label="Open section menu">&#9776;</button>
+  <button id="theme-toggle" type="button" aria-label="Toggle theme" title="Toggle theme">
+    <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  </button>
+</div>
+<div class="header">
+  <h1>Repository activity report</h1>
+</div>
+<div class="meta">
+  Repos: {{.ReposLabel}} &nbsp;•&nbsp; Period: {{.Period}} &nbsp;•&nbsp; State: {{.State}} &nbsp;•&nbsp; Generated: {{.GeneratedAt}}
+</div>
+
+{{if .Interactive}}
+<form class="period-form" method="get" action="/stats">
+  {{if not .AllRepos}}{{range .RepoIDs}}<input type="hidden" name="repo" value="{{.}}">
+{{end}}{{end}}
+  {{if .IncludeBots}}<input type="hidden" name="include-bots" value="true">{{end}}
+  {{if .ShowPRs}}<input type="hidden" name="list-prs" value="true">{{end}}
+  <input type="hidden" name="top" value="{{.TopN}}">
+  <label for="report-from">From</label>
+  <input type="date" id="report-from" name="from" value="{{.FromValue}}" autocomplete="off">
+  <label for="report-to">To</label>
+  <input type="date" id="report-to" name="to" value="{{.ToValue}}" autocomplete="off">
+  <label for="report-state">State</label>
+  <select id="report-state" name="state">
+    <option value="all"{{if or (eq .State "all") (eq .State "")}} selected{{end}}>All</option>
+    <option value="open"{{if eq .State "open"}} selected{{end}}>Open</option>
+    <option value="closed"{{if eq .State "closed"}} selected{{end}}>Closed</option>
+    <option value="merged"{{if eq .State "merged"}} selected{{end}}>Merged</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+{{end}}
+
+<div class="cards" id="summary">
+  <div class="card"><div class="value">{{.TotalPRs}}</div><div class="label">Pull requests</div></div>
+  <div class="card"><div class="value">{{.Merged}}</div><div class="label">Merged</div></div>
+  <div class="card"><div class="value">{{.Open}}</div><div class="label">Open</div></div>
+  <div class="card"><div class="value">{{.Closed}}</div><div class="label">Closed (unmerged)</div></div>
+  <div class="card"><div class="value">{{.AuthorCount}}</div><div class="label">Authors</div></div>
+  <div class="card"><div class="value">{{.ReviewerCount}}</div><div class="label">Reviewers</div></div>
+  <div class="card"><div class="value">{{.OverallMedian}}</div><div class="label">Median first response</div></div>
+  <div class="card"><div class="value">{{.OverallAvg}}</div><div class="label">Average first response</div></div>
+  <div class="card"><div class="value">{{.MedianMerge}}</div><div class="label">Median time to merge</div></div>
+  <div class="card"><div class="value">{{.TotalReviews}}</div><div class="label">Reviews submitted</div></div>
+</div>
+
+{{if .LegacyCache}}
+<div class="notice">Some pull requests were cached before review, size and timeline data was collected.
+Run <code>ghx cache --force</code> for these repositories to enable the full set of metrics.</div>
+{{end}}
+
+{{if .Trends}}
+<h2 id="monthly-trend">Monthly trend</h2>
+<div class="chart-box">
+  <div class="chart-wrap"><canvas id="trend-chart"></canvas></div>
+  <div class="chart-note">Pull requests opened and merged per month, with the median time from opening to merge.</div>
+</div>
+{{end}}
+
+{{if .AuthorTrends}}
+<h2 id="author-trends">Activity by author <span class="section-hint">opened, merged and closed per month</span></h2>
+<p class="meta">One chart per PR author. Each bar group counts the PRs the author opened in that
+month (by creation date) and the PRs they had merged or closed that month.</p>
+<div class="author-trends">
+  {{range $i, $t := .AuthorTrends}}
+  <div class="chart-box">
+    <h3 class="author-trend-name">{{$t.Login}}</h3>
+    <div class="chart-wrap" style="height: 240px;"><canvas class="author-trend-chart" data-index="{{$i}}"></canvas></div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{if .MergeSpeedRows}}
+<h2 id="merge-speed">Merge speed <span class="section-hint">merged PRs only</span></h2>
+<div class="notable">
+  <div>
+    <table>
+      <thead>
+        <tr><th>Merged</th><th class="num">PRs</th><th class="num">Share</th></tr>
+      </thead>
+      <tbody>
+        {{range .MergeSpeedRows}}
+        <tr><td>{{.Bucket}}</td><td class="num">{{.Count}}</td><td class="num">{{.Pct}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    <p class="meta">Share of merged PRs that landed within the window of being opened.</p>
+  </div>
+  <div>
+    <table>
+      <thead>
+        <tr><th>Percentile</th><th class="num">Time to merge</th></tr>
+      </thead>
+      <tbody>
+        {{range .MergePercentileRows}}
+        <tr><td>{{.Label}}</td><td class="num">{{.Value}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+    <p class="meta">p50 is the median time from opening to merge; p90 and p99 mark
+    the points by which 90% and 99% of merged PRs had landed.</p>
+  </div>
+</div>
+{{end}}
+
+{{if .AuthorMergeSpeed}}
+<h2 id="merge-speed-by-author">Merge speed by author <span class="section-hint">merged PRs only</span></h2>
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">Merged</th><th class="num">Within 1h</th><th class="num">Within 1d</th><th class="num">Within 1w</th><th class="num">p50</th><th class="num">p90</th><th class="num">p99</th></tr>
+  </thead>
+  <tbody>
+    {{range .AuthorMergeSpeed}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.MergedCount}}</td>
+      <td class="num">{{.Within1h}}</td>
+      <td class="num">{{.Within1d}}</td>
+      <td class="num">{{.Within1w}}</td>
+      <td class="num">{{.P50}}</td>
+      <td class="num">{{.P90}}</td>
+      <td class="num">{{.P99}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">Window columns show the count (share) of the author's merged PRs that landed within
+the window of being opened; percentiles describe the author's time-to-merge distribution.</p>
+{{end}}
+
+{{if .MergeTrendSamples}}
+<h2 id="merge-trend">Merge speed over time</h2>
+<div class="trend-controls" role="group" aria-label="Chart options">
+  <button type="button" data-gran="day">Daily</button>
+  <button type="button" data-gran="week">Weekly</button>
+  <button type="button" data-gran="month" class="active">Monthly</button>
+  <button type="button" id="merge-trend-cumulative">Cumulative</button>
+  <label for="merge-trend-window">Window</label>
+  <input type="text" id="merge-trend-window" value="28d" autocomplete="off">
+  <label for="merge-trend-from">From</label>
+  <input type="date" id="merge-trend-from" autocomplete="off">
+  <label for="merge-trend-to">To</label>
+  <input type="date" id="merge-trend-to" autocomplete="off">
+</div>
+<div class="chart-box">
+  <div class="chart-wrap"><canvas id="merge-speed-trend-chart"></canvas></div>
+  <div class="chart-note">Share of merged PRs that landed within 1 hour, 1 day, and 1 week of being opened,
+  grouped by merge date (UTC). The From/To fields limit the displayed period;
+  Cumulative aggregates the PRs merged up to each point within the trailing
+  Window (e.g. 28d, 4w, 3m; empty for all past).</div>
+</div>
+<div class="chart-box" style="margin-top: 0.75rem;">
+  <div class="chart-wrap"><canvas id="merge-percentile-trend-chart"></canvas></div>
+  <div class="chart-note">p50, p90 and p99 of the time from opening to merge, in hours,
+  for PRs grouped by merge date (UTC).</div>
+</div>
+{{end}}
+
+<h2 id="matrix">Author × reviewer matrix</h2>
+<p class="meta">Each cell counts the PRs authored by the row author that the column reviewer responded to,
+with the share of that author's PRs the reviewer responded to (cell count divided by the row Total),
+and the average and median time from PR creation to that reviewer's first response.
+A response is an issue comment or a submitted review (approval, change request or review comment).
+Because a PR can have several reviewers, a row's shares can add up to more than 100%.
+The <code>(no reviews)</code> column counts PRs no reviewer responded to.
+Reviewers exclude the PR author{{if not .IncludeBots}} and bot accounts{{end}}.</p>
+{{if .Matrix.Rows}}
+<div class="matrix-filters">
+  <label for="author-filter">Authors</label>
+  <select id="author-filter" multiple placeholder="Filter authors" autocomplete="off">
+    {{range .Matrix.Rows}}<option value="{{.Author}}">{{.Author}}</option>{{end}}
+  </select>
+  <label for="reviewer-filter">Reviewers</label>
+  <select id="reviewer-filter" multiple placeholder="Filter reviewers" autocomplete="off">
+    {{range .Matrix.Cols}}{{if not .NoReviews}}<option value="{{.Reviewer}}">{{.Reviewer}}</option>{{end}}{{end}}
+  </select>
+  <span id="matrix-filter-hint"></span>
+</div>
+<table class="matrix" id="matrix-table">
+  <thead>
+    <tr>
+      <th class="author">Author</th>
+      {{range .Matrix.Cols}}{{if .NoReviews}}<th class="num" data-role="noreview">{{.Reviewer}}</th>{{else}}<th class="num" data-reviewer="{{.Reviewer}}">{{.Reviewer}} ({{.Total}})</th>{{end}}{{end}}
+      <th class="num">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Matrix.Rows}}
+    <tr>
+      <td class="author" data-author="{{.Author}}">{{.Author}}</td>
+      {{range .Cells}}
+      <td class="cell"{{if .Bg}} style="background: {{.Bg}}"{{end}}>
+        {{if .Count}}
+          <span class="count">{{.Count}}</span>
+          {{if .Pct}}<span class="dur">reviewed {{.Pct}}</span>{{end}}
+          {{if .Avg}}<span class="dur">avg {{.Avg}}</span>{{end}}
+          {{if .Median}}<span class="dur">med {{.Median}}</span>{{end}}
+        {{else}}
+          <span class="empty">·</span>
+        {{end}}
+      </td>
+      {{end}}
+      <td class="total">{{.Total}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No pull requests matched the given filters.</p>
+{{end}}
+
+<h2 id="per-author">Per-author summary</h2>
+{{if .AuthorRows}}
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Median first response</th><th class="num">Average first response</th></tr>
+  </thead>
+  <tbody>
+    {{range .AuthorRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.PRs}}</td>
+      <td class="num">{{.Merged}}</td>
+      <td class="num">{{if .MedianFirstResponse}}{{.MedianFirstResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .AvgFirstResponse}}{{.AvgFirstResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No authors matched.</p>
+{{end}}
+
+{{if .LeadRows}}
+<h2 id="lead-time">Lead time <span class="section-hint">merged PRs only</span></h2>
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">Merged PRs</th><th class="num">Median time to merge</th><th class="num">Average time to merge</th><th class="num">Median time in draft</th><th class="num">Median time to first review</th><th class="num">Median time to approve</th><th class="num">Median approval to merge</th></tr>
+  </thead>
+  <tbody>
+    {{range .LeadRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.MergedCount}}</td>
+      <td class="num">{{.MedianMerge}}</td>
+      <td class="num">{{.AvgMerge}}</td>
+      <td class="num">{{if .MedianDraft}}{{.MedianDraft}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianFirstReview}}{{.MedianFirstReview}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianApprove}}{{.MedianApprove}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianApproveMerge}}{{.MedianApproveMerge}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">Draft time is reconstructed from ready-for-review and convert-to-draft timeline events;
+review and approve times come from submitted reviews. Approval to merge measures from the PR's first
+approving review to the merge, counting only PRs approved before they were merged.
+A dash means the underlying events were not recorded.</p>
+{{end}}
+
+{{if .ContributionRows}}
+<h2 id="contribution">Contribution</h2>
+<table>
+  <thead>
+    <tr><th>Author</th><th class="num">Opened</th><th class="num">Merged</th><th class="num">Closed</th><th class="num">Merge rate</th><th class="num">PRs w/o review</th><th class="num">Comments received</th><th class="num">+/-</th><th class="num">Size xs/s/m/l/xl</th></tr>
+  </thead>
+  <tbody>
+    {{range .ContributionRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.Opened}}</td>
+      <td class="num">{{.Merged}}</td>
+      <td class="num">{{.Closed}}</td>
+      <td class="num">{{.MergeRate}}</td>
+      <td class="num">{{.NoReview}}</td>
+      <td class="num">{{.CommentsReceived}}</td>
+      <td class="num">{{if .HasSizeData}}+{{.Additions}}/-{{.Deletions}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .HasSizeData}}{{index .SizeCounts 0}}/{{index .SizeCounts 1}}/{{index .SizeCounts 2}}/{{index .SizeCounts 3}}/{{index .SizeCounts 4}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">Size buckets count changed lines per PR: xs &lt;100, s &lt;500, m &lt;1000, l &lt;2000, xl &ge;2000.
+"PRs w/o review" counts PRs that received no reviewer comment and no review.</p>
+{{end}}
+
+<h2 id="per-reviewer">Per-reviewer summary</h2>
+{{if .ReviewerRows}}
+<table>
+  <thead>
+    <tr><th>Reviewer</th><th class="num">PRs reviewed</th><th class="num">Median first response</th><th class="num">Average first response</th></tr>
+  </thead>
+  <tbody>
+    {{range .ReviewerRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.PRsReviewed}}</td>
+      <td class="num">{{.Median}}</td>
+      <td class="num">{{.Avg}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">"PRs reviewed" counts PRs where the reviewer submitted a review
+(approval, change request or review comment); issue comments alone are counted
+under Reviewer engagement.</p>
+{{else}}
+<p class="empty">No submitted reviews matched.</p>
+{{end}}
+
+{{if .EngagementRows}}
+<h2 id="engagement">Reviewer engagement</h2>
+<table>
+  <thead>
+    <tr><th>Reviewer</th><th class="num">PRs commented</th><th class="num">Comments</th><th class="num">PRs reviewed</th><th class="num">Reviews</th><th class="num">Approvals</th><th class="num">Changes requested</th><th class="num">Comment-only</th><th class="num">Median open to review</th><th class="num">Median request to review</th><th class="num">Median re-request to review</th></tr>
+  </thead>
+  <tbody>
+    {{range .EngagementRows}}
+    <tr>
+      <td>{{.Login}}</td>
+      <td class="num">{{.PRsCommented}}</td>
+      <td class="num">{{.Comments}}</td>
+      <td class="num">{{.PRsReviewed}}</td>
+      <td class="num">{{.Reviews}}</td>
+      <td class="num">{{.Approvals}}</td>
+      <td class="num">{{.ChangesRequested}}</td>
+      <td class="num">{{.CommentOnly}}</td>
+      <td class="num">{{if .MedianOpenResponse}}{{.MedianOpenResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianRequestResponse}}{{.MedianRequestResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+      <td class="num">{{if .MedianRerequestResponse}}{{.MedianRerequestResponse}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<p class="meta">"Median open to review" measures PR creation to the reviewer's first review;
+"request to review" and "re-request to review" measure from the review request timeline event.
+Request columns need review-request events in the cached data.</p>
+{{end}}
+
+{{if .SizeRows}}
+<h2 id="size-vs-merge">PR size vs merge time</h2>
+<table>
+  <thead>
+    <tr><th>Size</th><th class="num">PRs</th><th class="num">Merged</th><th class="num">Median time to merge</th></tr>
+  </thead>
+  <tbody>
+    {{range .SizeRows}}
+    <tr>
+      <td>{{.Bucket}}</td>
+      <td class="num">{{.Count}}</td>
+      <td class="num">{{.MergedCount}}</td>
+      <td class="num">{{if .MedianMerge}}{{.MedianMerge}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<div class="chart-box" style="margin-top: 0.75rem;">
+  <div class="chart-wrap" style="height: 260px;"><canvas id="size-chart"></canvas></div>
+</div>
+{{end}}
+
+{{if .ActivityHours}}
+<h2 id="peak-activity">Peak activity <span class="section-hint">PR opens by hour of day</span></h2>
+<div class="chart-box">
+  <div class="chart-wrap"><canvas id="activity-chart"></canvas></div>
+  <div class="chart-note">Hours are in UTC as returned by the GitHub API.</div>
+</div>
+{{end}}
+
+{{if or .NotableAwaiting .NotableMerge .NotableCommented}}
+<h2 id="notable">Notable pull requests</h2>
+<div class="notable">
+  {{if .NotableAwaiting}}
+  <div>
+    <h3>Longest awaiting first review</h3>
+    <ol>
+      {{range .NotableAwaiting}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+  {{if .NotableMerge}}
+  <div>
+    <h3>Longest time to merge</h3>
+    <ol>
+      {{range .NotableMerge}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+  {{if .NotableCommented}}
+  <div>
+    <h3>Most discussed</h3>
+    <ol>
+      {{range .NotableCommented}}
+      <li><a href="{{.URL}}">{{.Repo}}#{{.Number}}</a> {{.Title}}<span class="value">{{.Value}} · by {{.Author}}</span></li>
+      {{end}}
+    </ol>
+  </div>
+  {{end}}
+</div>
+{{end}}
+
+{{if .ShowPRs}}
+<h2 id="pr-list">Pull requests in period</h2>
+{{if .PRs}}
+<table class="prlist">
+  <thead>
+    <tr><th>Repo</th><th class="num">PR</th><th>Title</th><th>Author</th><th>State</th><th>Created</th><th>Merged</th></tr>
+  </thead>
+  <tbody>
+    {{range .PRs}}
+    <tr>
+      <td>{{.Repo}}</td>
+      <td class="num"><a href="{{.URL}}">#{{.Number}}</a></td>
+      <td>{{.Title}}</td>
+      <td>{{.Author}}</td>
+      <td><span class="state-{{.State}}">{{.State}}</span></td>
+      <td>{{.CreatedAt}}</td>
+      <td>{{if .MergedAt}}{{.MergedAt}}{{else}}<span class="empty">-</span>{{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="empty">No pull requests in the period.</p>
+{{end}}
+{{end}}
+
+<footer>Generated by <code>ghx stats</code>. Reviewers are derived from PR comments and reviews cached by <code>ghx cache</code>.</footer>
+</main>
+</div>
+<dialog id="toc-drawer" aria-label="Report sections">
+  <div class="toc-drawer-head">
+    <span class="toc-title">Contents</span>
+    <button type="button" id="toc-drawer-close" aria-label="Close menu">&times;</button>
+  </div>
+</dialog>
+<script>
+(function() {
+  var drawer = document.getElementById("toc-drawer");
+  var nav = document.getElementById("toc");
+  if (!drawer || !nav || typeof drawer.showModal !== "function") return;
+  // The drawer mirrors the static contents menu.
+  nav.querySelectorAll("a").forEach(function(a) { drawer.appendChild(a.cloneNode(true)); });
+  var mq = window.matchMedia("(max-width: 900px)");
+  var touch = null;
+  function isOpen() { return drawer.open; }
+  function open() {
+    if (!drawer.open) drawer.showModal();
+  }
+  function close() {
+    if (drawer.open) drawer.close();
+  }
+  var closeBtn = document.getElementById("toc-drawer-close");
+  if (closeBtn) closeBtn.addEventListener("click", function() { close(); });
+  var toggleBtn = document.getElementById("toc-toggle");
+  if (toggleBtn) toggleBtn.addEventListener("click", function() {
+    if (isOpen()) close(); else open();
+  });
+  drawer.addEventListener("click", function(e) {
+    if (e.target.closest && e.target.closest("a")) { close(); return; }
+    // Clicks on the ::backdrop target the dialog element itself; only treat
+    // those outside the panel as dismissals.
+    var r = drawer.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right) close();
+  });
+  document.addEventListener("touchstart", function(e) {
+    if (!mq.matches || e.touches.length !== 1) { touch = null; return; }
+    var t = e.touches[0];
+    // Swipes must start at the left edge to reveal the drawer; while it is
+    // open any touch may swipe it away.
+    if (t.clientX > 48 && !isOpen()) { touch = null; return; }
+    touch = { x: t.clientX, y: t.clientY, dx: 0, dy: 0, open: isOpen() };
+  }, { passive: true });
+  document.addEventListener("touchmove", function(e) {
+    if (!touch) return;
+    var t = e.touches[0];
+    touch.dx = t.clientX - touch.x;
+    touch.dy = t.clientY - touch.y;
+  }, { passive: true });
+  document.addEventListener("touchend", function() {
+    if (!touch) return;
+    var horizontal = Math.abs(touch.dx) > 40 && Math.abs(touch.dx) > Math.abs(touch.dy) * 1.5;
+    if (!touch.open && horizontal && touch.dx > 0) open();
+    else if (touch.open && horizontal && touch.dx < 0) close();
+    touch = null;
+  });
+  if (mq.addEventListener) mq.addEventListener("change", function() { if (!mq.matches) close(); });
+})();
+(function() {
+  var links = Array.prototype.slice.call(document.querySelectorAll("#toc a[href^='#'], #toc-drawer a[href^='#']"));
+  var byId = {};
+  links.forEach(function(a) {
+    var id = a.getAttribute("href").slice(1);
+    if (!byId[id]) byId[id] = [];
+    byId[id].push(a);
+  });
+  var sections = Object.keys(byId)
+    .map(function(id) { return document.getElementById(id); })
+    .filter(Boolean);
+  if (!sections.length || !("IntersectionObserver" in window)) return;
+  var current = null;
+  var above = new Map();
+  function apply() {
+    var best = null;
+    sections.forEach(function(s) {
+      if (above.get(s)) best = s;
+    });
+    if (best === current) return;
+    if (current) {
+      (byId[current.id] || []).forEach(function(a) { a.classList.remove("active"); });
+    }
+    current = best;
+    if (current) {
+      (byId[current.id] || []).forEach(function(a) { a.classList.add("active"); });
+    }
+  }
+  // Observe each section heading against a root shrunk by 120px at the top.
+  // The callback fires only when a heading crosses that line or the viewport
+  // edge - never per scroll event - and uses the entry rect, so scrolling
+  // does no layout reads. The current section is the last one in document
+  // order whose heading sits above the line.
+  var io = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      var line = e.rootBounds ? e.rootBounds.top : 120;
+      above.set(e.target, e.boundingClientRect.top < line);
+    });
+    apply();
+  }, { rootMargin: "-120px 0px 0px 0px" });
+  sections.forEach(function(s) { io.observe(s); });
+  // Instant anchor jumps can skip IO crossings entirely; hashchange fires
+  // once per jump, so re-read positions there (never during scrolling).
+  window.addEventListener("hashchange", function() {
+    requestAnimationFrame(function() {
+      sections.forEach(function(s) {
+        above.set(s, s.getBoundingClientRect().top < 120);
+      });
+      apply();
+    });
+  });
+})();
+</script>
+<script>
+(function() {
+  var root = document.documentElement;
+  var btn = document.getElementById("theme-toggle");
+  function apply(theme) {
+    root.classList.toggle("dark", theme === "dark");
+    try { localStorage.setItem("ghx-theme", theme); } catch (e) {}
+    document.dispatchEvent(new Event("ghx-theme"));
+  }
+  apply(root.classList.contains("dark") ? "dark" : "light");
+  btn.addEventListener("click", function() {
+    apply(root.classList.contains("dark") ? "light" : "dark");
+  });
+})();
+(function() {
+  var table = document.getElementById("matrix-table");
+  if (!table) return;
+  var authorEl = document.getElementById("author-filter");
+  var reviewerEl = document.getElementById("reviewer-filter");
+  var hint = document.getElementById("matrix-filter-hint");
+  var headCells = table.tHead.rows[0].cells;
+  var bodyRows = table.tBodies[0].rows;
+  var reviewerCols = [];
+  for (var i = 0; i < headCells.length; i++) {
+    if (headCells[i].getAttribute("data-reviewer") !== null) reviewerCols.push(i);
+  }
+  if (typeof TomSelect !== "undefined") {
+    var config = { plugins: ["remove_button", "dropdown_input", "clear_button"], maxOptions: 1000 };
+    new TomSelect(authorEl, config);
+    new TomSelect(reviewerEl, config);
+  }
+  function selected(el) {
+    if (el.tomselect) return el.tomselect.getValue();
+    return Array.prototype.map.call(el.selectedOptions, function(o) { return o.value; });
+  }
+  function apply() {
+    var qa = selected(authorEl), qr = selected(reviewerEl);
+    var qaSet = {}, qrSet = {}, i;
+    for (i = 0; i < qa.length; i++) qaSet[qa[i]] = true;
+    for (i = 0; i < qr.length; i++) qrSet[qr[i]] = true;
+    var filtered = qa.length > 0 || qr.length > 0;
+    var showCol = [];
+    var visibleReviewers = 0;
+    for (i = 0; i < headCells.length; i++) showCol.push(true);
+    for (var r = 0; r < reviewerCols.length; r++) {
+      var c = reviewerCols[r];
+      showCol[c] = qr.length === 0 || qrSet[headCells[c].getAttribute("data-reviewer")] === true;
+      if (showCol[c]) visibleReviewers++;
+    }
+    var visibleAuthors = 0;
+    for (var j = 0; j < bodyRows.length; j++) {
+      var row = bodyRows[j];
+      var cells = row.cells;
+      var rowVisible = qa.length === 0 || qaSet[cells[0].getAttribute("data-author")] === true;
+      row.style.display = rowVisible ? "" : "none";
+      if (!rowVisible) continue;
+      visibleAuthors++;
+      for (c = 1; c < cells.length; c++) {
+        cells[c].style.display = showCol[c] ? "" : "none";
+      }
+    }
+    for (i = 0; i < headCells.length; i++) {
+      headCells[i].style.display = showCol[i] ? "" : "none";
+    }
+    hint.textContent = filtered
+      ? visibleAuthors + " of " + bodyRows.length + " authors · " + visibleReviewers + " of " + reviewerCols.length + " reviewers"
+      : "";
+  }
+  authorEl.addEventListener("change", apply);
+  reviewerEl.addEventListener("change", apply);
+})();
+(function() {
+  var DATA = {{.ChartsJSON}};
+  var charts = [];
+  var gran = "month";
+  var cumulative = false;
+  var windowSecs = 28 * 86400;
+  var rangeFrom = "", rangeTo = "";
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function pad(n, w) {
+    n = String(n);
+    while (n.length < w) n = "0" + n;
+    return n;
+  }
+  // Linear interpolation between closest ranks, matching the server side.
+  function percentile(sorted, p) {
+    if (!sorted.length) return 0;
+    var rank = (p / 100) * (sorted.length - 1);
+    var lo = Math.floor(rank), hi = Math.min(lo + 1, sorted.length - 1);
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (rank - lo);
+  }
+  function bucketKey(ts) {
+    var d = new Date(ts * 1000);
+    if (gran === "day") return pad(d.getUTCFullYear(), 4) + "-" + pad(d.getUTCMonth() + 1, 2) + "-" + pad(d.getUTCDate(), 2);
+    if (gran === "week") {
+      var dow = (d.getUTCDay() + 6) % 7; // Monday-start weeks
+      d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - dow));
+      return pad(d.getUTCFullYear(), 4) + "-" + pad(d.getUTCMonth() + 1, 2) + "-" + pad(d.getUTCDate(), 2);
+    }
+    return pad(d.getUTCFullYear(), 4) + "-" + pad(d.getUTCMonth() + 1, 2);
+  }
+  // A bucket is displayed when its start date falls inside the From/To range.
+  function inRange(key) {
+    var start = gran === "month" ? key + "-01" : key;
+    if (rangeFrom && start < rangeFrom) return false;
+    if (rangeTo && start > rangeTo) return false;
+    return true;
+  }
+  // Unix timestamp (seconds) just after the bucket's last moment.
+  function bucketEndTs(key) {
+    if (gran === "month") {
+      var parts = key.split("-");
+      return Date.UTC(+parts[0], +parts[1], 1) / 1000; // 1st of next month
+    }
+    var t = Date.parse(key + "T00:00:00Z") / 1000;
+    return gran === "week" ? t + 7 * 86400 : t + 86400;
+  }
+  // Aggregate the merged-PR samples into the current granularity buckets.
+  // With Cumulative on, each point aggregates every PR merged up to it,
+  // trimmed to the trailing Window when one is set (0 = unlimited).
+  function mergeTrendData() {
+    var samples = DATA.mergeSamples.slice().sort(function(a, b) { return a[0] - b[0]; });
+    var buckets = {}, order = [];
+    samples.forEach(function(s) {
+      var key = bucketKey(s[0]);
+      var b = buckets[key];
+      if (!b) { b = buckets[key] = { end: bucketEndTs(key), w1h: 0, w1d: 0, w1w: 0 }; order.push(key); }
+      if (s[1] <= 60) b.w1h++;
+      if (s[1] <= 1440) b.w1d++;
+      if (s[1] <= 10080) b.w1w++;
+    });
+    order.sort();
+    var out = { labels: [], within1h: [], within1d: [], within1w: [], p50: [], p90: [], p99: [] };
+    function pushStats(key, durs, counts) {
+      var n = durs.length;
+      var share = function(c) { return Math.round(c * 1000 / n) / 10; };
+      var sorted = durs.slice().sort(function(a, c) { return a - c; });
+      out.labels.push(key);
+      out.within1h.push(share(counts.w1h));
+      out.within1d.push(share(counts.w1d));
+      out.within1w.push(share(counts.w1w));
+      out.p50.push(Math.round(percentile(sorted, 50) * 10) / 10);
+      out.p90.push(Math.round(percentile(sorted, 90) * 10) / 10);
+      out.p99.push(Math.round(percentile(sorted, 99) * 10) / 10);
+    }
+    if (!cumulative) {
+      // Per-bucket stats only.
+      var bucketDurs = {};
+      samples.forEach(function(s) {
+        var key = bucketKey(s[0]);
+        (bucketDurs[key] = bucketDurs[key] || []).push(s[1] / 60);
+      });
+      order.forEach(function(key) {
+        if (!inRange(key)) return;
+        pushStats(key, bucketDurs[key] || [], buckets[key]);
+      });
+      return out;
+    }
+    // Cumulative: a sliding queue over the time-sorted samples, advanced per
+    // bucket and trimmed to the window on its left edge.
+    var tsQ = [], durQ = [], cnt = { w1h: 0, w1d: 0, w1w: 0 };
+    var j = 0;
+    function addSample(s) {
+      tsQ.push(s[0]);
+      durQ.push(s[1] / 60);
+      if (s[1] <= 60) cnt.w1h++;
+      if (s[1] <= 1440) cnt.w1d++;
+      if (s[1] <= 10080) cnt.w1w++;
+    }
+    order.forEach(function(key) {
+      var end = buckets[key].end;
+      while (j < samples.length && samples[j][0] <= end) addSample(samples[j++]);
+      if (windowSecs > 0) {
+        var cutoff = end - windowSecs;
+        while (tsQ.length && tsQ[0] <= cutoff) {
+          tsQ.shift();
+          var m = durQ.shift() * 60;
+          if (m <= 60) cnt.w1h--;
+          if (m <= 1440) cnt.w1d--;
+          if (m <= 10080) cnt.w1w--;
+        }
+      }
+      if (!inRange(key)) return;
+      pushStats(key, durQ, cnt);
+    });
+    return out;
+  }
+  function buildCharts() {
+    charts.forEach(function(c) { c.destroy(); });
+    charts = [];
+    if (typeof Chart === "undefined") {
+      document.querySelectorAll(".chart-box").forEach(function(el) {
+        el.innerHTML = '<div class="chart-note">Charts unavailable: Chart.js could not be loaded from the CDN.</div>';
+      });
+      return;
+    }
+    var border = cssVar("--border");
+    Chart.defaults.color = cssVar("--muted");
+    Chart.defaults.borderColor = border;
+    Chart.defaults.font.family = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
+
+    var trend = document.getElementById("trend-chart");
+    if (trend && DATA.months && DATA.months.length) {
+      charts.push(new Chart(trend, {
+        type: "bar",
+        data: {
+          labels: DATA.months,
+          datasets: [
+            { label: "Opened", data: DATA.opened, backgroundColor: "rgba(76, 141, 255, 0.65)" },
+            { label: "Merged", data: DATA.merged, backgroundColor: "rgba(63, 185, 80, 0.65)" },
+            { type: "line", label: "Median hours to merge", data: DATA.medianHrs, yAxisID: "y2",
+              borderColor: "#d29922", backgroundColor: "#d29922", tension: 0.3, pointRadius: 3 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: {
+            y: { beginAtZero: true, title: { display: true, text: "PRs" }, grid: { color: border } },
+            y2: { position: "right", beginAtZero: true, title: { display: true, text: "hours" }, grid: { drawOnChartArea: false } },
+            x: { grid: { display: false } }
+          }
+        }
+      }));
+    }
+
+    var authorCanvases = document.querySelectorAll(".author-trend-chart");
+    if (authorCanvases.length && DATA.authorTrends && DATA.authorTrends.length) {
+      Array.prototype.forEach.call(authorCanvases, function(canvas) {
+        var idx = parseInt(canvas.getAttribute("data-index"), 10);
+        var at = DATA.authorTrends[idx];
+        if (!at) return;
+        charts.push(new Chart(canvas, {
+          type: "bar",
+          data: {
+            labels: at.months,
+            datasets: [
+              { label: "Opened", data: at.opened, backgroundColor: "rgba(76, 141, 255, 0.65)" },
+              { label: "Merged", data: at.merged, backgroundColor: "rgba(63, 185, 80, 0.65)" },
+              { label: "Closed", data: at.closed, backgroundColor: "rgba(207, 34, 46, 0.65)" }
+            ]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { labels: { boxWidth: 12, font: { size: 10 } } } },
+            scales: {
+              y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: border } },
+              x: { grid: { display: false } }
+            }
+          }
+        }));
+      });
+    }
+
+    var size = document.getElementById("size-chart");
+    if (size && DATA.sizes && DATA.sizes.length) {
+      charts.push(new Chart(size, {
+        type: "bar",
+        data: {
+          labels: ["xs", "s", "m", "l", "xl"],
+          datasets: [{ label: "PRs", data: DATA.sizes, backgroundColor: "rgba(171, 125, 248, 0.65)" }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+    }
+
+    var mergeTrend = document.getElementById("merge-speed-trend-chart");
+    if (mergeTrend && DATA.mergeSamples && DATA.mergeSamples.length) {
+      var td = mergeTrendData();
+      charts.push(new Chart(mergeTrend, {
+        type: "line",
+        data: {
+          labels: td.labels,
+          datasets: [
+            { label: "Within 1h (%)", data: td.within1h, borderColor: "#1a7f37", backgroundColor: "#1a7f37", tension: 0.3, pointRadius: 2 },
+            { label: "Within 1d (%)", data: td.within1d, borderColor: "#d29922", backgroundColor: "#d29922", tension: 0.3, pointRadius: 2 },
+            { label: "Within 1w (%)", data: td.within1w, borderColor: "#0969da", backgroundColor: "#0969da", tension: 0.3, pointRadius: 2 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, max: 100, title: { display: true, text: "% of merged PRs" }, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+
+      var pctTrend = document.getElementById("merge-percentile-trend-chart");
+      charts.push(new Chart(pctTrend, {
+        type: "line",
+        data: {
+          labels: td.labels,
+          datasets: [
+            { label: "p50 (hours)", data: td.p50, borderColor: "#1a7f37", backgroundColor: "#1a7f37", tension: 0.3, pointRadius: 2 },
+            { label: "p90 (hours)", data: td.p90, borderColor: "#d29922", backgroundColor: "#d29922", tension: 0.3, pointRadius: 2 },
+            { label: "p99 (hours)", data: td.p99, borderColor: "#cf222e", backgroundColor: "#cf222e", tension: 0.3, pointRadius: 2 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          scales: { y: { beginAtZero: true, title: { display: true, text: "hours" }, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+    }
+
+    var activity = document.getElementById("activity-chart");
+    if (activity && DATA.hours && DATA.hours.length) {
+      var hours = [];
+      for (var h = 0; h < 24; h++) hours.push(String(h));
+      charts.push(new Chart(activity, {
+        type: "bar",
+        data: {
+          labels: hours,
+          datasets: [{ label: "PRs opened", data: DATA.hours, backgroundColor: "rgba(76, 141, 255, 0.65)" }]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, grid: { color: border } }, x: { grid: { display: false } } }
+        }
+      }));
+    }
+  }
+  buildCharts();
+  document.addEventListener("ghx-theme", buildCharts);
+  document.querySelectorAll(".trend-controls button[data-gran]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      gran = btn.getAttribute("data-gran");
+      document.querySelectorAll(".trend-controls button[data-gran]").forEach(function(b) {
+        b.classList.toggle("active", b === btn);
+      });
+      buildCharts();
+    });
+  });
+  var cumBtn = document.getElementById("merge-trend-cumulative");
+  if (cumBtn) cumBtn.addEventListener("click", function() {
+    cumulative = !cumulative;
+    cumBtn.classList.toggle("active", cumulative);
+    buildCharts();
+  });
+  var fromEl = document.getElementById("merge-trend-from");
+  var toEl = document.getElementById("merge-trend-to");
+  if (fromEl) fromEl.addEventListener("change", function() { rangeFrom = fromEl.value; buildCharts(); });
+  if (toEl) toEl.addEventListener("change", function() { rangeTo = toEl.value; buildCharts(); });
+  var winEl = document.getElementById("merge-trend-window");
+  if (winEl) winEl.addEventListener("change", function() {
+    var v = winEl.value.trim().toLowerCase();
+    var m = v.match(/^(\d+)\s*([dwm])$/);
+    winEl.classList.toggle("invalid", v !== "" && !m);
+    windowSecs = m ? (+m[1]) * (m[2] === "d" ? 86400 : m[2] === "w" ? 7 * 86400 : 30 * 86400) : 0;
+    buildCharts();
+  });
+})();
+</script>
+</body>
+</html>
