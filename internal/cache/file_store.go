@@ -213,65 +213,33 @@ func (s *fileStore) LoadCacheInfo(host, owner, repo string) (*CacheInfo, error) 
 // were populated within the stored duration. An interrupted (incomplete) fetch
 // is never fresh.
 func (s *fileStore) IsCacheFresh(host, owner, repo string) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	if !info.Complete {
-		return false, nil
-	}
-	d := time.Duration(info.Duration) * time.Minute
-	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, nil, freshnessAll)
 }
 
 // IsIssuesCacheFresh reports whether issues were cached within the stored duration.
 func (s *fileStore) IsIssuesCacheFresh(host, owner, repo string) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	return info.IssuesFreshAt(time.Now()), nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, nil, freshnessIssues)
 }
 
 // IsPRsCacheFresh reports whether pull requests were cached within the stored duration.
 func (s *fileStore) IsPRsCacheFresh(host, owner, repo string) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	return info.PRsFreshAt(time.Now()), nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, nil, freshnessPRs)
 }
 
 // IsCacheFreshWithDuration reports whether the cache is complete and both
 // issues and PRs were populated within the given duration.
 func (s *fileStore) IsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	if !info.Complete {
-		return false, nil
-	}
-	d := time.Duration(duration) * time.Minute
-	return time.Since(info.IssuesUpdatedAt()) < d && time.Since(info.PRsUpdatedAt()) < d, nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, &duration, freshnessAll)
 }
 
 // IsIssuesCacheFreshWithDuration reports whether issues were cached within the given duration (minutes).
 func (s *fileStore) IsIssuesCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	return time.Since(info.IssuesUpdatedAt()) < time.Duration(duration)*time.Minute, nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, &duration, freshnessIssues)
 }
 
 // IsPRsCacheFreshWithDuration reports whether PRs were cached within the given duration (minutes).
 func (s *fileStore) IsPRsCacheFreshWithDuration(host, owner, repo string, duration int) (bool, error) {
-	info, err := s.LoadCacheInfo(host, owner, repo)
-	if err != nil {
-		return false, err
-	}
-	return time.Since(info.PRsUpdatedAt()) < time.Duration(duration)*time.Minute, nil
+	return checkCacheFresh(s.LoadCacheInfo, host, owner, repo, &duration, freshnessPRs)
 }
 
 // viewerTeamsPath is where one host's team memberships are cached. It sits at
