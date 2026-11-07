@@ -196,12 +196,11 @@ sequenceDiagram
 
 ## Risks and Unknowns
 
-1. `gh.ClearStash` is exported but not wired to any command; it is dead code from the stash feature (candidate for removal or for a future `stash clear` command).
-2. `RestorePendingReview` can partially fail after creating the pending review (a thread may no longer be in the diff after a force-push), leaving a pending review with fewer threads than the stash entry, which is then removed; the error message names the file that failed but the remaining threads are only in the new pending review.
-3. List reads cap pagination (`reviewThreads(first: 100)`, `comments(first: 50)` per thread, `reviews(first: 25)`, issue `comments(first: 100)`); larger PRs silently truncate, which can hide threads from `pr threads` and pending threads from `stash push`.
-4. `--state` accepts only open, resolved, and all; any other value filters everything out and prints "No review threads found." rather than an error.
-5. The FR-8 auto-stash submits a leftover pending review as COMMENT without asking; a reviewer who staged comments intentionally gets them published when they post one immediate comment.
-6. Test coverage for the write paths is thin (see tests.md): the stash store, the comment and review mutations, and most command guards have no automated tests.
+1. `RestorePendingReview` can partially fail after creating the pending review (a thread may no longer be in the diff after a force-push), leaving a pending review with fewer threads than the stash entry, which is then removed; the error message names the file that failed but the remaining threads are only in the new pending review.
+2. List reads cap pagination (`reviewThreads(first: 100)`, `comments(first: 50)` per thread, `reviews(first: 25)`, issue `comments(first: 100)`); larger PRs silently truncate, which can hide threads from `pr threads` and pending threads from `stash push`.
+3. `--state` accepts only open, resolved, and all; any other value filters everything out and prints "No review threads found." rather than an error.
+4. The FR-8 auto-stash submits a leftover pending review as COMMENT without asking; a reviewer who staged comments intentionally gets them published when they post one immediate comment.
+5. Test coverage for the write paths is thin (see tests.md): the stash store, the comment and review mutations, and most command guards have no automated tests.
 
 ## Out of Scope
 
