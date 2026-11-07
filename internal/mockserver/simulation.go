@@ -360,17 +360,18 @@ func Generate(cfg SimulationConfig) *Scenario {
 
 	pickAssignees := func(maxAssignees int) []github.Actor {
 		n := rng.Intn(maxAssignees + 1)
+		// The assignee pool is the fixed user list, so requesting more
+		// assignees than users must not loop forever waiting for new logins.
+		if n > len(users) {
+			n = len(users)
+		}
 		if n == 0 {
 			return nil
 		}
-		seen := map[string]bool{}
-		var result []github.Actor
-		for len(result) < n {
-			u := pickUser()
-			if !seen[u] {
-				seen[u] = true
-				result = append(result, github.Actor{Login: u})
-			}
+		perm := rng.Perm(len(users))
+		result := make([]github.Actor, n)
+		for i := range result {
+			result[i] = github.Actor{Login: users[perm[i]].login}
 		}
 		return result
 	}

@@ -1,6 +1,7 @@
 package mockserver
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -382,6 +383,61 @@ func TestGenerate_Assignees(t *testing.T) {
 	}
 	if !hasAssignees {
 		t.Error("expected at least some issues to have assignees")
+	}
+}
+
+func TestGenerate_AssigneesCappedAtUserCount(t *testing.T) {
+	cases := []struct {
+		name     string
+		numUsers int
+		max      int
+	}{
+		{"one user", 1, 3},
+		{"two users", 2, 5},
+		{"more assignees than users", 3, 10},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := SmallConfig()
+			cfg.NumUsers = tc.numUsers
+			cfg.AssigneesPerIssue = tc.max
+			cfg.AssigneesPerPR = tc.max
+
+			done := make(chan *Scenario, 1)
+			go func() {
+				done <- Generate(cfg)
+			}()
+
+			var scenario *Scenario
+			select {
+			case scenario = <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("Generate did not return; assignee sampling probably loops forever")
+			}
+
+			for _, issue := range scenario.Issues {
+				checkAssignees(t, fmt.Sprintf("issue #%d", issue.Number), issue.Assignees, tc.numUsers)
+			}
+			for _, pr := range scenario.PRs {
+				checkAssignees(t, fmt.Sprintf("PR #%d", pr.Number), pr.Assignees, tc.numUsers)
+			}
+		})
+	}
+}
+
+func checkAssignees(t *testing.T, label string, assignees []github.Actor, numUsers int) {
+	t.Helper()
+
+	if len(assignees) > numUsers {
+		t.Errorf("%s has %d assignees, want at most %d", label, len(assignees), numUsers)
+	}
+	seen := map[string]bool{}
+	for _, a := range assignees {
+		if seen[a.Login] {
+			t.Errorf("%s has duplicate assignee %q", label, a.Login)
+		}
+		seen[a.Login] = true
 	}
 }
 
