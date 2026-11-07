@@ -52,11 +52,6 @@ func (b *ScenarioBuilder) WithSeed(seed int64) *ScenarioBuilder {
 	return b
 }
 
-func (b *ScenarioBuilder) WithUsers(users []string) *ScenarioBuilder {
-	b.users = users
-	return b
-}
-
 func (b *ScenarioBuilder) WithNow(t time.Time) *ScenarioBuilder {
 	b.now = t
 	return b
@@ -437,38 +432,11 @@ func (ta *TimeAdvance) CommentOnPR(prNumber int, author, body string) *TimeAdvan
 	return ta
 }
 
-func (ta *TimeAdvance) CloseIssue(issueNumber int) *TimeAdvance {
-	for i := range ta.builder.issues {
-		if ta.builder.issues[i].Number == issueNumber {
-			ta.builder.issues[i].State = "CLOSED"
-			ta.builder.issues[i].ClosedAt = &ta.builder.now
-			ta.builder.issues[i].UpdatedAt = ta.builder.now
-			break
-		}
-	}
-	ta.builder.now = ta.builder.now.Add(ta.delta)
-	return ta
-}
-
 func (ta *TimeAdvance) MergePR(prNumber int) *TimeAdvance {
 	for i := range ta.builder.prs {
 		if ta.builder.prs[i].Number == prNumber {
 			ta.builder.prs[i].State = "MERGED"
 			ta.builder.prs[i].MergedAt = &ta.builder.now
-			ta.builder.prs[i].ClosedAt = &ta.builder.now
-			ta.builder.prs[i].UpdatedAt = ta.builder.now
-			ta.builder.prs[i].IsDraft = false
-			break
-		}
-	}
-	ta.builder.now = ta.builder.now.Add(ta.delta)
-	return ta
-}
-
-func (ta *TimeAdvance) ClosePR(prNumber int) *TimeAdvance {
-	for i := range ta.builder.prs {
-		if ta.builder.prs[i].Number == prNumber {
-			ta.builder.prs[i].State = "CLOSED"
 			ta.builder.prs[i].ClosedAt = &ta.builder.now
 			ta.builder.prs[i].UpdatedAt = ta.builder.now
 			ta.builder.prs[i].IsDraft = false

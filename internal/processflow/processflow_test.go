@@ -14,9 +14,6 @@ func at(day int) time.Time {
 	return time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC).Add(time.Duration(day) * 24 * time.Hour)
 }
 
-// day 0 is Aug 1 12:00 UTC; the window start (90 days before now) is day -85.
-func hours(days float64) *float64 { return &days }
-
 func issueItem(id string, created time.Time, station Station, exited *time.Time) Item {
 	return Item{ID: id, Kind: KindIssue, Title: "Issue " + id, CreatedAt: created, Station: station, ExitedAt: exited}
 }

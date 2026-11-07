@@ -255,16 +255,3 @@ func AppendToStash(owner, name string, number int, stashIndex int, thread SavedT
 
 	return len(entry.Threads), nil
 }
-
-func ClearStash(owner, name string, number int) error {
-	dir, err := StashDir(owner, name, number)
-	if err != nil {
-		return err
-	}
-
-	if err := os.RemoveAll(dir); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stash dir: %w", err)
-	}
-
-	return nil
-}

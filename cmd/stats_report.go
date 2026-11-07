@@ -319,12 +319,6 @@ type authorTrendPayload struct {
 	Closed []int    `json:"closed"`
 }
 
-// reviewerComment is a comment left on a PR by someone other than its author.
-type reviewerComment struct {
-	Login string
-	At    time.Time
-}
-
 // reviewActivity is one submitted review on a PR, normalized for aggregation.
 type reviewActivity struct {
 	Login       string // lowercase reviewer login
