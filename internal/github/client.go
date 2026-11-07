@@ -183,6 +183,16 @@ func (s callStats) attemptCount() int {
 	return s.attempts
 }
 
+// QueryRaw executes a GraphQL query and returns the raw data field for callers
+// that parse the response themselves.
+func (c *Client) QueryRaw(query string, variables map[string]interface{}) (json.RawMessage, error) {
+	var data json.RawMessage
+	if err := c.Query(query, variables, &data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // Query executes a GraphQL query and unmarshals the data field into result.
 // It retries transient failures using exponential backoff: GitHub rate limit
 // responses (HTTP 429 and secondary rate limit 403s, honouring the Retry-After

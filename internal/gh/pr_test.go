@@ -6,19 +6,23 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tomzxcode/ghx/internal/github"
 )
 
 // withGraphQLServer points the package at a local GraphQL server and restores
-// the real endpoint when the test finishes.
+// the default client when the test finishes.
 func withGraphQLServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
-	t.Setenv("GH_TOKEN", "test-token")
 
 	srv := httptest.NewServer(handler)
-	old := graphqlEndpoint
-	graphqlEndpoint = srv.URL
+	client, err := github.NewClientWithURL(srv.URL, "test-token", "mock")
+	if err != nil {
+		t.Fatalf("NewClientWithURL: %v", err)
+	}
+	SetClient(client)
 	t.Cleanup(func() {
-		graphqlEndpoint = old
+		SetClient(nil)
 		srv.Close()
 	})
 	return srv
@@ -50,7 +54,10 @@ func TestSetThreadResolved(t *testing.T) {
 			threadID := "PRRT_kwDOtest"
 
 			withGraphQLServer(t, func(w http.ResponseWriter, r *http.Request) {
-				var req gqlRequest
+				var req struct {
+					Query     string                 `json:"query"`
+					Variables map[string]interface{} `json:"variables"`
+				}
 				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 					t.Fatalf("decode request: %v", err)
 				}
@@ -90,6 +97,31 @@ func TestSetThreadResolvedMissingThread(t *testing.T) {
 
 	if err := ResolveThread("PRRT_missing"); err == nil {
 		t.Fatal("expected an error when the thread is missing")
+	}
+}
+
+func TestMutationRetriesTransientError(t *testing.T) {
+	attempts := 0
+	withGraphQLServer(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			http.Error(w, "bad gateway", http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"data":{"addComment":{"commentEdge":{"node":{"id":"IC_retry"}}}}}`))
+	})
+
+	id, err := AddTopLevelComment("PR_1", "hello")
+	if err != nil {
+		t.Fatalf("AddTopLevelComment: %v", err)
+	}
+	if id != "IC_retry" {
+		t.Errorf("comment id = %q, want IC_retry", id)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want 2", attempts)
 	}
 }
 

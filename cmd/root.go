@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
+	"github.com/tomzxcode/ghx/internal/gh"
 	"github.com/tomzxcode/ghx/internal/github"
 	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/logging"
@@ -123,12 +124,19 @@ func getRepo() (*gitremote.Repo, error) {
 }
 
 // resolveOwnerName resolves the target repository and returns its owner and
-// name, for use by the gh comment/review operations (which target github.com).
+// name, for use by the gh comment/review operations. It also points the gh
+// package at the client for the target host, so writes share the read path's
+// endpoint, token resolution, and retries.
 func resolveOwnerName() (owner, name string, err error) {
 	repo, err := getRepo()
 	if err != nil {
 		return "", "", err
 	}
+	client, err := newClient(repo.Host)
+	if err != nil {
+		return "", "", err
+	}
+	gh.SetClient(client)
 	return repo.Owner, repo.Name, nil
 }
 
