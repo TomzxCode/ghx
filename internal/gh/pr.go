@@ -138,14 +138,14 @@ func AddReviewThread(pullRequestId, reviewId, body, path string, line, startLine
 	}`
 
 	vars := map[string]interface{}{
-		"pullRequestId":     nil,
+		"pullRequestId":       nil,
 		"pullRequestReviewId": nil,
-		"body":              body,
-		"path":              nil,
-		"line":              nil,
-		"side":              nil,
-		"startLine":         nil,
-		"subjectType":       nil,
+		"body":                body,
+		"path":                nil,
+		"line":                nil,
+		"side":                nil,
+		"startLine":           nil,
+		"subjectType":         nil,
 	}
 
 	if pullRequestId != "" {
@@ -398,8 +398,8 @@ func ListThreads(owner, name string, number int) ([]ReviewThread, error) {
 								Author struct {
 									Login string `json:"login"`
 								} `json:"author"`
-								CreatedAt          string `json:"createdAt"`
-								PullRequestReview  struct {
+								CreatedAt         string `json:"createdAt"`
+								PullRequestReview struct {
 									ID string `json:"id"`
 								} `json:"pullRequestReview"`
 							} `json:"nodes"`
@@ -596,8 +596,8 @@ func ListPendingReviews(owner, name string, number int) ([]PendingReview, error)
 			PullRequest struct {
 				Reviews struct {
 					Nodes []struct {
-						ID        string `json:"id"`
-						Author    struct {
+						ID     string `json:"id"`
+						Author struct {
 							Login string `json:"login"`
 						} `json:"author"`
 						CreatedAt string `json:"createdAt"`

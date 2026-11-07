@@ -93,9 +93,9 @@ func GetIssue(owner, name string, number int) (*Issue, []IssueComment, error) {
 				State    string `json:"state"`
 				Comments struct {
 					Nodes []struct {
-						ID        string `json:"id"`
-						Body      string `json:"body"`
-						Author    struct {
+						ID     string `json:"id"`
+						Body   string `json:"body"`
+						Author struct {
 							Login string `json:"login"`
 						} `json:"author"`
 						CreatedAt string `json:"createdAt"`
@@ -159,9 +159,9 @@ func ListIssueComments(owner, name string, number int) ([]IssueComment, error) {
 			Issue struct {
 				Comments struct {
 					Nodes []struct {
-						ID        string `json:"id"`
-						Body      string `json:"body"`
-						Author    struct {
+						ID     string `json:"id"`
+						Body   string `json:"body"`
+						Author struct {
 							Login string `json:"login"`
 						} `json:"author"`
 						CreatedAt string `json:"createdAt"`

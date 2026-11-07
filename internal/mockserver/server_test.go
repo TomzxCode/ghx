@@ -97,10 +97,10 @@ func TestGetIssue(t *testing.T) {
 	var result struct {
 		Repository struct {
 			Issue struct {
-				Number  int    `json:"number"`
-				Title   string `json:"title"`
-				State   string `json:"state"`
-				Author  struct{ Login string } `json:"author"`
+				Number   int                    `json:"number"`
+				Title    string                 `json:"title"`
+				State    string                 `json:"state"`
+				Author   struct{ Login string } `json:"author"`
 				Comments struct {
 					Nodes []struct {
 						Body string `json:"body"`
@@ -182,14 +182,14 @@ func TestGetPR(t *testing.T) {
 	var result struct {
 		Repository struct {
 			PullRequest struct {
-				Number          int    `json:"number"`
-				Title           string `json:"title"`
-				State           string `json:"state"`
-				IsDraft         bool   `json:"isDraft"`
-				ReviewDecision  string `json:"reviewDecision"`
-				BaseRefName     string `json:"baseRefName"`
-				HeadRefName     string `json:"headRefName"`
-				Comments        struct {
+				Number         int    `json:"number"`
+				Title          string `json:"title"`
+				State          string `json:"state"`
+				IsDraft        bool   `json:"isDraft"`
+				ReviewDecision string `json:"reviewDecision"`
+				BaseRefName    string `json:"baseRefName"`
+				HeadRefName    string `json:"headRefName"`
+				Comments       struct {
 					Nodes []struct{ Body string } `json:"nodes"`
 				} `json:"comments"`
 			} `json:"pullRequest"`
@@ -354,7 +354,7 @@ func TestFetchAllIssues(t *testing.T) {
 			Issues struct {
 				TotalCount int `json:"totalCount"`
 				Nodes      []struct {
-					Number   int    `json:"number"`
+					Number   int `json:"number"`
 					Comments struct {
 						TotalCount int `json:"totalCount"`
 					} `json:"comments"`
@@ -572,7 +572,7 @@ func TestScenarioBuilder_Realistic(t *testing.T) {
 		Repository struct {
 			Issues struct {
 				Nodes []struct {
-					Number int `json:"number"`
+					Number int    `json:"number"`
 					State  string `json:"state"`
 				} `json:"nodes"`
 			} `json:"issues"`
