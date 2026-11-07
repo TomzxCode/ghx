@@ -15,13 +15,23 @@ type StashEntry struct {
 	Message string        `yaml:"message,omitempty"`
 }
 
-func StashDir(owner, name string, number int) (string, error) {
+// stashBaseDir resolves the directory that holds per-PR stashes. It is a
+// variable so tests can redirect it to a temporary directory.
+var stashBaseDir = func() (string, error) {
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve cache dir: %w", err)
 	}
+	return filepath.Join(cacheDir, "ghx", "stash"), nil
+}
 
-	return filepath.Join(cacheDir, "ghx", "stash", owner, name, fmt.Sprintf("%d", number)), nil
+func StashDir(owner, name string, number int) (string, error) {
+	base, err := stashBaseDir()
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Join(base, owner, name, fmt.Sprintf("%d", number)), nil
 }
 
 func listStashFiles(dir string) ([]int, error) {
