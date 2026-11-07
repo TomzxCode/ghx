@@ -214,6 +214,7 @@ func TestCache_SinceRefreshesFreshCache(t *testing.T) {
 
 	// --since run on the fresh cache: the range is already covered.
 	cacheSince = "2026-08-25"
+	runStart := time.Now().UTC()
 	out = runCacheCapture(t)
 	if strings.Contains(out, "Cache is still fresh") {
 		t.Error("--since should bypass the --if-stale short-circuit")
@@ -246,8 +247,8 @@ func TestCache_SinceRefreshesFreshCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSegments: %v", err)
 	}
-	if !cache.Covers(segs, cutoff, time.Now().UTC()) {
-		t.Errorf("coverage does not include [%v, now]: %+v", cutoff, segs)
+	if !cache.Covers(segs, cutoff, runStart) {
+		t.Errorf("coverage does not include [%v, %v]: %+v", cutoff, runStart, segs)
 	}
 }
 
@@ -390,6 +391,7 @@ func TestCache_MigratesLegacyCursorToCoverage(t *testing.T) {
 		t.Fatalf("SaveCacheInfoFull: %v", err)
 	}
 
+	runStart := time.Now().UTC()
 	out := runCacheCapture(t)
 	if !strings.Contains(out, "Fetching pull requests updated since") {
 		t.Errorf("expected the post-migration PR message, got %q", out)
@@ -410,8 +412,8 @@ func TestCache_MigratesLegacyCursorToCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadSegments: %v", err)
 	}
-	if !cache.Covers(segs, cur, time.Now().UTC()) {
-		t.Errorf("coverage does not include [%v, now]: %+v", cur, segs)
+	if !cache.Covers(segs, cur, runStart) {
+		t.Errorf("coverage does not include [%v, %v]: %+v", cur, runStart, segs)
 	}
 }
 
@@ -453,6 +455,7 @@ func TestCache_SinceFillsGap(t *testing.T) {
 	}
 
 	cacheSince = "2026-08-01"
+	runStart := time.Now().UTC()
 	out := runCacheCapture(t)
 	if got := parseCachedCount(t, out, cachedIssuesRe); got != wantIssues {
 		t.Errorf("cached %d issue(s) in the gap, want %d", got, wantIssues)
@@ -465,8 +468,8 @@ func TestCache_SinceFillsGap(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadSegments: %v", err)
 		}
-		if !cache.Covers(segs, cutoff, time.Now().UTC()) {
-			t.Errorf("%s coverage does not include [%v, now]: %+v", kind, cutoff, segs)
+		if !cache.Covers(segs, cutoff, runStart) {
+			t.Errorf("%s coverage does not include [%v, %v]: %+v", kind, cutoff, runStart, segs)
 		}
 	}
 }

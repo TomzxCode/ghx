@@ -18,6 +18,7 @@ func TestCache_WorkersProcessCoverageSegments(t *testing.T) {
 	setCacheTestEnv(t, srv.URL(), t.TempDir())
 	cacheWorkers = 3
 
+	runStart := time.Now().UTC()
 	out := runCacheCapture(t)
 	if got := parseCachedCount(t, out, cachedIssuesRe); got != len(scenario.Issues) {
 		t.Errorf("cached %d issue(s), want %d", got, len(scenario.Issues))
@@ -45,8 +46,8 @@ func TestCache_WorkersProcessCoverageSegments(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadSegments(%s): %v", kind, err)
 		}
-		if !cache.Covers(segs, oldest, time.Now().UTC()) {
-			t.Errorf("%s coverage does not include [%v, now]: %+v", kind, oldest, segs)
+		if !cache.Covers(segs, oldest, runStart) {
+			t.Errorf("%s coverage does not include [%v, %v]: %+v", kind, oldest, runStart, segs)
 		}
 		if len(segs) != 1 {
 			t.Errorf("%s coverage has %d segments, want 1 merged segment: %+v", kind, len(segs), segs)
