@@ -77,6 +77,15 @@ func TestResolvePRJSONFields(t *testing.T) {
 		!strings.Contains(err.Error(), "unknown JSON field") {
 		t.Errorf("unknown field: got err %v", err)
 	}
+
+	// The merge facts are selectable like any other field.
+	for _, field := range []string{
+		"mergeable", "mergeStateStatus", "closingIssuesReferences", "lastEditedAt", "headCommittedAt",
+	} {
+		if _, ok := prJSONFields[field]; !ok {
+			t.Errorf("missing JSON field %q", field)
+		}
+	}
 }
 
 func TestResolvePRListJSONFields(t *testing.T) {

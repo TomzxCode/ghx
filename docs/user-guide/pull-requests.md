@@ -81,17 +81,26 @@ ghx pr list --state merged --head feat/dark-mode --json number,headRefOid,merged
 ```
 
 Supported fields: `additions`, `assignees`, `author`, `baseRefName`, `body`,
-`checks`, `closedAt`, `comments`, `createdAt`, `deletions`, `headRefName`,
-`headRefOid`, `isDraft`, `labels`, `mergedAt`, `milestone`, `number`,
-`reviewDecision`, `reviewRequests`, `reviewThreads`, `reviews`, `state`,
-`title`, `updatedAt`, `url`. An unknown field is rejected with the list of
-valid names.
+`checks`, `closedAt`, `closingIssuesReferences`, `comments`, `createdAt`,
+`deletions`, `headCommittedAt`, `headRefName`, `headRefOid`, `isDraft`, `labels`,
+`lastEditedAt`, `mergeStateStatus`, `mergeable`, `mergedAt`, `milestone`,
+`number`, `reviewDecision`, `reviewRequests`, `reviewThreads`, `reviews`,
+`state`, `title`, `updatedAt`, `url`. An unknown field is rejected with the
+list of valid names.
 
 `checks` is the head commit's rollup (`{"state":"SUCCESS","total":8}`) and
 `reviewThreads` the thread counts (`{"total":4,"open":2}`). Both are cached
 with the pull request, so reading them from a fresh cache costs no API call.
 `reviewThreads.open` counts the first hundred threads, so a busier pull request
 undercounts it; `total` is exact.
+
+`mergeable` (`MERGEABLE`, `CONFLICTING`, `UNKNOWN`) and `mergeStateStatus`
+(`CLEAN`, `BLOCKED`, `BEHIND`, `DIRTY`, `DRAFT`, `HAS_HOOKS`, `UNSTABLE`,
+`UNKNOWN`) are GitHub's mergeability verdict. `closingIssuesReferences` lists
+the issues the description closes, `lastEditedAt` is when the description was
+last edited, and `headCommittedAt` is when the head commit was committed.
+All five are cached with the pull request. A record written before these fields
+existed reports them as absent (`null`), not as an empty value.
 
 A list served from the cache carries both. A list that falls back to the API
 carries the rollup but not the thread counts, because thread nodes are too

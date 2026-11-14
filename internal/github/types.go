@@ -59,6 +59,27 @@ type PullRequest struct {
 	// single read carried (the first hundred), so a busier pull request
 	// undercounts it; Total comes from the connection and stays exact.
 	ReviewThreads *PRThreadCounts `json:"reviewThreads,omitempty"`
+	// Mergeable and MergeStateStatus are GitHub's mergeability verdict for the
+	// head commit. Both are empty when the record predates the fields, and
+	// UNKNOWN while GitHub has not computed them.
+	Mergeable        string `json:"mergeable,omitempty"`
+	MergeStateStatus string `json:"mergeStateStatus,omitempty"`
+	// ClosingIssues lists the issues the description closes. It is nil when the
+	// record predates the field, and empty when the description closes none.
+	ClosingIssues []ClosingIssue `json:"closingIssuesReferences"`
+	// LastEditedAt is when the description was last edited, and HeadCommittedAt
+	// is when the head commit was committed. They are nil when the record
+	// predates the fields or GitHub names no such time.
+	LastEditedAt    *time.Time `json:"lastEditedAt,omitempty"`
+	HeadCommittedAt *time.Time `json:"headCommittedAt,omitempty"`
+}
+
+// ClosingIssue is one issue a pull request's description closes.
+type ClosingIssue struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	URL    string `json:"url"`
 }
 
 // PRChecks is the head commit's check rollup: the aggregate state GitHub

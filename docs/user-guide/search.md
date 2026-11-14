@@ -226,9 +226,10 @@ Each row carries the issue or pull request fields plus a `repository` object:
 ```
 
 `search issues` supports the fields above; `search prs` additionally supports
-`additions`, `baseRefName`, `checks`, `deletions`, `headRefName`, `headRefOid`,
-`isDraft`, `mergedAt`, `reviewDecision`, `reviewRequests`, `reviewThreads`,
-`reviews`, and `timeline`.
+`additions`, `baseRefName`, `checks`, `closingIssuesReferences`, `deletions`,
+`headCommittedAt`, `headRefName`, `headRefOid`, `isDraft`, `lastEditedAt`,
+`mergeStateStatus`, `mergeable`, `mergedAt`, `reviewDecision`, `reviewRequests`,
+`reviewThreads`, `reviews`, and `timeline`.
 Unknown field names are rejected with the list of valid ones.
 
 ### Templates

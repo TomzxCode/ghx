@@ -170,6 +170,31 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			column: "author_type",
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN author_type TEXT NOT NULL DEFAULT ''",
 		},
+		{
+			table:  "pull_requests",
+			column: "mergeable",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN mergeable TEXT",
+		},
+		{
+			table:  "pull_requests",
+			column: "merge_state_status",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN merge_state_status TEXT",
+		},
+		{
+			table:  "pull_requests",
+			column: "closing_issues",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN closing_issues TEXT",
+		},
+		{
+			table:  "pull_requests",
+			column: "last_edited_at",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN last_edited_at TEXT",
+		},
+		{
+			table:  "pull_requests",
+			column: "head_committed_at",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN head_committed_at TEXT",
+		},
 	} {
 		cols, ok := columns[m.table]
 		if !ok {
@@ -222,7 +247,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 // its additive column migrations are up to date. Bump it whenever a migration is
 // added to migrateSQLiteSchema, so an up-to-date database skips the column
 // probes on later opens.
-const schemaVersionCurrent = 4
+const schemaVersionCurrent = 5
 
 // Kind reports the backend name.
 func (s *sqliteStore) Kind() string { return "sqlite" }
@@ -514,7 +539,8 @@ func (s *sqliteStore) QueryIssues(host, owner, repo string, q IssueQuery) ([]*gi
 const prCols = `number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 	base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 	url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
-	checks, review_threads, additions, deletions, row_mtime`
+	checks, review_threads, mergeable, merge_state_status, closing_issues, last_edited_at,
+	head_committed_at, additions, deletions, row_mtime`
 
 // SavePR writes a single pull request to the database.
 func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
@@ -534,25 +560,43 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 	if pr.ReviewRequests != nil {
 		reviewRequests = mustJSON(pr.ReviewRequests)
 	}
-	var checks, reviewThreads any
+	var checks, reviewThreads, closingIssues any
 	if pr.Checks != nil {
 		checks = mustJSON(pr.Checks)
 	}
 	if pr.ReviewThreads != nil {
 		reviewThreads = mustJSON(pr.ReviewThreads)
 	}
+	if pr.ClosingIssues != nil {
+		closingIssues = mustJSON(pr.ClosingIssues)
+	}
+	var mergeable, mergeStateStatus, lastEditedAt, headCommittedAt any
+	if pr.Mergeable != "" {
+		mergeable = pr.Mergeable
+	}
+	if pr.MergeStateStatus != "" {
+		mergeStateStatus = pr.MergeStateStatus
+	}
+	if pr.LastEditedAt != nil {
+		lastEditedAt = tstr(*pr.LastEditedAt)
+	}
+	if pr.HeadCommittedAt != nil {
+		headCommittedAt = tstr(*pr.HeadCommittedAt)
+	}
 	_, err = execLogged(s.db, "SavePR", `INSERT OR REPLACE INTO pull_requests
 		(host, owner, repo, number, title, state, is_draft, author_login, author_type, assignees, labels, milestone,
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 		 url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
-		 checks, review_threads, additions, deletions, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 checks, review_threads, mergeable, merge_state_status, closing_issues, last_edited_at,
+		 head_committed_at, additions, deletions, row_mtime)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login, pr.Author.Type,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
 		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
 		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), mustJSON(pr.Reviews), mustJSON(pr.Timeline),
-		reviewRequests, reviewDecision, checks, reviewThreads, pr.Additions, pr.Deletions, tstr(time.Now()),
+		reviewRequests, reviewDecision, checks, reviewThreads, mergeable, mergeStateStatus, closingIssues,
+		lastEditedAt, headCommittedAt, pr.Additions, pr.Deletions, tstr(time.Now()),
 	)
 	if err != nil {
 		return fmt.Errorf("saving PR #%d: %w", pr.Number, err)
@@ -577,6 +621,11 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		reviewRequestsJSON        sql.NullString
 		checksJSON                sql.NullString
 		reviewThreadsJSON         sql.NullString
+		mergeableJSON             sql.NullString
+		mergeStateStatusJSON      sql.NullString
+		closingIssuesJSON         sql.NullString
+		lastEditedAtS             sql.NullString
+		headCommittedAtS          sql.NullString
 		commentCount              int
 		reviewDecision            sql.NullString
 		additions, deletions      int
@@ -585,7 +634,8 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 	if err := row.Scan(&number, &title, &state, &isDraft, &authorLogin, &authorType, &assigneesJSON, &labelsJSON, &milestoneJSON,
 		&baseRef, &headRef, &headRefOid, &createdAtS, &updatedAtS, &mergedAtS, &closedAtS,
 		&url, &body, &commentCount, &commentsJSON, &reviewsJSON, &timelineJSON, &reviewRequestsJSON,
-		&reviewDecision, &checksJSON, &reviewThreadsJSON, &additions, &deletions, &rowMtimeS); err != nil {
+		&reviewDecision, &checksJSON, &reviewThreadsJSON, &mergeableJSON, &mergeStateStatusJSON,
+		&closingIssuesJSON, &lastEditedAtS, &headCommittedAtS, &additions, &deletions, &rowMtimeS); err != nil {
 		return nil, time.Time{}, err
 	}
 
@@ -640,6 +690,25 @@ func scanPR(row rowScanner) (*github.PullRequest, time.Time, error) {
 		if err := decodeJSON(reviewThreadsJSON.String, pr.ReviewThreads); err != nil {
 			return nil, time.Time{}, err
 		}
+	}
+	if mergeableJSON.Valid {
+		pr.Mergeable = mergeableJSON.String
+	}
+	if mergeStateStatusJSON.Valid {
+		pr.MergeStateStatus = mergeStateStatusJSON.String
+	}
+	if closingIssuesJSON.Valid && closingIssuesJSON.String != "" {
+		if err := decodeJSON(closingIssuesJSON.String, &pr.ClosingIssues); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if lastEditedAtS.Valid && lastEditedAtS.String != "" {
+		t := parseTime(lastEditedAtS.String)
+		pr.LastEditedAt = &t
+	}
+	if headCommittedAtS.Valid && headCommittedAtS.String != "" {
+		t := parseTime(headCommittedAtS.String)
+		pr.HeadCommittedAt = &t
 	}
 	if milestoneJSON.Valid && milestoneJSON.String != "" {
 		var m github.Milestone

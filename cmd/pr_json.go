@@ -17,20 +17,29 @@ const prJSONAll = "all"
 // request. Only fields ghx can populate are registered; anything else is
 // rejected so typos fail loudly instead of silently emitting nulls.
 var prJSONFields = map[string]func(*github.PullRequest) any{
-	"additions":      func(pr *github.PullRequest) any { return pr.Additions },
-	"assignees":      func(pr *github.PullRequest) any { return pr.Assignees },
-	"author":         func(pr *github.PullRequest) any { return pr.Author },
-	"baseRefName":    func(pr *github.PullRequest) any { return pr.BaseRefName },
-	"body":           func(pr *github.PullRequest) any { return pr.Body },
-	"checks":         func(pr *github.PullRequest) any { return pr.Checks },
-	"closedAt":       func(pr *github.PullRequest) any { return pr.ClosedAt },
-	"comments":       func(pr *github.PullRequest) any { return prCommentCount(pr) },
-	"createdAt":      func(pr *github.PullRequest) any { return pr.CreatedAt },
-	"deletions":      func(pr *github.PullRequest) any { return pr.Deletions },
-	"headRefName":    func(pr *github.PullRequest) any { return pr.HeadRefName },
-	"headRefOid":     func(pr *github.PullRequest) any { return pr.HeadRefOid },
-	"isDraft":        func(pr *github.PullRequest) any { return pr.IsDraft },
-	"labels":         func(pr *github.PullRequest) any { return pr.Labels },
+	"additions":   func(pr *github.PullRequest) any { return pr.Additions },
+	"assignees":   func(pr *github.PullRequest) any { return pr.Assignees },
+	"author":      func(pr *github.PullRequest) any { return pr.Author },
+	"baseRefName": func(pr *github.PullRequest) any { return pr.BaseRefName },
+	"body":        func(pr *github.PullRequest) any { return pr.Body },
+	"checks":      func(pr *github.PullRequest) any { return pr.Checks },
+	"closedAt":    func(pr *github.PullRequest) any { return pr.ClosedAt },
+	"closingIssuesReferences": func(pr *github.PullRequest) any {
+		return pr.ClosingIssues
+	},
+	"comments":        func(pr *github.PullRequest) any { return prCommentCount(pr) },
+	"createdAt":       func(pr *github.PullRequest) any { return pr.CreatedAt },
+	"deletions":       func(pr *github.PullRequest) any { return pr.Deletions },
+	"headCommittedAt": func(pr *github.PullRequest) any { return pr.HeadCommittedAt },
+	"headRefName":     func(pr *github.PullRequest) any { return pr.HeadRefName },
+	"headRefOid":      func(pr *github.PullRequest) any { return pr.HeadRefOid },
+	"isDraft":         func(pr *github.PullRequest) any { return pr.IsDraft },
+	"labels":          func(pr *github.PullRequest) any { return pr.Labels },
+	"lastEditedAt":    func(pr *github.PullRequest) any { return pr.LastEditedAt },
+	"mergeStateStatus": func(pr *github.PullRequest) any {
+		return pr.MergeStateStatus
+	},
+	"mergeable":      func(pr *github.PullRequest) any { return pr.Mergeable },
 	"mergedAt":       func(pr *github.PullRequest) any { return pr.MergedAt },
 	"milestone":      func(pr *github.PullRequest) any { return pr.Milestone },
 	"number":         func(pr *github.PullRequest) any { return pr.Number },

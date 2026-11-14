@@ -158,7 +158,16 @@ type statusCheckContextNode struct {
 
 type commitNode struct {
 	Oid               string                 `json:"oid"`
+	CommittedDate     *time.Time             `json:"committedDate"`
 	StatusCheckRollup *statusCheckRollupNode `json:"statusCheckRollup"`
+}
+
+// closingIssueNode is one issue a PR description closes.
+type closingIssueNode struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	State  string `json:"state"`
+	URL    string `json:"url"`
 }
 
 type commitEdgeNode struct {
@@ -204,7 +213,13 @@ type prNode struct {
 	ReviewRequests *reviewRequestConnection       `json:"reviewRequests"`
 	Commits        *commitsConnection             `json:"commits"`
 	ReviewThreads  *reviewThreadConnection        `json:"reviewThreads"`
-	Comments       struct {
+	Mergeable      string                         `json:"mergeable"`
+	MergeState     string                         `json:"mergeStateStatus"`
+	LastEditedAt   *time.Time                     `json:"lastEditedAt"`
+	ClosingIssues  struct {
+		Nodes []closingIssueNode `json:"nodes"`
+	} `json:"closingIssuesReferences"`
+	Comments struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
 	} `json:"comments"`
@@ -237,7 +252,13 @@ type searchNode struct {
 	TimelineItems  struct{ Nodes []timelineNode } `json:"timelineItems"`
 	Commits        *commitsConnection             `json:"commits"`
 	ReviewThreads  *reviewThreadConnection        `json:"reviewThreads"`
-	Comments       struct {
+	Mergeable      string                         `json:"mergeable"`
+	MergeState     string                         `json:"mergeStateStatus"`
+	LastEditedAt   *time.Time                     `json:"lastEditedAt"`
+	ClosingIssues  struct {
+		Nodes []closingIssueNode `json:"nodes"`
+	} `json:"closingIssuesReferences"`
+	Comments struct {
 		TotalCount int           `json:"totalCount"`
 		Nodes      []commentNode `json:"nodes"`
 	} `json:"comments"`
@@ -298,6 +319,7 @@ func nodeToPR(n *prNode) *PullRequest {
 	applyReviewRequests(pr, n.ReviewRequests)
 	applyChecks(pr, n.Commits)
 	applyReviewThreads(pr, n.ReviewThreads)
+	applyMergeFacts(pr, n.Mergeable, n.MergeState, n.LastEditedAt, n.ClosingIssues.Nodes)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.actor())
 	}
@@ -325,12 +347,33 @@ func applyChecks(pr *PullRequest, conn *commitsConnection) {
 	if len(conn.Nodes) == 0 {
 		return
 	}
-	rollup := conn.Nodes[0].Commit.StatusCheckRollup
+	commit := conn.Nodes[0].Commit
+	pr.HeadCommittedAt = commit.CommittedDate
+	rollup := commit.StatusCheckRollup
 	if rollup == nil {
 		return
 	}
 	pr.Checks.State = rollup.State
 	pr.Checks.Total = rollup.Contexts.TotalCount
+}
+
+// applyMergeFacts fills the mergeability, description edit time, and closing
+// issues. An empty merge verdict means the query did not ask for it (or the
+// cache row predates the fields); a nil closing-issue slice becomes an empty
+// one, since the query always names the connection.
+func applyMergeFacts(pr *PullRequest, mergeable, mergeState string, lastEditedAt *time.Time, issues []closingIssueNode) {
+	pr.Mergeable = mergeable
+	pr.MergeStateStatus = mergeState
+	pr.LastEditedAt = lastEditedAt
+	pr.ClosingIssues = make([]ClosingIssue, 0, len(issues))
+	for _, issue := range issues {
+		pr.ClosingIssues = append(pr.ClosingIssues, ClosingIssue{
+			Number: issue.Number,
+			Title:  issue.Title,
+			State:  issue.State,
+			URL:    issue.URL,
+		})
+	}
 }
 
 // applyReviewThreads fills the review-thread counts. A nil connection means the
@@ -470,6 +513,7 @@ func searchNodeToPR(n *searchNode) *PullRequest {
 	applyPRExtras(pr, n.Additions, n.Deletions, n.Reviews.Nodes, n.TimelineItems.Nodes)
 	applyChecks(pr, n.Commits)
 	applyReviewThreads(pr, n.ReviewThreads)
+	applyMergeFacts(pr, n.Mergeable, n.MergeState, n.LastEditedAt, n.ClosingIssues.Nodes)
 	for _, a := range n.Assignees.Nodes {
 		pr.Assignees = append(pr.Assignees, a.actor())
 	}
@@ -869,6 +913,7 @@ const prChecksSelection = `
 commits(last: 1) {
   nodes {
     commit {
+      committedDate
       statusCheckRollup {
         state
         contexts { totalCount }
@@ -900,6 +945,8 @@ query($owner: String!, $repo: String!, $first: Int!, $states: [PullRequestState!
         milestone { number title }
         baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
+        mergeable mergeStateStatus lastEditedAt
+        closingIssuesReferences(first: 10) { nodes { number title state url } }
         ` + prChecksSelection + `
         comments { totalCount }
       }
@@ -951,6 +998,8 @@ query($owner: String!, $repo: String!, $number: Int!) {
       milestone { number title }
       baseRefName headRefName headRefOid
       createdAt updatedAt mergedAt closedAt url body
+        mergeable mergeStateStatus lastEditedAt
+        closingIssuesReferences(first: 10) { nodes { number title state url } }
       additions deletions
       reviews(first: 100) {
         nodes { author { __typename login } state submittedAt }
@@ -980,6 +1029,8 @@ query($query: String!, $first: Int!, $after: String) {
         milestone { number title }
         baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
+        mergeable mergeStateStatus lastEditedAt
+        closingIssuesReferences(first: 10) { nodes { number title state url } }
         ` + prChecksSelection + `
         comments { totalCount }
       }
@@ -1001,6 +1052,8 @@ query($owner: String!, $repo: String!, $after: String, $dir: OrderDirection!, $f
         milestone { number title }
         baseRefName headRefName headRefOid
         createdAt updatedAt mergedAt closedAt url body
+        mergeable mergeStateStatus lastEditedAt
+        closingIssuesReferences(first: 10) { nodes { number title state url } }
         additions deletions
         reviews(first: 100) {
           nodes { author { __typename login } state submittedAt }

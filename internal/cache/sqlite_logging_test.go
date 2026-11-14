@@ -107,7 +107,7 @@ func TestSQLiteStore_OpenChecksEachTableOnce(t *testing.T) {
 			t.Errorf("table %s probed %d times on first open, want 1", table, got)
 		}
 	}
-	if !strings.Contains(out, "PRAGMA user_version = 4") {
+	if !strings.Contains(out, "PRAGMA user_version = 5") {
 		t.Errorf("first open did not stamp the schema version; got:\n%s", out)
 	}
 

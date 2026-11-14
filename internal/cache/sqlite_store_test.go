@@ -87,6 +87,8 @@ func richOpenIssue(n int) *github.Issue {
 
 func richPR(n int) *github.PullRequest {
 	merged := utc(2024, 4, 5, 6, 7)
+	edited := utc(2024, 3, 2, 3, 0)
+	committed := utc(2024, 3, 1, 12, 0)
 	return &github.PullRequest{
 		Number:         n,
 		Title:          "Add login feature",
@@ -122,8 +124,15 @@ func richPR(n int) *github.PullRequest {
 			{Type: "User", Login: "bob"},
 			{Type: "Team", Name: "ml-infra-gpu"},
 		},
-		Checks:        &github.PRChecks{State: "FAILURE", Total: 5},
-		ReviewThreads: &github.PRThreadCounts{Total: 4, Open: 2},
+		Checks:           &github.PRChecks{State: "FAILURE", Total: 5},
+		ReviewThreads:    &github.PRThreadCounts{Total: 4, Open: 2},
+		Mergeable:        "MERGEABLE",
+		MergeStateStatus: "CLEAN",
+		ClosingIssues: []github.ClosingIssue{
+			{Number: 12, Title: "Login is broken", State: "OPEN", URL: "https://github.com/owner/repo/issues/12"},
+		},
+		LastEditedAt:    &edited,
+		HeadCommittedAt: &committed,
 	}
 }
 
