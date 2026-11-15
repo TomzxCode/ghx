@@ -241,6 +241,13 @@ func (s *InstrumentedStore) DeleteSegments(host, owner, repo, kind string) error
 	return err
 }
 
+// RecordSchemaStatus delegates without recording: the check runs on read paths
+// that already record their own event, so recording it would double the volume
+// without adding an operation the timings can attribute.
+func (s *InstrumentedStore) RecordSchemaStatus(host, owner, repo, kind string) (SchemaStatus, error) {
+	return s.store.RecordSchemaStatus(host, owner, repo, kind)
+}
+
 // DeleteType records the removal.
 func (s *InstrumentedStore) DeleteType(host, owner, repo, kind string) (int, error) {
 	start := time.Now()

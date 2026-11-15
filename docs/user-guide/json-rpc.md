@@ -125,6 +125,7 @@ The server processes requests concurrently; `cache.refresh` runs one refresh per
 
 The read methods mirror the CLI's cache behavior: a fresh full cache is served locally, otherwise the method calls the GitHub API and backfills the cache.
 `issue.list` and `pr.list` include `source` (`cache` or `api`) and `total` (before the limit is applied) in their results.
+When they serve cached records written by another record schema, or with no recorded version, they also include `warning`, the same message the CLI prints; see [Record schema versions](cache.md#record-schema-versions).
 
 ## Errors
 

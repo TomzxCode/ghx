@@ -121,4 +121,5 @@ func applyEnvFallbacks(cmd *cobra.Command) {
 	repoFlags = resolveStringSlice(globalFlagWasSet(cmd, "repo"), "GHX_REPO", repoFlags)
 	apiURLFlag = resolveString(globalFlagWasSet(cmd, "api-url"), "GHX_API_URL", apiURLFlag)
 	storageFlag = resolveString(globalFlagWasSet(cmd, "storage"), "GHX_STORAGE", storageFlag)
+	onSchemaChangeFlag = resolveString(globalFlagWasSet(cmd, "on-schema-change"), "GHX_ON_SCHEMA_CHANGE", onSchemaChangeFlag)
 }

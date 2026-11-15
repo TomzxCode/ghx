@@ -344,6 +344,7 @@ func newRPCConfig(store cache.Store, token string, allowExec bool) rpc.Config {
 		ParseSince:     parseSinceDate,
 		BackfillIssues: backfillIssueDetails,
 		BackfillPRs:    backfillPRDetails,
+		SchemaPolicy:   activeSchemaPolicy,
 		Version:        version.Get(),
 		Token:          token,
 		AllowExec:      allowExec,

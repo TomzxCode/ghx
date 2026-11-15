@@ -195,6 +195,19 @@ func migrateSQLiteSchema(db *sql.DB) error {
 			column: "head_committed_at",
 			ddl:    "ALTER TABLE pull_requests ADD COLUMN head_committed_at TEXT",
 		},
+		{
+			// Rows that predate the column get 0, "no version recorded", which a
+			// read reports rather than treating them as current: an earlier ghx
+			// may have written a different record shape.
+			table:  "issues",
+			column: "schema_version",
+			ddl:    "ALTER TABLE issues ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0",
+		},
+		{
+			table:  "pull_requests",
+			column: "schema_version",
+			ddl:    "ALTER TABLE pull_requests ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0",
+		},
 	} {
 		cols, ok := columns[m.table]
 		if !ok {
@@ -247,7 +260,7 @@ func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
 // its additive column migrations are up to date. Bump it whenever a migration is
 // added to migrateSQLiteSchema, so an up-to-date database skips the column
 // probes on later opens.
-const schemaVersionCurrent = 5
+const schemaVersionCurrent = 6
 
 // Kind reports the backend name.
 func (s *sqliteStore) Kind() string { return "sqlite" }
@@ -393,6 +406,37 @@ func queryRowLogged(r sqlRunner, op, query string, args ...any) *sql.Row {
 }
 
 // ---------------------------------------------------------------------------
+// Record schema versions
+// ---------------------------------------------------------------------------
+
+// RecordSchemaStatus counts the cached records of one kind per record schema
+// version, so a read can tell whether every record matches the version this ghx
+// writes.
+func (s *sqliteStore) RecordSchemaStatus(host, owner, repo, kind string) (SchemaStatus, error) {
+	table, err := recordTable(kind)
+	if err != nil {
+		return SchemaStatus{}, err
+	}
+	status := SchemaStatus{Current: RecordSchemaVersion(kind)}
+	rows, err := queryLogged(s.db, "RecordSchemaStatus",
+		`SELECT schema_version, COUNT(*) FROM `+table+` WHERE host=? AND owner=? AND repo=? GROUP BY schema_version`,
+		host, owner, repo)
+	if err != nil {
+		return SchemaStatus{}, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var version, count int
+		if err := rows.Scan(&version, &count); err != nil {
+			return SchemaStatus{}, err
+		}
+		status.add(version, count)
+	}
+	return status, rows.Err()
+}
+
+// ---------------------------------------------------------------------------
 // Issues
 // ---------------------------------------------------------------------------
 
@@ -407,12 +451,12 @@ func (s *sqliteStore) SaveIssue(host, owner, repo string, issue *github.Issue) e
 	}
 	_, err = execLogged(s.db, "SaveIssue", `INSERT OR REPLACE INTO issues
 		(host, owner, repo, number, title, state, author_login, author_type, assignees, labels, milestone,
-		 created_at, updated_at, closed_at, url, body, comment_count, comments, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 created_at, updated_at, closed_at, url, body, comment_count, comments, row_mtime, schema_version)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, issue.Number, issue.Title, issue.State, issue.Author.Login, issue.Author.Type,
 		mustJSON(issue.Assignees), mustJSON(issue.Labels), milestone,
 		tstr(issue.CreatedAt), tstr(issue.UpdatedAt), nullTime(issue.ClosedAt),
-		issue.URL, issue.Body, issue.CommentCount, mustJSON(issue.Comments), tstr(time.Now()),
+		issue.URL, issue.Body, issue.CommentCount, mustJSON(issue.Comments), tstr(time.Now()), IssueSchemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("saving issue #%d: %w", issue.Number, err)
@@ -588,15 +632,15 @@ func (s *sqliteStore) SavePR(host, owner, repo string, pr *github.PullRequest) e
 		 base_ref_name, head_ref_name, head_ref_oid, created_at, updated_at, merged_at, closed_at,
 		 url, body, comment_count, comments, reviews, timeline, review_requests, review_decision,
 		 checks, review_threads, mergeable, merge_state_status, closing_issues, last_edited_at,
-		 head_committed_at, additions, deletions, row_mtime)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		 head_committed_at, additions, deletions, row_mtime, schema_version)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		host, owner, repo, pr.Number, pr.Title, pr.State, isDraft, pr.Author.Login, pr.Author.Type,
 		mustJSON(pr.Assignees), mustJSON(pr.Labels), milestone,
 		pr.BaseRefName, pr.HeadRefName, pr.HeadRefOid, tstr(pr.CreatedAt), tstr(pr.UpdatedAt),
 		nullTime(pr.MergedAt), nullTime(pr.ClosedAt),
 		pr.URL, pr.Body, pr.CommentCount, mustJSON(pr.Comments), mustJSON(pr.Reviews), mustJSON(pr.Timeline),
 		reviewRequests, reviewDecision, checks, reviewThreads, mergeable, mergeStateStatus, closingIssues,
-		lastEditedAt, headCommittedAt, pr.Additions, pr.Deletions, tstr(time.Now()),
+		lastEditedAt, headCommittedAt, pr.Additions, pr.Deletions, tstr(time.Now()), PRSchemaVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("saving PR #%d: %w", pr.Number, err)

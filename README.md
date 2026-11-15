@@ -81,6 +81,11 @@ Coverage is recorded as merged `updatedAt` ranges per type, so an interrupted ba
 List and view commands serve from the cache when it is fresh, and fall back to the GitHub API otherwise.
 When they fall back, they also write what they fetch into the cache (using the same records `ghx cache` produces), so browsing incrementally warms the cache.
 
+Every record ghx writes carries the record schema version of the binary that wrote it, versioned separately for issues and pull requests.
+When a newer ghx changes what it stores for one kind, only that kind's records are flagged; a record with no version counts as flagged too, since nothing proves it matches.
+Reads warn once per repository, and `--on-schema-change refetch` (or `GHX_ON_SCHEMA_CHANGE=refetch`) makes them treat flagged records as a cache miss instead of serving them as they are.
+See [Record schema versions](docs/user-guide/cache.md#record-schema-versions).
+
 #### Storage backends
 
 By default the cache uses an indexed SQLite database (`cache.db`), which is several times faster than the legacy file backend for listing, filtering, and searching on large repositories. The file backend (one JSON file per issue/PR) is still available:

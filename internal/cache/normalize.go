@@ -136,6 +136,12 @@ func (s *normalizeStore) IsPRsCacheFreshWithDuration(host, owner, repo string, d
 	return s.store.IsPRsCacheFreshWithDuration(host, owner, repo, duration)
 }
 
+// RecordSchemaStatus reports record schema versions under the normalized key.
+func (s *normalizeStore) RecordSchemaStatus(host, owner, repo, kind string) (SchemaStatus, error) {
+	host, owner, repo = normalizeRepoKey(host, owner, repo)
+	return s.store.RecordSchemaStatus(host, owner, repo, kind)
+}
+
 // DeleteRepo removes the cache under the normalized repository key.
 func (s *normalizeStore) DeleteRepo(host, owner, repo string) (bool, error) {
 	host, owner, repo = normalizeRepoKey(host, owner, repo)

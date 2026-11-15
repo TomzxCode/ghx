@@ -22,10 +22,16 @@ var (
 	cacheDir           string
 	storageFlag        string
 	logLevelFlag       string
+	onSchemaChangeFlag string
 	telemetryFlag      *bool
 	telemetryFlagValue bool
 	telemetryDBFlag    string
 )
+
+// activeSchemaPolicy is the parsed --on-schema-change setting. It defaults to
+// serving cached records, so a code path that runs without PersistentPreRunE
+// (a test calling a command function) keeps reads offline.
+var activeSchemaPolicy = cache.SchemaServe
 
 var rootCmd = &cobra.Command{
 	Use:           "ghx",
@@ -52,6 +58,11 @@ instead of locally.`,
 		if err := logging.SetLevel(logLevelFlag); err != nil {
 			return err
 		}
+		policy, err := cache.ParseSchemaPolicy(onSchemaChangeFlag)
+		if err != nil {
+			return err
+		}
+		activeSchemaPolicy = policy
 		if cmd.Flags().Changed("telemetry") {
 			v := telemetryFlagValue
 			telemetryFlag = &v
@@ -90,6 +101,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL, for testing (env GHX_API_URL)")
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path (env GHX_CACHE_DIR)")
 	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
+	rootCmd.PersistentFlags().StringVar(&onSchemaChangeFlag, "on-schema-change", "serve", "When cached records use an older record schema: serve them with a warning, or refetch them from GitHub (env GHX_ON_SCHEMA_CHANGE)")
 	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "info", "Log verbosity: debug, info, warn, or error (env GHX_LOG_LEVEL)")
 	rootCmd.PersistentFlags().BoolVar(&telemetryFlagValue, "telemetry", false, "Record API and cache timings locally (default enabled; env GHX_TELEMETRY, use --telemetry=false to opt out)")
 	rootCmd.PersistentFlags().StringVar(&telemetryDBFlag, "telemetry-db", "", "Telemetry database path (env GHX_TELEMETRY_DB)")

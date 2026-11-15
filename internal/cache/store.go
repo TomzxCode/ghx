@@ -208,6 +208,11 @@ type Store interface {
 	// DeleteSegments clears the coverage for one kind.
 	DeleteSegments(host, owner, repo, kind string) error
 
+	// RecordSchemaStatus reports the record schema versions found in the cached
+	// records of one kind ("issues" or "prs"), so a read can tell whether every
+	// record matches the version this ghx writes.
+	RecordSchemaStatus(host, owner, repo, kind string) (SchemaStatus, error)
+
 	// QueryIssues returns the cached issues matching q. Backends may push the
 	// scalar predicates to indexed storage, but the returned set is identical
 	// to filtering LoadAllIssues with q.

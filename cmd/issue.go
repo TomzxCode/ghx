@@ -135,7 +135,8 @@ type repoIssueList struct {
 // fresh, or from the GitHub API otherwise. The limit applies per repository.
 func listIssuesForRepo(store cache.Store, repo *gitremote.Repo, assignee, author string, clientFor func() (*github.Client, error)) ([]*github.Issue, int, error) {
 	cacheStart := time.Now()
-	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh &&
+		cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindIssues, activeSchemaPolicy) {
 		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
 			State:     issueListState,
 			Assignee:  assignee,
@@ -206,7 +207,7 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	if !issueViewRefresh {
+	if !issueViewRefresh && cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindIssues, activeSchemaPolicy) {
 		// One metadata read answers both checks: whether the full cache is
 		// fresh, and how long an individual item may be served.
 		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)

@@ -1,5 +1,11 @@
 package cache
 
+import (
+	"fmt"
+
+	"github.com/tomzxcode/ghx/internal/logging"
+)
+
 // MigrationResult summarises how many items a migration copied.
 type MigrationResult struct {
 	Issues int
@@ -15,6 +21,21 @@ type MigrationResult struct {
 // and re-runnable (NFR-02). The source store is never modified.
 func Migrate(src, dst Store, host, owner, repo string) (MigrationResult, error) {
 	var res MigrationResult
+
+	// Records are copied as they are and dst stamps them with this ghx's
+	// version. That is right only when src was written by the same record
+	// schema, so warn when it was not: the copy would otherwise look current
+	// while carrying fields of an earlier schema.
+	for _, kind := range []string{KindIssues, KindPRs} {
+		status, err := src.RecordSchemaStatus(host, owner, repo, kind)
+		if err != nil || status.Matches() {
+			continue
+		}
+		logging.Warn(fmt.Sprintf("migrating %s that %s; the copy is stamped with schema %d, so run \"ghx cache --type %s --force\" to refetch them",
+			schemaKindLabel(kind), describeRecordVersions(status), status.Current, kind),
+			"repo", repoKey(host, owner, repo), "kind", kind,
+			"outdated", status.Outdated, "unversioned", status.Unversioned)
+	}
 
 	issues, err := src.LoadAllIssues(host, owner, repo)
 	if err != nil {

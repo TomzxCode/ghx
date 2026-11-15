@@ -38,6 +38,9 @@ type IssueListResult struct {
 	Items  []*github.Issue `json:"items"`
 	Total  int             `json:"total"`
 	Source string          `json:"source"` // "cache" or "api"
+	// Warning explains cached records written by another record schema, or with
+	// no recorded version, when they were served anyway.
+	Warning string `json:"warning,omitempty"`
 }
 
 // IssueViewParams selects one issue.
@@ -67,6 +70,9 @@ type PRListResult struct {
 	Items  []*github.PullRequest `json:"items"`
 	Total  int                   `json:"total"`
 	Source string                `json:"source"` // "cache" or "api"
+	// Warning explains cached records written by another record schema, or with
+	// no recorded version, when they were served anyway.
+	Warning string `json:"warning,omitempty"`
 }
 
 // PRViewParams selects one pull request.
@@ -221,26 +227,29 @@ func (s *Server) issueList(ctx context.Context, raw json.RawMessage) (any, error
 		return nil, fmt.Errorf("cache store is not configured on this server")
 	}
 	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
-			State:     state,
-			Assignee:  p.Assignee,
-			Author:    p.Author,
-			Labels:    p.Labels,
-			Milestone: p.Milestone,
-			Search:    p.Search,
-		})
-		if err == nil {
-			sort.Slice(issues, func(i, j int) bool {
-				return issues[i].UpdatedAt.After(issues[j].UpdatedAt)
+		serve, status := cache.CachedRecordsVerdict(store, repo.Host, repo.Owner, repo.Name, cache.KindIssues, s.cfg.SchemaPolicy)
+		if serve {
+			issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
+				State:     state,
+				Assignee:  p.Assignee,
+				Author:    p.Author,
+				Labels:    p.Labels,
+				Milestone: p.Milestone,
+				Search:    p.Search,
 			})
-			total := len(issues)
-			if limit > 0 && len(issues) > limit {
-				issues = issues[:limit]
+			if err == nil {
+				sort.Slice(issues, func(i, j int) bool {
+					return issues[i].UpdatedAt.After(issues[j].UpdatedAt)
+				})
+				total := len(issues)
+				if limit > 0 && len(issues) > limit {
+					issues = issues[:limit]
+				}
+				if issues == nil {
+					issues = []*github.Issue{}
+				}
+				return IssueListResult{Items: issues, Total: total, Source: "cache", Warning: cache.SchemaWarning(cache.KindIssues, status)}, nil
 			}
-			if issues == nil {
-				issues = []*github.Issue{}
-			}
-			return IssueListResult{Items: issues, Total: total, Source: "cache"}, nil
 		}
 	}
 
@@ -288,7 +297,7 @@ func (s *Server) issueView(ctx context.Context, raw json.RawMessage) (any, error
 		return nil, fmt.Errorf("cache store is not configured on this server")
 	}
 
-	if !p.Refresh {
+	if !p.Refresh && cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindIssues, s.cfg.SchemaPolicy) {
 		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
 		if info.IssuesFreshAt(time.Now()) {
 			if issue, _, err := store.LoadIssue(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {
@@ -349,28 +358,31 @@ func (s *Server) prList(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("cache store is not configured on this server")
 	}
 	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
-		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
-			State:    state,
-			Assignee: p.Assignee,
-			Author:   p.Author,
-			Labels:   p.Labels,
-			BaseRef:  p.Base,
-			HeadRef:  p.Head,
-			Draft:    p.Draft,
-			Search:   p.Search,
-		})
-		if err == nil {
-			sort.Slice(prs, func(i, j int) bool {
-				return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
+		serve, status := cache.CachedRecordsVerdict(store, repo.Host, repo.Owner, repo.Name, cache.KindPRs, s.cfg.SchemaPolicy)
+		if serve {
+			prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
+				State:    state,
+				Assignee: p.Assignee,
+				Author:   p.Author,
+				Labels:   p.Labels,
+				BaseRef:  p.Base,
+				HeadRef:  p.Head,
+				Draft:    p.Draft,
+				Search:   p.Search,
 			})
-			total := len(prs)
-			if limit > 0 && len(prs) > limit {
-				prs = prs[:limit]
+			if err == nil {
+				sort.Slice(prs, func(i, j int) bool {
+					return prs[i].UpdatedAt.After(prs[j].UpdatedAt)
+				})
+				total := len(prs)
+				if limit > 0 && len(prs) > limit {
+					prs = prs[:limit]
+				}
+				if prs == nil {
+					prs = []*github.PullRequest{}
+				}
+				return PRListResult{Items: prs, Total: total, Source: "cache", Warning: cache.SchemaWarning(cache.KindPRs, status)}, nil
 			}
-			if prs == nil {
-				prs = []*github.PullRequest{}
-			}
-			return PRListResult{Items: prs, Total: total, Source: "cache"}, nil
 		}
 	}
 
@@ -419,7 +431,7 @@ func (s *Server) prView(ctx context.Context, raw json.RawMessage) (any, error) {
 		return nil, fmt.Errorf("cache store is not configured on this server")
 	}
 
-	if !p.Refresh {
+	if !p.Refresh && cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindPRs, s.cfg.SchemaPolicy) {
 		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)
 		if info.PRsFreshAt(time.Now()) {
 			if pr, _, err := store.LoadPR(repo.Host, repo.Owner, repo.Name, p.Number); err == nil {

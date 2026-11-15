@@ -41,6 +41,9 @@ ghx serve --host 127.0.0.1 --port 9000 --open
 
 The UI is read-only against the cache except for the explicit refresh action; the stats report is computed from cached pull requests only.
 
+When list or detail data was written by another record schema, or carries no version, the page shows a warning banner naming what it found and the way to refetch (see [Record schema versions](cache.md#record-schema-versions)).
+The UI always serves what is cached, so the banner appears whatever `--on-schema-change` says; refreshing the repository or the item restamps the records it writes.
+
 ## Loading data
 
 The UI serves whatever is in the cache.

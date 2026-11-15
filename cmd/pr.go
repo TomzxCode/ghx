@@ -158,7 +158,8 @@ type repoPRList struct {
 // fresh, or from the GitHub API otherwise. The limit applies per repository.
 func listPRsForRepo(store cache.Store, repo *gitremote.Repo, assignee, author string, clientFor func() (*github.Client, error)) ([]*github.PullRequest, int, error) {
 	cacheStart := time.Now()
-	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
+	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh &&
+		cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindPRs, activeSchemaPolicy) {
 		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
 			State:    prListState,
 			Assignee: assignee,
@@ -232,7 +233,7 @@ func runPRView(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	if !prViewRefresh {
+	if !prViewRefresh && cache.CanServeCachedRecords(store, repo.Host, repo.Owner, repo.Name, cache.KindPRs, activeSchemaPolicy) {
 		// One metadata read answers both checks: whether the full cache is
 		// fresh, and how long an individual item may be served.
 		info, _ := store.LoadCacheInfo(repo.Host, repo.Owner, repo.Name)

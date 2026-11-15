@@ -231,6 +231,10 @@ func runSearchIssues(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		repo := newSearchRepository(target)
+		// Search reads only the local cache; it has no per-item API path, so it
+		// warns about an outdated record schema and searches what is stored
+		// whatever the --on-schema-change policy is.
+		cache.CanServeCachedRecords(store, target.Host, target.Owner, target.Repo, cache.KindIssues, cache.SchemaServe)
 		issues, err := store.QueryIssues(target.Host, target.Owner, target.Repo, cache.IssueQuery{})
 		if err != nil {
 			return fmt.Errorf("searching %s: %w", repo.label(), err)
@@ -241,6 +245,7 @@ func runSearchIssues(cmd *cobra.Command, args []string) error {
 			}
 		}
 		if searchIssuesIncludePRs {
+			cache.CanServeCachedRecords(store, target.Host, target.Owner, target.Repo, cache.KindPRs, cache.SchemaServe)
 			prs, err := store.QueryPRs(target.Host, target.Owner, target.Repo, cache.PRQuery{})
 			if err != nil {
 				return fmt.Errorf("searching %s: %w", repo.label(), err)
@@ -304,6 +309,8 @@ func runSearchPRs(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		repo := newSearchRepository(target)
+		// Search reads only the local cache; see the note in search issues.
+		cache.CanServeCachedRecords(store, target.Host, target.Owner, target.Repo, cache.KindPRs, cache.SchemaServe)
 		prs, err := store.QueryPRs(target.Host, target.Owner, target.Repo, cache.PRQuery{})
 		if err != nil {
 			return fmt.Errorf("searching %s: %w", repo.label(), err)

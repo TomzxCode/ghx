@@ -146,6 +146,9 @@
     itemsCount: 0,
     loading: false,
     error: '',
+    // schemaWarning explains cached records written by an older record schema,
+    // when the API reports they are being shown anyway.
+    schemaWarning: '',
     detail: null,
     refreshing: {},
     repoFilter: '',
@@ -232,6 +235,7 @@
     const seq = ++fetchSeq;
     state.loading = true;
     state.error = '';
+    state.schemaWarning = '';
     try {
       const kind = state.tab === 'prs' ? 'prs' : 'issues';
       const params = new URLSearchParams({ state: state.stateFilter, sort: state.sort, order: state.order });
@@ -240,6 +244,7 @@
       if (seq !== fetchSeq) return;
       state.items = data.items;
       state.itemsCount = data.items.length;
+      state.schemaWarning = data.schemaWarning || '';
     } catch (e) {
       if (seq !== fetchSeq) return;
       state.error = e.message;
@@ -255,9 +260,11 @@
     state.loading = true;
     state.error = '';
     state.detail = null;
+    state.schemaWarning = '';
     try {
       const data = await api('/api/repos/' + repo.host + '/' + encodeURIComponent(repo.owner) + '/' + encodeURIComponent(repo.repo) + '/' + (r.kind === 'pulls' ? 'prs' : 'issues') + '/' + r.number);
       state.detail = data;
+      state.schemaWarning = data.schemaWarning || '';
     } catch (e) {
       state.error = e.message;
     }
@@ -885,6 +892,9 @@
   </header>
   <div class="alert alert-error rounded-none py-2 text-sm" v-if="state.error">
     <span>{{ state.error }}</span>
+  </div>
+  <div class="alert alert-warning rounded-none py-2 text-sm" v-if="state.schemaWarning">
+    <span>{{ state.schemaWarning }}</span>
   </div>
 
   <main class="max-w-6xl mx-auto p-4">

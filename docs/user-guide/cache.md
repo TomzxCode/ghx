@@ -204,6 +204,47 @@ The same duration is the per-item window for `view`: an item written within it i
 
 It does not gate `ghx cache` itself, which always fills uncovered ranges unless you pass `--if-stale`.
 
+## Record schema versions
+
+Every cached issue and pull request is stamped with the record schema version of the ghx that wrote it.
+A record schema is the shape of what ghx stores for one kind: which fields, and what they mean.
+When a ghx release starts storing or reading a field in a way that older records cannot satisfy, it bumps the version of that kind only.
+
+Versions are per kind (issues and pull requests separately), so a change to the pull request record leaves cached issues serviceable, and the reverse.
+
+A record with no version is reported as unversioned, not assumed to match: a cache written before ghx recorded versions, or by another tool, carries no evidence that it matches the current schema, so it is flagged like any other mismatch.
+This means the first run after upgrading to a version-stamping ghx warns once per repository for caches that already existed.
+
+After a release that raises the issue record schema to 2, a read of a cache written by the previous ghx warns once per repository and kind:
+
+```
+warn cached issues use record schema 1 and this ghx writes 2, so they may not match this version's fields;
+run "ghx cache --type issues --force" or set --on-schema-change=refetch to refetch them
+```
+
+The warning names the affected counts and versions in its attributes (`outdated`, `unversioned`, `oldest_schema`, `current_schema`), and says when the records carry no version at all.
+
+What a read does next is controlled by `--on-schema-change` (or `GHX_ON_SCHEMA_CHANGE`):
+
+| Value | Behavior |
+|---|---|
+| `serve` (default) | Serves the cached records and warns. No extra API calls, so reads stay offline. |
+| `refetch` | Treats records written by another version, or with no version, as a cache miss and fetches them from GitHub, so the read returns records of the current schema. |
+
+The policy applies to `issue list`, `pr list`, `issue view`, `pr view`, the JSON-RPC read methods, and the web UI's list and detail pages.
+`ghx search` reads only the local cache and has no per-item API path, so it always warns and searches what is stored.
+
+A read restamps only the records it writes back, so refetching upgrades the items it touches (one item for `view`, the listed page for `list`).
+To upgrade a whole repository at once, run a forced refresh of the kind:
+
+```bash
+ghx cache --type issues --force
+ghx cache --type prs --force
+```
+
+Record schema versions are independent of the SQLite `user_version` pragma, which tracks the database's columns and is migrated in place when ghx opens the cache.
+The record version tracks the data inside a row, which a migration cannot rewrite from GitHub.
+
 ## Cache behavior per command
 
 | Command | Behavior |

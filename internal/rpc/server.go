@@ -82,6 +82,9 @@ type Config struct {
 	// the GitHub API.
 	BackfillIssues BackfillIssuesFunc
 	BackfillPRs    BackfillPRsFunc
+	// SchemaPolicy decides what a cached read does when the cached records were
+	// written by an older record schema. The zero value serves them and warns.
+	SchemaPolicy cache.SchemaPolicy
 	// Version is reported by server.info and rpc.discover.
 	Version string
 	// Token, when set, requires clients to send it as a bearer token.

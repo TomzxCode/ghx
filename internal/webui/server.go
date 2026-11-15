@@ -269,6 +269,9 @@ type ItemDetail struct {
 	Reviewers   []ReviewerView      `json:"reviewers,omitempty"`
 	Comments    []CommentView       `json:"comments"`
 	Timeline    []TimelineEventView `json:"timeline"`
+	// SchemaWarning explains an item whose record schema differs from this
+	// ghx's or carries no version, when the UI is showing it anyway.
+	SchemaWarning string `json:"schemaWarning,omitempty"`
 }
 
 // RepoSummary describes a cached repository.
@@ -428,7 +431,13 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request, host, owner,
 		filtered = append(filtered, item)
 	}
 	sortSummaries(filtered, sortKey, desc)
-	writeJSON(w, http.StatusOK, map[string]any{"items": filtered})
+	payload := map[string]any{"items": filtered}
+	if status, err := s.store.RecordSchemaStatus(host, owner, repo, kind); err == nil {
+		if warning := cache.SchemaWarning(kind, status); warning != "" {
+			payload["schemaWarning"] = warning
+		}
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request, host, owner, repo, kind string, number int) {
@@ -459,6 +468,9 @@ func (s *Server) handleDetail(w http.ResponseWriter, r *http.Request, host, owne
 		}
 		detail = prDetail(pr)
 		detail.CachedAt = cachedAt
+	}
+	if status, err := s.store.RecordSchemaStatus(host, owner, repo, kind); err == nil {
+		detail.SchemaWarning = cache.SchemaWarning(kind, status)
 	}
 	writeJSON(w, http.StatusOK, detail)
 }

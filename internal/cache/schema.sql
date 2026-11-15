@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS issues (
     comment_count INTEGER NOT NULL,
     comments      TEXT    NOT NULL,
     row_mtime     TEXT    NOT NULL,
+    -- Record schema version of the ghx that wrote this row. Versioning is per
+    -- kind, so a change to issues leaves cached pull requests untouched. 0 means
+    -- no version was recorded, which counts as a mismatch: a row written before
+    -- ghx stamped versions cannot be assumed to match the current schema.
+    schema_version INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (host, owner, repo, number)
 );
 
@@ -69,6 +74,10 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     additions       INTEGER NOT NULL DEFAULT 0,
     deletions       INTEGER NOT NULL DEFAULT 0,
     row_mtime       TEXT    NOT NULL,
+    -- Record schema version of the ghx that wrote this row. It moves
+    -- independently of the issues table's schema_version, and 0 means no
+    -- version was recorded.
+    schema_version  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (host, owner, repo, number)
 );
 

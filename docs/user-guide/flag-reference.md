@@ -9,6 +9,7 @@ These flags apply to all commands.
 | `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository, repeatable on `issue list`, `pr list`, `search`, and `stats` to cover several repositories in one run. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. Also `GHX_REPO`, comma-separated. |
 | `--cache-dir string` | Override the cache directory (default `$XDG_CACHE_HOME/ghx/cache/`, or `~/.cache/ghx/cache/` when that variable is unset). Also `GHX_CACHE_DIR`. |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
+| `--on-schema-change string` | What a cached read does when the cached records were written by an older record schema: `serve` (default) returns them and warns, `refetch` treats them as a cache miss and fetches them from GitHub. Record schemas are versioned per data kind, so a change to pull requests leaves cached issues alone. Also `GHX_ON_SCHEMA_CHANGE`. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). Also `GHX_API_URL`. |
 | `--log-level string` | Log verbosity: `debug`, `info` (default), `warn`, or `error`. Messages go to stderr, each prefixed with a local timestamp (`2006-01-02 15:04:05.000`). At `debug`, every SQLite cache statement is logged with its operation, SQL, arguments, and duration. Also `GHX_LOG_LEVEL`. |
 | `--telemetry` | Record API and cache timings locally. On by default; `--telemetry=false` (or `GHX_TELEMETRY=0`) opts out for one run. |
@@ -28,6 +29,7 @@ Unless noted, an empty value counts as unset.
 | `GHX_REPO` | `--repo` (comma-separated for several) | Detected from `git remote origin` |
 | `GHX_CACHE_DIR` | `--cache-dir` | `$XDG_CACHE_HOME/ghx/cache`, else `~/.cache/ghx/cache` |
 | `GHX_STORAGE` | `--storage` | `sqlite` |
+| `GHX_ON_SCHEMA_CHANGE` | `--on-schema-change` | `serve` |
 | `GHX_API_URL` | `--api-url` | GitHub's GraphQL endpoint for the target host |
 | `GHX_LOG_LEVEL` | `--log-level` | `info` |
 | `GHX_TELEMETRY` | `--telemetry` | On (`1`/`true`/`yes`/`on` enables, `0`/`false`/`no`/`off` disables) |

@@ -1,10 +1,14 @@
 package cache
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,11 +38,75 @@ func (s *fileStore) prDir(host, owner, repo string) string {
 	return filepath.Join(s.repoDir(host, owner, repo), "prs")
 }
 
+// issueRecord is a file-backed issue with the record schema version that wrote
+// it. Embedding keeps the item's fields at the top level, so the file stays one
+// JSON object per item and a reader that ignores the stamp still reads it.
+type issueRecord struct {
+	SchemaVersion int `json:"_schemaVersion"`
+	*github.Issue
+}
+
+// prRecord is the pull-request counterpart of issueRecord.
+type prRecord struct {
+	SchemaVersion int `json:"_schemaVersion"`
+	*github.PullRequest
+}
+
+// recordStamp is the zero-value projection a status scan decodes: only the
+// version field, so counting versions does not build the whole record.
+type recordStamp struct {
+	SchemaVersion int `json:"_schemaVersion"`
+}
+
+// recordStampHeadLen is how much of a record file a stamp read inspects. ghx
+// writes the schema version as the record's first field, so its digits fit well
+// inside this prefix.
+const recordStampHeadLen = 48
+
+// readRecordStamp reads the schema version stamped on a file-backed record. A
+// stamped record carries the version as its first field, so reading a short
+// prefix avoids decoding a record that may hold a long body and comment list.
+// Any other layout, including a record written before ghx stamped versions, is
+// decoded in full so the answer stays correct.
+func readRecordStamp(path string) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+
+	head := make([]byte, recordStampHeadLen)
+	n, err := io.ReadFull(f, head)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return 0, err
+	}
+	head = head[:n]
+	prefix := []byte("{\n  \"" + recordSchemaVersionKey + "\": ")
+	if bytes.HasPrefix(head, prefix) {
+		rest := head[len(prefix):]
+		if end := bytes.IndexByte(rest, ','); end > 0 {
+			if version, err := strconv.Atoi(strings.TrimSpace(string(rest[:end]))); err == nil {
+				return version, nil
+			}
+		}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	var stamp recordStamp
+	if err := json.Unmarshal(data, &stamp); err != nil {
+		return 0, err
+	}
+	return stamp.SchemaVersion, nil
+}
+
 // SaveIssue writes a single issue to disk. The write is atomic so concurrent
 // readers (for example the serve UI during a refresh) never observe a
 // half-written file.
 func (s *fileStore) SaveIssue(host, owner, repo string, issue *github.Issue) error {
-	data, err := json.MarshalIndent(issue, "", "  ")
+	data, err := json.MarshalIndent(issueRecord{IssueSchemaVersion, issue}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -47,7 +115,7 @@ func (s *fileStore) SaveIssue(host, owner, repo string, issue *github.Issue) err
 
 // SavePR writes a single pull request to disk. The write is atomic (see SaveIssue).
 func (s *fileStore) SavePR(host, owner, repo string, pr *github.PullRequest) error {
-	data, err := json.MarshalIndent(pr, "", "  ")
+	data, err := json.MarshalIndent(prRecord{PRSchemaVersion, pr}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -66,7 +134,8 @@ func (s *fileStore) LoadIssue(host, owner, repo string, number int) (*github.Iss
 		return nil, time.Time{}, err
 	}
 	var issue github.Issue
-	if err := json.Unmarshal(data, &issue); err != nil {
+	rec := issueRecord{Issue: &issue}
+	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, time.Time{}, err
 	}
 	return &issue, info.ModTime(), nil
@@ -84,7 +153,8 @@ func (s *fileStore) LoadPR(host, owner, repo string, number int) (*github.PullRe
 		return nil, time.Time{}, err
 	}
 	var pr github.PullRequest
-	if err := json.Unmarshal(data, &pr); err != nil {
+	rec := prRecord{PullRequest: &pr}
+	if err := json.Unmarshal(data, &rec); err != nil {
 		return nil, time.Time{}, err
 	}
 	return &pr, info.ModTime(), nil
@@ -146,6 +216,43 @@ func (s *fileStore) LoadAllPRs(host, owner, repo string) ([]*github.PullRequest,
 		prs = append(prs, &pr)
 	}
 	return prs, nil
+}
+
+// RecordSchemaStatus counts the cached records of one kind per record schema
+// version. The file backend reads the stamp from each record; a record with no
+// stamp counts as unversioned rather than as any particular version.
+func (s *fileStore) RecordSchemaStatus(host, owner, repo, kind string) (SchemaStatus, error) {
+	var dir string
+	switch kind {
+	case KindIssues:
+		dir = s.issueDir(host, owner, repo)
+	case KindPRs:
+		dir = s.prDir(host, owner, repo)
+	default:
+		_, err := recordTable(kind)
+		return SchemaStatus{}, err
+	}
+	status := SchemaStatus{Current: RecordSchemaVersion(kind)}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return status, nil
+		}
+		return SchemaStatus{}, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		version, err := readRecordStamp(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			// An unreadable record cannot be served either, so it does not
+			// affect the schema verdict.
+			continue
+		}
+		status.add(version, 1)
+	}
+	return status, nil
 }
 
 // QueryIssues loads every cached issue and filters it in memory. This is the
