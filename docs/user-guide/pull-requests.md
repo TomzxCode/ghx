@@ -8,6 +8,16 @@ ghx pr list
 
 When the cache is fresh, results are served from disk. Otherwise the GitHub API is used.
 
+### List several repositories in one call
+
+Repeat `--repo` (or `-R`) instead of making one call per repository:
+
+```bash
+ghx pr list -R cli/cli -R octocat/hello-world
+```
+
+Each row is prefixed with its repository label, and `--json` emits an object keyed by repository label. `--limit` applies per repository.
+
 ### Filter by state
 
 ```bash

@@ -51,10 +51,12 @@ export GH_TOKEN=<token>
 
 ### Target repository
 
-All commands accept `--repo [HOST/]OWNER/REPO` (or `-R`). When omitted, the repo
-is auto-detected from the `origin` remote of the current directory. The search
-commands are the exception: they cover every cached repository unless `--repo`
-is given. Confirm the target before running expensive or write operations:
+All commands accept `--repo [HOST/]OWNER/REPO` (or `-R`). Repeat it on the list
+commands (`issue list`, `pr list`), the search commands, and `stats` to cover
+several repositories in one call. When omitted, the repo is auto-detected from
+the `origin` remote of the current directory. The search commands are the
+exception: they cover every cached repository unless `--repo` is given. Confirm
+the target before running expensive or write operations:
 
 ```bash
 git remote get-url origin
@@ -89,6 +91,7 @@ ghx issue list --label bug --label p1   # AND logic
 ghx issue list --milestone v2.0
 ghx issue list --search "memory leak"
 ghx issue list --limit 50
+ghx issue list -R owner/repo -R other/repo   # several repositories, one call
 ghx issue list --json                # machine-readable output
 ```
 
@@ -112,6 +115,7 @@ ghx pr list --base main
 ghx pr list --head feat/dark-mode
 ghx pr list --draft
 ghx pr list --search "fix crash"
+ghx pr list -R owner/repo -R other/repo   # several repositories, one call
 ghx pr list --json
 ```
 
@@ -134,7 +138,7 @@ ghx repo list --json nameWithOwner,issueCount,status   # same data as JSON
 
 `ghx search` reads only the local cache and never calls the API. It searches
 title, body, and comments, and covers every cached repository unless `--repo`
-limits it to one:
+names the repositories to search:
 
 ```bash
 ghx search issues login              # all cached repos
@@ -162,7 +166,7 @@ available.
 | Command | Cache behaviour |
 |---|---|
 | `cache` | Fetches all issues/PRs (all states, with comments); writes one JSON file each. Each run delta-refreshes; `--if-stale` skips while the cache is fresh. |
-| `issue list` / `pr list` | Reads all cached files and filters in memory when the full cache is fresh; falls back to the GitHub API otherwise. |
+| `issue list` / `pr list` | Reads all cached files and filters in memory when the full cache is fresh; falls back to the GitHub API otherwise. Repeat `--repo` to list several repositories in one run; rows carry their repository label and `--json` becomes an object keyed by repository. |
 | `issue view` / `pr view` | Serves from the per-item file when it is < 60 min old; fetches from the API and updates the cache otherwise. `--refresh` bypasses all cache checks, always fetches from the API, and updates the cache. |
 | `search issues` / `search prs` | Reads only the local cache, across every cached repository unless `--repo` is given. Never calls the API. |
 

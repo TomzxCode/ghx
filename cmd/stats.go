@@ -119,11 +119,7 @@ func runStats(cmd *cobra.Command, args []string) error {
 // to the --repo flag or the current directory's git remote when none are given.
 func resolveStatsRepos(args []string) ([]*gitremote.Repo, error) {
 	if len(args) == 0 {
-		repo, err := getRepo()
-		if err != nil {
-			return nil, err
-		}
-		return []*gitremote.Repo{repo}, nil
+		return getRepos()
 	}
 
 	repos := make([]*gitremote.Repo, 0, len(args))

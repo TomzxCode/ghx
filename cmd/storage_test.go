@@ -108,9 +108,9 @@ func TestCache_DefaultBackendIsSQLite(t *testing.T) {
 // cache into the SQLite backend.
 func TestCacheMigrate_Command(t *testing.T) {
 	withCleanStorageFlags(t)
-	savedRepo := repoFlag
-	repoFlag = "" // migrate every cached repo
-	t.Cleanup(func() { repoFlag = savedRepo })
+	savedRepo := repoFlags
+	repoFlags = nil // migrate every cached repo
+	t.Cleanup(func() { repoFlags = savedRepo })
 
 	file := cache.NewStoreWithPath(cacheDir)
 	if err := file.SaveIssue("github.com", "acme", "big", &github.Issue{

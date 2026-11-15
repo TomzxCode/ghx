@@ -142,7 +142,7 @@ func resolveRepoArg(args []string) (*gitremote.Repo, error) {
 	if len(args) == 0 {
 		return getRepo()
 	}
-	if repoFlag != "" {
+	if len(repoFlags) > 0 {
 		return nil, fmt.Errorf("specify the repository as an argument or with --repo, not both")
 	}
 	return gitremote.ParseRepo(args[0])

@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	repoFlag           string
+	repoFlags          []string
 	apiURLFlag         string
 	cacheDir           string
 	storageFlag        string
@@ -86,7 +86,7 @@ func Execute() {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVarP(&repoFlag, "repo", "R", "", "Repository in [HOST/]OWNER/REPO format (env GHX_REPO)")
+	rootCmd.PersistentFlags().StringArrayVarP(&repoFlags, "repo", "R", nil, "Repository in [HOST/]OWNER/REPO format; repeat for the list and search commands (env GHX_REPO, comma-separated)")
 	rootCmd.PersistentFlags().StringVar(&apiURLFlag, "api-url", "", "Override the GitHub GraphQL API endpoint URL, for testing (env GHX_API_URL)")
 	rootCmd.PersistentFlags().StringVar(&cacheDir, "cache-dir", "", "Override the cache directory path (env GHX_CACHE_DIR)")
 	rootCmd.PersistentFlags().StringVar(&storageFlag, "storage", "", "Cache storage backend: sqlite (default) or file (env GHX_STORAGE)")
@@ -103,24 +103,74 @@ func init() {
 	rootCmd.AddCommand(telemetryCmd)
 }
 
-// getRepo resolves the target repository from the --repo flag or the current
-// directory's git remote.
-func getRepo() (*gitremote.Repo, error) {
+// getRepos resolves the target repositories from the repeated --repo flag, or
+// from the current directory's git remote when no flag is given. Repeated
+// repositories are deduplicated so each one is queried once.
+func getRepos() ([]*gitremote.Repo, error) {
 	start := time.Now()
-	var (
-		repo *gitremote.Repo
-		err  error
-	)
-	if repoFlag != "" {
-		repo, err = gitremote.ParseRepo(repoFlag)
-	} else {
-		repo, err = gitremote.DetectRepo()
+	if len(repoFlags) == 0 {
+		repo, err := gitremote.DetectRepo()
+		if err != nil {
+			return nil, err
+		}
+		logging.Debug("resolved repository", "repo", repo.String(), "duration", time.Since(start))
+		return []*gitremote.Repo{repo}, nil
 	}
+
+	repos := make([]*gitremote.Repo, 0, len(repoFlags))
+	seen := make(map[string]bool, len(repoFlags))
+	for _, raw := range repoFlags {
+		// A comma-separated value is accepted too, matching GHX_REPO and the
+		// way the flag's help describes the variable.
+		for _, value := range strings.Split(raw, ",") {
+			value = strings.TrimSpace(value)
+			if value == "" {
+				continue
+			}
+			repo, err := gitremote.ParseRepo(value)
+			if err != nil {
+				return nil, err
+			}
+			key := repo.String()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			repos = append(repos, repo)
+		}
+	}
+	if len(repos) == 0 {
+		return nil, fmt.Errorf("invalid --repo: expected [HOST/]OWNER/REPO")
+	}
+	logging.Debug("resolved repositories", "count", len(repos), "duration", time.Since(start))
+	return repos, nil
+}
+
+// getRepo resolves the single repository a command that works on one
+// repository targets.
+func getRepo() (*gitremote.Repo, error) {
+	repos, err := getRepos()
 	if err != nil {
 		return nil, err
 	}
-	logging.Debug("resolved repository", "repo", repo.String(), "duration", time.Since(start))
-	return repo, nil
+	if len(repos) > 1 {
+		return nil, fmt.Errorf("--repo can be given once for this command; multiple repositories are supported by the list and search commands, stats, and cache migrate")
+	}
+	return repos[0], nil
+}
+
+// clientForHost returns the GitHub client cached under host, creating it on
+// first use so a multi-repository command resolves the token once per host.
+func clientForHost(clients map[string]*github.Client, host string) (*github.Client, error) {
+	if client, ok := clients[host]; ok {
+		return client, nil
+	}
+	client, err := newClient(host)
+	if err != nil {
+		return nil, err
+	}
+	clients[host] = client
+	return client, nil
 }
 
 // resolveOwnerName resolves the target repository and returns its owner and

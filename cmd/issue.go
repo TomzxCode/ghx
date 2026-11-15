@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/telemetry"
 )
@@ -89,17 +90,7 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runIssueList(cmd *cobra.Command, args []string) error {
-	repo, err := getRepo()
-	if err != nil {
-		return err
-	}
-
-	me := &meResolver{}
-	assignee, err := me.resolve(issueListAssignee, repo.Host)
-	if err != nil {
-		return err
-	}
-	author, err := me.resolve(issueListAuthor, repo.Host)
+	repos, err := getRepos()
 	if err != nil {
 		return err
 	}
@@ -110,7 +101,39 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	// Serve from cache when it is fresh.
+	me := &meResolver{}
+	clients := make(map[string]*github.Client)
+	lists := make([]repoIssueList, 0, len(repos))
+	for _, repo := range repos {
+		assignee, err := me.resolve(issueListAssignee, repo.Host)
+		if err != nil {
+			return err
+		}
+		author, err := me.resolve(issueListAuthor, repo.Host)
+		if err != nil {
+			return err
+		}
+		issues, total, err := listIssuesForRepo(store, repo, assignee, author, func() (*github.Client, error) {
+			return clientForHost(clients, repo.Host)
+		})
+		if err != nil {
+			return err
+		}
+		lists = append(lists, repoIssueList{repo: repo, issues: issues, total: total})
+	}
+	return printIssueLists(lists, issueListJSON, issueListNoTruncate)
+}
+
+// repoIssueList is one repository's issues within an `issue list` run.
+type repoIssueList struct {
+	repo   *gitremote.Repo
+	issues []*github.Issue
+	total  int
+}
+
+// listIssuesForRepo lists one repository's issues from the cache when it is
+// fresh, or from the GitHub API otherwise. The limit applies per repository.
+func listIssuesForRepo(store cache.Store, repo *gitremote.Repo, assignee, author string, clientFor func() (*github.Client, error)) ([]*github.Issue, int, error) {
 	cacheStart := time.Now()
 	if fresh, _ := store.IsIssuesCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		issues, err := store.QueryIssues(repo.Host, repo.Owner, repo.Name, cache.IssueQuery{
@@ -129,17 +152,17 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 			if issueListLimit > 0 && len(issues) > issueListLimit {
 				issues = issues[:issueListLimit]
 			}
-			logging.Debug("issue list: served from cache", "count", total, "duration", time.Since(cacheStart))
+			logging.Debug("issue list: served from cache", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "count", total, "duration", time.Since(cacheStart))
 			recordRetrievalOutcome(repo, telemetry.RetrievalIssueList, true)
-			return printIssueList(issues, total, issueListJSON, issueListNoTruncate)
+			return issues, total, nil
 		}
-		logging.Debug("issue list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
+		logging.Debug("issue list: cache query failed, falling back to API", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "error", err, "duration", time.Since(cacheStart))
 	}
 
 	// Fall back to the GitHub API.
-	client, err := newClient(repo.Host)
+	client, err := clientFor()
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 
 	opts := github.IssueListOptions{
@@ -157,13 +180,13 @@ func runIssueList(cmd *cobra.Command, args []string) error {
 	listStart := time.Now()
 	issues, err := client.ListIssues(repo.Owner, repo.Name, opts)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
-	logging.Debug("issue list: fetched from API", "count", len(issues), "duration", time.Since(listStart))
+	logging.Debug("issue list: fetched from API", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "count", len(issues), "duration", time.Since(listStart))
 	recordRetrievalOutcome(repo, telemetry.RetrievalIssueList, false)
 
 	backfillIssueDetails(store, client, repo, issues)
-	return printIssueList(issues, len(issues), issueListJSON, issueListNoTruncate)
+	return issues, len(issues), nil
 }
 
 func runIssueView(cmd *cobra.Command, args []string) error {
@@ -250,8 +273,57 @@ func runIssueView(cmd *cobra.Command, args []string) error {
 // Display
 // ---------------------------------------------------------------------------
 
-func printIssueList(issues []*github.Issue, total int, asJSON bool, noTruncate bool) error {
+func printIssueLists(lists []repoIssueList, asJSON bool, noTruncate bool) error {
 	if asJSON {
+		return printIssueListsJSON(lists)
+	}
+
+	multi := len(lists) > 1
+	w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
+	shown, total := 0, 0
+	for _, list := range lists {
+		for _, issue := range list.issues {
+			count := issue.CommentCount
+			if count == 0 {
+				count = len(issue.Comments)
+			}
+			title := issue.Title
+			if !noTruncate {
+				title = truncate(title, 60)
+			}
+			number := fmt.Sprintf("#%d", issue.Number)
+			if multi {
+				number = fmt.Sprintf("%s#%d", repoLabel(list.repo.Host, list.repo.Owner, list.repo.Name), issue.Number)
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
+				number,
+				title,
+				strings.Join(labelNames(issue.Labels), ", "),
+				count,
+				issue.UpdatedAt.Format("2006-01-02"),
+			)
+			shown++
+		}
+		total += list.total
+	}
+	w.Flush()
+
+	if shown == 0 {
+		fmt.Println("No issues found.")
+		return nil
+	}
+	if total > shown {
+		logging.Info("showing issues", "shown", shown, "total", total)
+	}
+	return nil
+}
+
+// printIssueListsJSON emits one JSON array for a single repository, keeping the
+// existing output shape, and an object keyed by repository label when several
+// repositories were listed.
+func printIssueListsJSON(lists []repoIssueList) error {
+	if len(lists) == 1 {
+		issues := lists[0].issues
 		if issues == nil {
 			issues = []*github.Issue{}
 		}
@@ -260,35 +332,17 @@ func printIssueList(issues []*github.Issue, total int, asJSON bool, noTruncate b
 		return enc.Encode(issues)
 	}
 
-	if len(issues) == 0 {
-		fmt.Println("No issues found.")
-		return nil
-	}
-
-	w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
-	for _, issue := range issues {
-		count := issue.CommentCount
-		if count == 0 {
-			count = len(issue.Comments)
+	out := make(map[string][]*github.Issue, len(lists))
+	for _, list := range lists {
+		issues := list.issues
+		if issues == nil {
+			issues = []*github.Issue{}
 		}
-		title := issue.Title
-		if !noTruncate {
-			title = truncate(title, 60)
-		}
-		fmt.Fprintf(w, "#%d\t%s\t%s\t%d\t%s\n",
-			issue.Number,
-			title,
-			strings.Join(labelNames(issue.Labels), ", "),
-			count,
-			issue.UpdatedAt.Format("2006-01-02"),
-		)
+		out[repoLabel(list.repo.Host, list.repo.Owner, list.repo.Name)] = issues
 	}
-	w.Flush()
-
-	if total > len(issues) {
-		logging.Info("showing issues", "shown", len(issues), "total", total)
-	}
-	return nil
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 func printIssueView(issue *github.Issue, showComments bool, asJSON bool, showIDs bool) error {

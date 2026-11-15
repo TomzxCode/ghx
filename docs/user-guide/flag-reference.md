@@ -6,7 +6,7 @@ These flags apply to all commands.
 
 | Flag | Description |
 |---|---|
-| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. Also `GHX_REPO`. |
+| `--repo`, `-R` `[HOST/]OWNER/REPO` | Target repository, repeatable on `issue list`, `pr list`, `search`, and `stats` to cover several repositories in one run. When omitted, detected from `git remote origin` in the current directory; the search commands instead cover every cached repository. Also `GHX_REPO`, comma-separated. |
 | `--cache-dir string` | Override the cache directory (default `$XDG_CACHE_HOME/ghx/cache/`, or `~/.cache/ghx/cache/` when that variable is unset). Also `GHX_CACHE_DIR`. |
 | `--storage string` | Cache storage backend: `sqlite` (default) or `file`. Can also be set with `GHX_STORAGE`; `--storage` takes precedence. |
 | `--api-url string` | Override the GitHub GraphQL API endpoint (for testing). Also `GHX_API_URL`. |
@@ -25,7 +25,7 @@ Unless noted, an empty value counts as unset.
 
 | Variable | Sets | Default |
 |---|---|---|
-| `GHX_REPO` | `--repo` | Detected from `git remote origin` |
+| `GHX_REPO` | `--repo` (comma-separated for several) | Detected from `git remote origin` |
 | `GHX_CACHE_DIR` | `--cache-dir` | `$XDG_CACHE_HOME/ghx/cache`, else `~/.cache/ghx/cache` |
 | `GHX_STORAGE` | `--storage` | `sqlite` |
 | `GHX_API_URL` | `--api-url` | GitHub's GraphQL endpoint for the target host |
@@ -65,7 +65,7 @@ Team memberships are recorded by `ghx cache`; a host with none cached matches th
 
 ### cache migrate
 
-Copies cached repositories from the file backend into the SQLite backend (`cache.db` under the cache directory). The file cache is left in place and the migration is idempotent. Uses only the global `--repo` (to limit to one repository) and `--cache-dir`.
+Copies cached repositories from the file backend into the SQLite backend (`cache.db` under the cache directory). The file cache is left in place and the migration is idempotent. Uses only the global `--repo` (repeatable, to limit to specific repositories) and `--cache-dir`.
 
 ### cache delete
 
@@ -92,6 +92,8 @@ The delete is local only, and it does not change the recorded coverage. Uses the
 | `--limit int` | `-L` | `1000` | Maximum number of results |
 | `--json` | | `false` | Output as JSON |
 | `--no-truncate` | | `false` | Don't truncate long titles |
+
+Repeat `--repo` to list several repositories in one run. Rows are then prefixed with `[HOST/]OWNER/REPO#`, and `--json` emits an object keyed by repository label. `--limit` applies per repository.
 
 ## issue view
 
@@ -128,6 +130,8 @@ The delete is local only, and it does not change the recorded coverage. Uses the
 | `--limit int` | `-L` | `1000` | Maximum number of results |
 | `--json fields` | | | Output JSON with the specified fields (comma-separated; omit for all) |
 | `--no-truncate` | | `false` | Don't truncate long titles |
+
+Repeat `--repo` to list several repositories in one run. Rows are then prefixed with `[HOST/]OWNER/REPO#`, and `--json` emits an object keyed by repository label. `--limit` applies per repository.
 
 ## pr view
 
@@ -283,7 +287,7 @@ The `gh search` flags covering repository metadata, reactions, interactions, loc
 
 ## stats
 
-Repositories are positional `[HOST/]OWNER/REPO` arguments. When omitted, the repository is resolved from `--repo` or the current directory's git remote.
+Repositories are positional `[HOST/]OWNER/REPO` arguments, and `--repo` can be repeated instead. When both are omitted, the repository is resolved from the current directory's git remote.
 
 | Flag | Short | Default | Description |
 |---|---|---|---|

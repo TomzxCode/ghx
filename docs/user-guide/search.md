@@ -51,11 +51,11 @@ query are literal text, so use the flags instead.
 Every cached repository is searched by default, and each result shows the
 repository it belongs to.
 
-Limit the search to one repository with the global `--repo` flag, or filter by
-owner with `--owner`:
+Limit the search to specific repositories with the global `--repo` flag, repeated for each one, or filter by owner with `--owner`:
 
 ```bash
 ghx search issues login --repo octocat/hello-world
+ghx search issues login --repo octocat/hello-world --repo cli/cli
 ghx search issues login --owner octocat
 ```
 
@@ -283,8 +283,9 @@ data or the filtering happens on GitHub's side:
 
 ## Relationship to the list commands
 
-`issue list --search` and `pr list --search` filter one repository, can fall
-back to the API when its cache is stale, and match a single substring.
+`issue list --search` and `pr list --search` filter the repositories you name
+(the current one by default, or each repeated `--repo`), can fall
+back to the API when a repository's cache is stale, and match a single substring.
 `search issues` and `search prs` cover every cached repository, never call the
 API, and treat multiple words as separate AND terms with a much larger filter
 set.

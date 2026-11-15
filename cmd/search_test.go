@@ -17,9 +17,9 @@ func setupSearchTest(t *testing.T) {
 	resetTelemetryState(t)
 	off := false
 	telemetryFlag = &off
-	oldRepo := repoFlag
-	repoFlag = ""
-	t.Cleanup(func() { repoFlag = oldRepo })
+	oldRepo := repoFlags
+	repoFlags = nil
+	t.Cleanup(func() { repoFlags = oldRepo })
 
 	searchIssuesAssignee, searchIssuesAuthor = "", ""
 	searchIssuesLabels, searchIssuesLimit = nil, 30
@@ -494,7 +494,7 @@ func TestSearchIssues_MeUnresolvable(t *testing.T) {
 func TestSearchIssues_RepoScope(t *testing.T) {
 	setupSearchTest(t)
 	seedSearchCache(t)
-	repoFlag = "acme/gadget"
+	repoFlags = []string{"acme/gadget"}
 
 	out := captureStdout(t, func() {
 		if err := runSearchIssues(nil, []string{"login"}); err != nil {

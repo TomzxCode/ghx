@@ -26,10 +26,10 @@ func TestCacheDelete(t *testing.T) {
 			resetTelemetryState(t)
 			off := false
 			telemetryFlag = &off
-			oldRepo, oldType := repoFlag, cacheDeleteType
-			repoFlag = "acme/widget"
+			oldRepo, oldType := repoFlags, cacheDeleteType
+			repoFlags = []string{"acme/widget"}
 			cacheDeleteType = ""
-			t.Cleanup(func() { repoFlag, cacheDeleteType = oldRepo, oldType })
+			t.Cleanup(func() { repoFlags, cacheDeleteType = oldRepo, oldType })
 			storageFlag = tc.backend
 
 			store, err := newStore()
@@ -89,10 +89,10 @@ func TestCacheDelete_TypeRestrictsKind(t *testing.T) {
 	resetTelemetryState(t)
 	off := false
 	telemetryFlag = &off
-	oldRepo, oldType := repoFlag, cacheDeleteType
-	repoFlag = "acme/widget"
+	oldRepo, oldType := repoFlags, cacheDeleteType
+	repoFlags = []string{"acme/widget"}
 	cacheDeleteType = "prs"
-	t.Cleanup(func() { repoFlag, cacheDeleteType = oldRepo, oldType })
+	t.Cleanup(func() { repoFlags, cacheDeleteType = oldRepo, oldType })
 
 	store, err := newStore()
 	if err != nil {
@@ -127,9 +127,9 @@ func TestCacheDelete_TypeRestrictsKind(t *testing.T) {
 
 // TestCacheDelete_RejectsInvalidInput covers the number and --type validation.
 func TestCacheDelete_RejectsInvalidInput(t *testing.T) {
-	oldRepo, oldType := repoFlag, cacheDeleteType
-	repoFlag = "acme/widget"
-	t.Cleanup(func() { repoFlag, cacheDeleteType = oldRepo, oldType })
+	oldRepo, oldType := repoFlags, cacheDeleteType
+	repoFlags = []string{"acme/widget"}
+	t.Cleanup(func() { repoFlags, cacheDeleteType = oldRepo, oldType })
 
 	cmd := &cobra.Command{}
 	cmd.SetOut(&bytes.Buffer{})

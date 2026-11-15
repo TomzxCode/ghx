@@ -176,15 +176,16 @@ func TestGlobalFlagWasSet_IgnoresLocalShadow(t *testing.T) {
 // variables when the flags are absent.
 func TestApplyEnvFallbacks(t *testing.T) {
 	saved := struct {
-		repo, apiURL, cacheDir, storage, logLevel string
-	}{repoFlag, apiURLFlag, cacheDir, storageFlag, logLevelFlag}
+		repo                                []string
+		apiURL, cacheDir, storage, logLevel string
+	}{repoFlags, apiURLFlag, cacheDir, storageFlag, logLevelFlag}
 	t.Cleanup(func() {
-		repoFlag, apiURLFlag, cacheDir, storageFlag, logLevelFlag =
+		repoFlags, apiURLFlag, cacheDir, storageFlag, logLevelFlag =
 			saved.repo, saved.apiURL, saved.cacheDir, saved.storage, saved.logLevel
 	})
-	repoFlag, apiURLFlag, cacheDir, storageFlag, logLevelFlag = "", "", "", "", "info"
+	repoFlags, apiURLFlag, cacheDir, storageFlag, logLevelFlag = nil, "", "", "", "info"
 
-	t.Setenv("GHX_REPO", "acme/widgets")
+	t.Setenv("GHX_REPO", "acme/widgets, github.com/other/project")
 	t.Setenv("GHX_API_URL", "http://127.0.0.1:9999/graphql")
 	t.Setenv("GHX_CACHE_DIR", "/tmp/ghx-cache")
 	t.Setenv("GHX_STORAGE", "file")
@@ -192,8 +193,8 @@ func TestApplyEnvFallbacks(t *testing.T) {
 
 	applyEnvFallbacks(nil)
 
-	if repoFlag != "acme/widgets" {
-		t.Errorf("repoFlag = %q", repoFlag)
+	if got := strings.Join(repoFlags, ","); got != "acme/widgets,github.com/other/project" {
+		t.Errorf("repoFlags = %q", repoFlags)
 	}
 	if apiURLFlag != "http://127.0.0.1:9999/graphql" {
 		t.Errorf("apiURLFlag = %q", apiURLFlag)

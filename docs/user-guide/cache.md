@@ -71,6 +71,7 @@ The default SQLite backend does not read the file cache. If you have an existing
 ```bash
 ghx cache migrate                 # migrate every cached repository
 ghx cache migrate --repo cli/cli  # migrate a single repository
+ghx cache migrate -R cli/cli -R octocat/hello-world   # migrate several
 ```
 
 The file cache is left in place (the migration is non-destructive), and re-running it is safe (idempotent). To keep using the file cache without migrating, pass `--storage file`.

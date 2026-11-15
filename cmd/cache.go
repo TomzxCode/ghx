@@ -325,12 +325,14 @@ func runCacheMigrate(cmd *cobra.Command, args []string) error {
 	defer dst.Close()
 
 	var repos []cache.CachedRepo
-	if repoFlag != "" {
-		repo, err := getRepo()
+	if len(repoFlags) > 0 {
+		resolved, err := getRepos()
 		if err != nil {
 			return err
 		}
-		repos = []cache.CachedRepo{{Host: repo.Host, Owner: repo.Owner, Repo: repo.Name}}
+		for _, repo := range resolved {
+			repos = append(repos, cache.CachedRepo{Host: repo.Host, Owner: repo.Owner, Repo: repo.Name})
+		}
 	} else {
 		repos, err = src.ListCachedRepos()
 		if err != nil {

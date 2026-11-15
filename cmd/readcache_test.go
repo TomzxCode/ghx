@@ -34,21 +34,21 @@ func readCacheScenario() *mockserver.Scenario {
 // server and a temp cache dir for the duration of a test.
 func withReadFlags(t *testing.T, apiURL, dir string) {
 	t.Helper()
-	oldRepo, oldAPI, oldDir, oldStorage := repoFlag, apiURLFlag, cacheDir, storageFlag
+	oldRepo, oldAPI, oldDir, oldStorage := repoFlags, apiURLFlag, cacheDir, storageFlag
 	oldIssueListJSON, oldIssueListNoTruncate := issueListJSON, issueListNoTruncate
 	oldIssueListState, oldIssueListLimit := issueListState, issueListLimit
 	oldIssueViewComments, oldIssueViewJSON := issueViewComments, issueViewJSON
 	oldIssueViewRefresh, oldIssueViewIDs := issueViewRefresh, issueViewIDs
 	oldPRViewComments, oldPRViewJSON, oldPRViewRefresh := prViewComments, prViewJSON, prViewRefresh
 	t.Cleanup(func() {
-		repoFlag, apiURLFlag, cacheDir, storageFlag = oldRepo, oldAPI, oldDir, oldStorage
+		repoFlags, apiURLFlag, cacheDir, storageFlag = oldRepo, oldAPI, oldDir, oldStorage
 		issueListJSON, issueListNoTruncate = oldIssueListJSON, oldIssueListNoTruncate
 		issueListState, issueListLimit = oldIssueListState, oldIssueListLimit
 		issueViewComments, issueViewJSON = oldIssueViewComments, oldIssueViewJSON
 		issueViewRefresh, issueViewIDs = oldIssueViewRefresh, oldIssueViewIDs
 		prViewComments, prViewJSON, prViewRefresh = oldPRViewComments, oldPRViewJSON, oldPRViewRefresh
 	})
-	repoFlag = "acme/myproject"
+	repoFlags = []string{"acme/myproject"}
 	apiURLFlag = apiURL
 	cacheDir = dir
 	storageFlag = "file"

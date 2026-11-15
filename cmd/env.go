@@ -46,6 +46,30 @@ func resolveString(wasSet bool, env, current string) string {
 	return current
 }
 
+// resolveStringSlice resolves a repeated string setting. The environment
+// variable holds the values as a comma-separated list, the same shape the
+// repeated flag accepts on the command line.
+func resolveStringSlice(wasSet bool, env string, current []string) []string {
+	if wasSet {
+		return current
+	}
+	raw := strings.TrimSpace(os.Getenv(env))
+	if raw == "" {
+		return current
+	}
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
+		return current
+	}
+	return values
+}
+
 // resolveInt resolves an integer setting. A value that is not a whole number is
 // reported with an error naming the variable, so the fix is obvious.
 func resolveInt(wasSet bool, env string, current int) (int, error) {
@@ -94,7 +118,7 @@ func envTruthy(v string) bool {
 func applyEnvFallbacks(cmd *cobra.Command) {
 	logLevelFlag = resolveString(globalFlagWasSet(cmd, "log-level"), "GHX_LOG_LEVEL", logLevelFlag)
 	cacheDir = resolveString(globalFlagWasSet(cmd, "cache-dir"), "GHX_CACHE_DIR", cacheDir)
-	repoFlag = resolveString(globalFlagWasSet(cmd, "repo"), "GHX_REPO", repoFlag)
+	repoFlags = resolveStringSlice(globalFlagWasSet(cmd, "repo"), "GHX_REPO", repoFlags)
 	apiURLFlag = resolveString(globalFlagWasSet(cmd, "api-url"), "GHX_API_URL", apiURLFlag)
 	storageFlag = resolveString(globalFlagWasSet(cmd, "storage"), "GHX_STORAGE", storageFlag)
 }

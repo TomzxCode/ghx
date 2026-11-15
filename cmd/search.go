@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/tomzxcode/ghx/internal/cache"
-	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/logging"
 )
 
@@ -522,14 +521,18 @@ func parseOrder(value string) (bool, error) {
 // searches every cached repository, matching gh search's account-wide default;
 // with --repo it searches only that repository, cached or not.
 func searchTargets(store cache.Store) ([]cache.CachedRepo, error) {
-	if repoFlag != "" {
-		repo, err := gitremote.ParseRepo(repoFlag)
-		if err != nil {
-			return nil, err
-		}
-		return []cache.CachedRepo{{Host: repo.Host, Owner: repo.Owner, Repo: repo.Name}}, nil
+	if len(repoFlags) == 0 {
+		return store.ListCachedRepos()
 	}
-	return store.ListCachedRepos()
+	repos, err := getRepos()
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]cache.CachedRepo, 0, len(repos))
+	for _, repo := range repos {
+		targets = append(targets, cache.CachedRepo{Host: repo.Host, Owner: repo.Owner, Repo: repo.Name})
+	}
+	return targets, nil
 }
 
 // searchTerms normalizes the positional query arguments. Each argument is one

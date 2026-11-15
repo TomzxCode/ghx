@@ -357,8 +357,10 @@ func newRPCConfig(store cache.Store, token string, allowExec bool) rpc.Config {
 // reads and writes the same cache and GitHub endpoint as the server.
 func rpcBaseArgs() []string {
 	var args []string
-	if repoFlag != "" {
-		args = append(args, "--repo", repoFlag)
+	for _, repo := range repoFlags {
+		if repo != "" {
+			args = append(args, "--repo", repo)
+		}
 	}
 	if storageFlag != "" {
 		args = append(args, "--storage", storageFlag)

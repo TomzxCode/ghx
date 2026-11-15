@@ -23,15 +23,15 @@ func prJSONScenario() *mockserver.Scenario {
 // and a temp cache dir for the duration of a test.
 func withPRListFlags(t *testing.T, apiURL, dir string) {
 	t.Helper()
-	oldRepo, oldAPI, oldDir, oldStorage := repoFlag, apiURLFlag, cacheDir, storageFlag
+	oldRepo, oldAPI, oldDir, oldStorage := repoFlags, apiURLFlag, cacheDir, storageFlag
 	oldState, oldHead, oldJSON, oldLimit := prListState, prListHead, prListJSON, prListLimit
 	oldNoTruncate, oldBase, oldApp := prListNoTruncate, prListBase, prListApp
 	t.Cleanup(func() {
-		repoFlag, apiURLFlag, cacheDir, storageFlag = oldRepo, oldAPI, oldDir, oldStorage
+		repoFlags, apiURLFlag, cacheDir, storageFlag = oldRepo, oldAPI, oldDir, oldStorage
 		prListState, prListHead, prListJSON, prListLimit = oldState, oldHead, oldJSON, oldLimit
 		prListNoTruncate, prListBase, prListApp = oldNoTruncate, oldBase, oldApp
 	})
-	repoFlag = "acme/myproject"
+	repoFlags = []string{"acme/myproject"}
 	apiURLFlag = apiURL
 	cacheDir = dir
 	storageFlag = "file"

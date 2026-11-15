@@ -95,17 +95,17 @@ func TestParseSinceDate_TrimsWhitespace(t *testing.T) {
 // server and a temp cache dir, restoring the previous values on cleanup.
 func setCacheTestEnv(t *testing.T, apiURL, dir string) {
 	t.Helper()
-	oldRepo, oldAPI, oldDir := repoFlag, apiURLFlag, cacheDir
+	oldRepo, oldAPI, oldDir := repoFlags, apiURLFlag, cacheDir
 	oldStorage := storageFlag
 	oldDur, oldForce, oldIfStale, oldSince, oldType, oldRetries := cacheDuration, cacheForce, cacheIfStale, cacheSince, cacheType, cacheRetries
 	oldWorkers := cacheWorkers
 	t.Cleanup(func() {
-		repoFlag, apiURLFlag, cacheDir = oldRepo, oldAPI, oldDir
+		repoFlags, apiURLFlag, cacheDir = oldRepo, oldAPI, oldDir
 		storageFlag = oldStorage
 		cacheDuration, cacheForce, cacheIfStale, cacheSince, cacheType, cacheRetries = oldDur, oldForce, oldIfStale, oldSince, oldType, oldRetries
 		cacheWorkers = oldWorkers
 	})
-	repoFlag = "acme/myproject"
+	repoFlags = []string{"acme/myproject"}
 	apiURLFlag = apiURL
 	cacheDir = dir
 	// These tests inspect the cache through a file store, so pin the file

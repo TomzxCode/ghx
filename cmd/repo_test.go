@@ -28,9 +28,9 @@ func TestRepoDelete(t *testing.T) {
 			resetTelemetryState(t)
 			off := false
 			telemetryFlag = &off
-			oldRepo := repoFlag
-			repoFlag = ""
-			t.Cleanup(func() { repoFlag = oldRepo })
+			oldRepo := repoFlags
+			repoFlags = nil
+			t.Cleanup(func() { repoFlags = oldRepo })
 			storageFlag = tc.backend
 
 			store, err := newStore()
@@ -82,9 +82,9 @@ func TestRepoDelete(t *testing.T) {
 }
 
 func TestRepoDelete_RejectsArgumentWithRepoFlag(t *testing.T) {
-	oldRepo := repoFlag
-	repoFlag = "acme/other"
-	t.Cleanup(func() { repoFlag = oldRepo })
+	oldRepo := repoFlags
+	repoFlags = []string{"acme/other"}
+	t.Cleanup(func() { repoFlags = oldRepo })
 
 	cmd := &cobra.Command{}
 	if err := runRepoDelete(cmd, []string{"acme/widget"}); err == nil {

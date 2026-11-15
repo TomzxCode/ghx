@@ -86,6 +86,12 @@ func resolvePRListJSONFields(args []string) ([]string, error) {
 // printPRListJSON renders selected fields for each pull request as a compact
 // JSON array. Keys are alphabetically ordered by encoding/json, matching gh.
 func printPRListJSON(prs []*github.PullRequest, fields []string) error {
+	enc := json.NewEncoder(os.Stdout)
+	return enc.Encode(prJSONRows(prs, fields))
+}
+
+// prJSONRows projects pull requests onto the selected fields.
+func prJSONRows(prs []*github.PullRequest, fields []string) []map[string]any {
 	out := make([]map[string]any, 0, len(prs))
 	for _, pr := range prs {
 		obj := make(map[string]any, len(fields))
@@ -94,7 +100,5 @@ func printPRListJSON(prs []*github.PullRequest, fields []string) error {
 		}
 		out = append(out, obj)
 	}
-
-	enc := json.NewEncoder(os.Stdout)
-	return enc.Encode(out)
+	return out
 }

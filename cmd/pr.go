@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tomzxcode/ghx/internal/cache"
 	"github.com/tomzxcode/ghx/internal/github"
+	"github.com/tomzxcode/ghx/internal/gitremote"
 	"github.com/tomzxcode/ghx/internal/logging"
 	"github.com/tomzxcode/ghx/internal/telemetry"
 )
@@ -112,17 +113,7 @@ func runPRList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	repo, err := getRepo()
-	if err != nil {
-		return err
-	}
-
-	me := &meResolver{}
-	assignee, err := me.resolve(prListAssignee, repo.Host)
-	if err != nil {
-		return err
-	}
-	author, err := me.resolve(prListAuthor, repo.Host)
+	repos, err := getRepos()
 	if err != nil {
 		return err
 	}
@@ -133,7 +124,39 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	}
 	defer store.Close()
 
-	// Serve from cache when it is fresh.
+	me := &meResolver{}
+	clients := make(map[string]*github.Client)
+	lists := make([]repoPRList, 0, len(repos))
+	for _, repo := range repos {
+		assignee, err := me.resolve(prListAssignee, repo.Host)
+		if err != nil {
+			return err
+		}
+		author, err := me.resolve(prListAuthor, repo.Host)
+		if err != nil {
+			return err
+		}
+		prs, total, err := listPRsForRepo(store, repo, assignee, author, func() (*github.Client, error) {
+			return clientForHost(clients, repo.Host)
+		})
+		if err != nil {
+			return err
+		}
+		lists = append(lists, repoPRList{repo: repo, prs: prs, total: total})
+	}
+	return printPRLists(lists, jsonFields, prListNoTruncate)
+}
+
+// repoPRList is one repository's pull requests within a `pr list` run.
+type repoPRList struct {
+	repo  *gitremote.Repo
+	prs   []*github.PullRequest
+	total int
+}
+
+// listPRsForRepo lists one repository's pull requests from the cache when it is
+// fresh, or from the GitHub API otherwise. The limit applies per repository.
+func listPRsForRepo(store cache.Store, repo *gitremote.Repo, assignee, author string, clientFor func() (*github.Client, error)) ([]*github.PullRequest, int, error) {
 	cacheStart := time.Now()
 	if fresh, _ := store.IsPRsCacheFresh(repo.Host, repo.Owner, repo.Name); fresh {
 		prs, err := store.QueryPRs(repo.Host, repo.Owner, repo.Name, cache.PRQuery{
@@ -154,17 +177,17 @@ func runPRList(cmd *cobra.Command, args []string) error {
 			if prListLimit > 0 && len(prs) > prListLimit {
 				prs = prs[:prListLimit]
 			}
-			logging.Debug("pr list: served from cache", "count", total, "duration", time.Since(cacheStart))
+			logging.Debug("pr list: served from cache", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "count", total, "duration", time.Since(cacheStart))
 			recordRetrievalOutcome(repo, telemetry.RetrievalPRList, true)
-			return printPRList(prs, total, jsonFields, prListNoTruncate)
+			return prs, total, nil
 		}
-		logging.Debug("pr list: cache query failed, falling back to API", "error", err, "duration", time.Since(cacheStart))
+		logging.Debug("pr list: cache query failed, falling back to API", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "error", err, "duration", time.Since(cacheStart))
 	}
 
 	// Fall back to the GitHub API.
-	client, err := newClient(repo.Host)
+	client, err := clientFor()
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 
 	opts := github.PRListOptions{
@@ -183,13 +206,13 @@ func runPRList(cmd *cobra.Command, args []string) error {
 	listStart := time.Now()
 	prs, err := client.ListPRs(repo.Owner, repo.Name, opts)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
-	logging.Debug("pr list: fetched from API", "count", len(prs), "duration", time.Since(listStart))
+	logging.Debug("pr list: fetched from API", "repo", repoLabel(repo.Host, repo.Owner, repo.Name), "count", len(prs), "duration", time.Since(listStart))
 	recordRetrievalOutcome(repo, telemetry.RetrievalPRList, false)
 
 	backfillPRDetails(store, client, repo, prs)
-	return printPRList(prs, len(prs), jsonFields, prListNoTruncate)
+	return prs, len(prs), nil
 }
 
 func runPRView(cmd *cobra.Command, args []string) error {
@@ -333,48 +356,73 @@ func formatCheckState(s string) string {
 // Display
 // ---------------------------------------------------------------------------
 
-func printPRList(prs []*github.PullRequest, total int, jsonFields []string, noTruncate bool) error {
+func printPRLists(lists []repoPRList, jsonFields []string, noTruncate bool) error {
 	if jsonFields != nil {
-		return printPRListJSON(prs, jsonFields)
+		return printPRListsJSON(lists, jsonFields)
 	}
 
-	if len(prs) == 0 {
-		fmt.Println("No pull requests found.")
-		return nil
-	}
-
+	multi := len(lists) > 1
 	w := tabwriter.NewWriter(os.Stdout, 0, 8, 2, ' ', 0)
-	for _, pr := range prs {
-		draft := ""
-		if pr.IsDraft {
-			draft = " [draft]"
+	shown, total := 0, 0
+	for _, list := range lists {
+		for _, pr := range list.prs {
+			draft := ""
+			if pr.IsDraft {
+				draft = " [draft]"
+			}
+			count := pr.CommentCount
+			if count == 0 {
+				count = len(pr.Comments)
+			}
+			title := pr.Title
+			if !noTruncate {
+				title = truncate(title, 55)
+			}
+			review := formatReviewDecision(pr.ReviewDecision)
+			number := fmt.Sprintf("#%d", pr.Number)
+			if multi {
+				number = fmt.Sprintf("%s#%d", repoLabel(list.repo.Host, list.repo.Owner, list.repo.Name), pr.Number)
+			}
+			fmt.Fprintf(w, "%s\t%s%s\t%s → %s\t%s\t%d\t%s\n",
+				number,
+				title,
+				draft,
+				pr.HeadRefName,
+				pr.BaseRefName,
+				review,
+				count,
+				pr.UpdatedAt.Format("2006-01-02"),
+			)
+			shown++
 		}
-		count := pr.CommentCount
-		if count == 0 {
-			count = len(pr.Comments)
-		}
-		title := pr.Title
-		if !noTruncate {
-			title = truncate(title, 55)
-		}
-		review := formatReviewDecision(pr.ReviewDecision)
-		fmt.Fprintf(w, "#%d\t%s%s\t%s → %s\t%s\t%d\t%s\n",
-			pr.Number,
-			title,
-			draft,
-			pr.HeadRefName,
-			pr.BaseRefName,
-			review,
-			count,
-			pr.UpdatedAt.Format("2006-01-02"),
-		)
+		total += list.total
 	}
 	w.Flush()
 
-	if total > len(prs) {
-		logging.Info("showing pull requests", "shown", len(prs), "total", total)
+	if shown == 0 {
+		fmt.Println("No pull requests found.")
+		return nil
+	}
+	if total > shown {
+		logging.Info("showing pull requests", "shown", shown, "total", total)
 	}
 	return nil
+}
+
+// printPRListsJSON emits one JSON array for a single repository, keeping the
+// existing output shape, and an object keyed by repository label when several
+// repositories were listed.
+func printPRListsJSON(lists []repoPRList, fields []string) error {
+	if len(lists) == 1 {
+		return printPRListJSON(lists[0].prs, fields)
+	}
+
+	out := make(map[string][]map[string]any, len(lists))
+	for _, list := range lists {
+		out[repoLabel(list.repo.Host, list.repo.Owner, list.repo.Name)] = prJSONRows(list.prs, fields)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	return enc.Encode(out)
 }
 
 // printPRChecks renders the head commit's rollup and each check reporting on it.

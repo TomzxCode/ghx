@@ -38,7 +38,7 @@ Alternatively, if you have the [GitHub CLI](https://cli.github.com) installed an
 
 ## Usage
 
-All commands accept `--repo [HOST/]OWNER/REPO`. When omitted, the repository is detected from the `origin` remote of the current directory.
+All commands accept `--repo [HOST/]OWNER/REPO`. The list commands (`issue list`, `pr list`), the search commands, and `stats` accept it more than once, so one call covers several repositories. When omitted, the repository is detected from the `origin` remote of the current directory.
 The search commands are the exception: they search every cached repository unless `--repo` is given.
 
 ### Cache
@@ -111,6 +111,9 @@ ghx issue list --app dependabot
 ghx issue list --search "memory leak"
 ghx issue list --limit 10
 
+# List several repositories in one call
+ghx issue list -R cli/cli -R octocat/hello-world
+
 # View a single issue
 ghx issue view 42
 ghx issue view 42 --comments
@@ -166,6 +169,9 @@ ghx pr list --draft
 ghx pr list --app dependabot
 ghx pr list --search "fix crash"
 ghx pr list --limit 10
+
+# List several repositories in one call
+ghx pr list -R cli/cli -R octocat/hello-world
 
 # JSON output, gh-compatible field selection
 ghx pr list --state merged --head feat/dark-mode --json number,headRefOid,mergedAt
@@ -515,7 +521,7 @@ a speedup is not read as a like-for-like win.
 | Command | Cache behaviour |
 |---|---|
 | `cache` | Fetches everything (all states, with comments) and writes it to the selected backend (SQLite by default, or one JSON file per issue/PR for the file backend). Each run fills the uncovered `updatedAt` ranges; `--if-stale` skips the run while the cache is fresh. Supports `--since`, `--workers`, and `--type issues/prs`. |
-| `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. |
+| `issue list` / `pr list` | Reads the cache and applies filters when it is fresh (indexed SQL predicates for SQLite); falls back to the GitHub API with server-side filters otherwise. When it falls back, each entry not already cached is fetched in full (comments, reviews, timeline) and written to the cache. Repeat `--repo` to list several repositories in one run; each row then carries its repository label, and `--json` emits an object keyed by repository. |
 | `issue view` / `pr view` | Serves the individual cached item when it was written within the cache's configured duration (60 minutes by default), or the full cache is fresh; fetches from the API and updates the cache otherwise. An item missing from an otherwise-fresh cache is fetched and cached rather than reported as missing. When the number is cached under the other type (a pull request viewed as an issue, or the reverse), it reports that type and exits without querying the API. `--refresh` bypasses the same-type cache checks. |
 | `search issues` / `search prs` | Reads only the local cache, across every cached repository unless `--repo` limits it to one. Never calls the API and never refreshes; the results are as current as the cache. |
 
